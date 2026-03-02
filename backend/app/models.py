@@ -1,0 +1,508 @@
+"""LifeOS data models - SQLAlchemy ORM + Pydantic schemas."""
+
+import enum
+from datetime import date, datetime, timezone
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class ActionStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+    FAILED = "failed"
+
+
+class ProviderName(str, enum.Enum):
+    OPENROUTER = "openrouter"
+    NVIDIA = "nvidia"
+    GOOGLE = "google"
+    OPENAI = "openai"
+
+
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    system_prompt: Mapped[str] = mapped_column(Text, default="You are a helpful assistant.")
+    provider: Mapped[str] = mapped_column(String(50), default="openrouter")
+    model: Mapped[str] = mapped_column(String(100), default="openrouter/auto")
+    fallback_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    fallback_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    discord_channel: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    cadence: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class PendingAction(Base):
+    __tablename__ = "pending_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[ActionStatus] = mapped_column(
+        SAEnum(ActionStatus), default=ActionStatus.PENDING
+    )
+    risk_level: Mapped[str] = mapped_column(String(20), default="low")
+    discord_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    review_source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ProviderConfig(Base):
+    __tablename__ = "provider_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    api_key_env: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(200), nullable=False)
+    default_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class MemoryEntry(Base):
+    __tablename__ = "memory"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    timezone: Mapped[str] = mapped_column(String(64), default="Africa/Casablanca")
+    city: Mapped[str] = mapped_column(String(64), default="Casablanca")
+    country: Mapped[str] = mapped_column(String(64), default="Morocco")
+    prayer_method: Mapped[int] = mapped_column(Integer, default=2)
+    work_shift_start: Mapped[str] = mapped_column(String(5), default="14:00")
+    work_shift_end: Mapped[str] = mapped_column(String(5), default="00:00")
+    quiet_hours_start: Mapped[str] = mapped_column(String(5), default="23:00")
+    quiet_hours_end: Mapped[str] = mapped_column(String(5), default="06:00")
+    nudge_mode: Mapped[str] = mapped_column(String(20), default="moderate")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LifeItem(Base):
+    __tablename__ = "life_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain: Mapped[str] = mapped_column(String(20), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="task")
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(String(20), default="medium")
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    recurrence_rule: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class LifeCheckin(Base):
+    __tablename__ = "life_checkins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    life_item_id: Mapped[int] = mapped_column(ForeignKey("life_items.id"), nullable=False)
+    result: Mapped[str] = mapped_column(String(20), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PrayerWindow(Base):
+    __tablename__ = "prayer_windows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    local_date: Mapped[date] = mapped_column(nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    city: Mapped[str] = mapped_column(String(64), nullable=False)
+    country: Mapped[str] = mapped_column(String(64), nullable=False)
+    method: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    prayer_name: Mapped[str] = mapped_column(String(20), nullable=False)
+    starts_at_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ends_at_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    hijri_month: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_ramadan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source_payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PrayerCheckin(Base):
+    __tablename__ = "prayer_checkins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prayer_window_id: Mapped[int] = mapped_column(ForeignKey("prayer_windows.id"), nullable=False)
+    status_raw: Mapped[str] = mapped_column(String(20), nullable=False)
+    status_scored: Mapped[str] = mapped_column(String(20), nullable=False)
+    reported_at_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    discord_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_retroactive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retro_reason: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class PrayerReminder(Base):
+    __tablename__ = "prayer_reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prayer_window_id: Mapped[int] = mapped_column(ForeignKey("prayer_windows.id"), nullable=False)
+    channel_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    discord_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    sent_at_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    deadline_nudge_sent_at_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class DeenHabit(Base):
+    __tablename__ = "deen_habits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    local_date: Mapped[date] = mapped_column(nullable=False)
+    habit_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    value_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AgentCreate(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = "You are a helpful assistant."
+    provider: str = "openrouter"
+    model: str = "openrouter/auto"
+    fallback_provider: Optional[str] = None
+    fallback_model: Optional[str] = None
+    discord_channel: Optional[str] = None
+    cadence: Optional[str] = None
+    enabled: bool = True
+    config_json: Optional[dict] = None
+
+
+class AgentUpdate(BaseModel):
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    fallback_model: Optional[str] = None
+    discord_channel: Optional[str] = None
+    cadence: Optional[str] = None
+    enabled: Optional[bool] = None
+    config_json: Optional[dict] = None
+
+
+class AgentResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    system_prompt: str
+    provider: str
+    model: str
+    fallback_provider: Optional[str]
+    fallback_model: Optional[str]
+    discord_channel: Optional[str]
+    cadence: Optional[str]
+    enabled: bool
+    created_at: datetime
+    config_json: Optional[dict]
+
+    class Config:
+        from_attributes = True
+
+
+class ActionResponse(BaseModel):
+    id: int
+    agent_name: str
+    action_type: str
+    summary: str
+    details: Optional[str]
+    status: ActionStatus
+    risk_level: str = "low"
+    discord_message_id: Optional[str]
+    reviewed_by: Optional[str]
+    review_source: Optional[str]
+    created_at: datetime
+    resolved_at: Optional[datetime]
+    result: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class ApprovalDecision(BaseModel):
+    action_id: int
+    approved: bool
+    reason: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    source: str = "webui"
+
+
+class ChatRequest(BaseModel):
+    agent_name: str
+    message: str
+    approval_policy: str = "auto"
+
+
+class ChatResponse(BaseModel):
+    agent_name: str
+    response: str
+    pending_action_id: Optional[int] = None
+    risk_level: str = "low"
+
+
+class ProfileUpdate(BaseModel):
+    timezone: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    prayer_method: Optional[int] = None
+    work_shift_start: Optional[str] = None
+    work_shift_end: Optional[str] = None
+    quiet_hours_start: Optional[str] = None
+    quiet_hours_end: Optional[str] = None
+    nudge_mode: Optional[str] = None
+
+
+class ProfileResponse(BaseModel):
+    id: int
+    timezone: str
+    city: str
+    country: str
+    prayer_method: int
+    work_shift_start: str
+    work_shift_end: str
+    quiet_hours_start: str
+    quiet_hours_end: str
+    nudge_mode: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LifeItemCreate(BaseModel):
+    domain: str
+    title: str
+    kind: str = "task"
+    notes: Optional[str] = None
+    priority: str = "medium"
+    due_at: Optional[datetime] = None
+    recurrence_rule: Optional[str] = None
+    source_agent: Optional[str] = None
+    risk_level: str = "low"
+
+
+class LifeItemUpdate(BaseModel):
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    due_at: Optional[datetime] = None
+    recurrence_rule: Optional[str] = None
+    risk_level: Optional[str] = None
+
+
+class LifeItemResponse(BaseModel):
+    id: int
+    domain: str
+    kind: str
+    title: str
+    notes: Optional[str]
+    priority: str
+    status: str
+    due_at: Optional[datetime]
+    recurrence_rule: Optional[str]
+    source_agent: Optional[str]
+    risk_level: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LifeCheckinCreate(BaseModel):
+    result: str = Field(description="done | partial | missed")
+    note: Optional[str] = None
+
+
+class LifeCheckinResponse(BaseModel):
+    id: int
+    life_item_id: int
+    result: str
+    note: Optional[str]
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TodayAgendaResponse(BaseModel):
+    timezone: str
+    now: datetime
+    top_focus: list[LifeItemResponse]
+    due_today: list[LifeItemResponse]
+    overdue: list[LifeItemResponse]
+    domain_summary: dict[str, int]
+
+
+class PrayerWindowResponse(BaseModel):
+    prayer_name: str
+    starts_at: datetime
+    ends_at: datetime
+
+
+class PrayerScheduleTodayResponse(BaseModel):
+    date: str
+    timezone: str
+    city: str
+    country: str
+    hijri_month: int
+    is_ramadan: bool
+    next_prayer: Optional[str]
+    windows: list[PrayerWindowResponse]
+
+
+class PrayerCheckinRequest(BaseModel):
+    prayer_date: str
+    prayer_name: Literal["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    status: Literal["on_time", "late", "missed"]
+    source: str = "command"
+    discord_user_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class PrayerRetroactiveCheckinRequest(BaseModel):
+    prayer_date: str
+    prayer_name: Literal["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    status: Literal["on_time", "late", "missed"]
+    note: Optional[str] = None
+    source: str = "command"
+    discord_user_id: Optional[str] = None
+
+
+class PrayerCheckinResponse(BaseModel):
+    prayer_date: str
+    prayer_name: str
+    status_raw: str
+    status_scored: str
+    is_retroactive: bool
+    reported_at_utc: datetime
+
+
+class QuranHabitRequest(BaseModel):
+    date: str
+    juz: int = Field(ge=1, le=30)
+    pages: int = Field(default=0, ge=0, le=20)
+    note: Optional[str] = None
+
+
+class TahajjudHabitRequest(BaseModel):
+    date: Optional[str] = None
+    done: bool
+
+
+class AdhkarHabitRequest(BaseModel):
+    date: Optional[str] = None
+    period: Literal["morning", "evening"]
+    done: bool
+
+
+class HabitLogResponse(BaseModel):
+    id: int
+    local_date: str
+    habit_type: str
+    done: bool
+
+
+class PrayerWeeklySummaryResponse(BaseModel):
+    start_date: str
+    end_date: str
+    total_prayers: int
+    on_time: int
+    late: int
+    missed: int
+    unknown: int
+    retroactive_count: int
+    on_time_rate: float
+    completion_rate: float
+    is_ramadan: bool
+    quran_pages_total: int
+    quran_juz_max: int
+    tahajjud_done: int
+    tahajjud_target: int
+    adhkar_morning_done: int
+    adhkar_evening_done: int
+    guidance: list[str]

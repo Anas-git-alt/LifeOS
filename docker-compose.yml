@@ -1,0 +1,55 @@
+name: ${COMPOSE_PROJECT_NAME:-lifeos-v1-2}
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}:8000"
+    volumes:
+      - ./storage:/app/storage
+      - ./skills:/app/skills
+    env_file:
+      - .venv/.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - lifeos
+
+  discord-bot:
+    build:
+      context: ./discord-bot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file:
+      - .venv/.env
+    environment:
+      - BACKEND_URL=http://backend:8000
+    networks:
+      - lifeos
+
+  webui:
+    build:
+      context: ./webui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEBUI_PUBLIC_PORT:-3100}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - lifeos
+
+networks:
+  lifeos:
+    driver: bridge

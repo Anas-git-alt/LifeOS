@@ -1,0 +1,46 @@
+# ==========================================
+# LifeOS .gitignore — SECURITY CRITICAL
+# ==========================================
+
+# ---- Secrets (NEVER commit) ----
+.venv/
+.env
+*.env
+!.env.example
+
+# ---- Database ----
+storage/lifeos.db
+storage/*.db
+storage/*.db-journal
+storage/*.db-wal
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ---- Node / WebUI ----
+node_modules/
+webui/dist/
+webui/node_modules/
+.vite/
+
+# ---- Docker ----
+*.log
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

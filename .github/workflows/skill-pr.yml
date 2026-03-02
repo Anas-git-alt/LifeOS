@@ -1,0 +1,48 @@
+name: Skill PR Validation
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+
+jobs:
+  validate-skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx pyyaml
+
+      - name: Validate skill manifests
+        run: |
+          python -c "
+          import yaml, glob, sys
+          errors = []
+          for f in glob.glob('skills/*/manifest.yaml'):
+              try:
+                  with open(f) as fh:
+                      data = yaml.safe_load(fh)
+                  assert 'name' in data, f'{f}: missing name'
+                  assert 'version' in data, f'{f}: missing version'
+                  assert 'description' in data, f'{f}: missing description'
+                  print(f'  ✅ {f}')
+              except Exception as e:
+                  errors.append(f'{f}: {e}')
+                  print(f'  ❌ {f}: {e}')
+          if errors:
+              sys.exit(1)
+          "
+
+      - name: Run skill tests
+        run: |
+          for dir in skills/*/tests; do
+            if [ -d "$dir" ]; then
+              echo "Testing: $dir"
+              pytest "$dir" -v --tb=short || exit 1
+            fi
+          done
