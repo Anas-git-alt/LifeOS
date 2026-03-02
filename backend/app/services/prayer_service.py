@@ -6,7 +6,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.database import async_session
 from app.models import Agent, PrayerCheckin, PrayerCheckinRequest, PrayerReminder, PrayerRetroactiveCheckinRequest, PrayerWindow
@@ -50,6 +51,15 @@ async def _get_prayer_channel_name() -> str:
     return "prayer-tracker"
 
 
+def _profile_window_filters(profile) -> tuple:
+    return (
+        PrayerWindow.timezone == profile.timezone,
+        PrayerWindow.city == profile.city,
+        PrayerWindow.country == profile.country,
+        PrayerWindow.method == profile.prayer_method,
+    )
+
+
 async def ensure_prayer_windows_for_date(local_date: date | None = None) -> list[PrayerWindow]:
     profile = await get_or_create_profile()
     tz = ZoneInfo(profile.timezone)
@@ -59,10 +69,7 @@ async def ensure_prayer_windows_for_date(local_date: date | None = None) -> list
         existing = await db.execute(
             select(PrayerWindow)
             .where(PrayerWindow.local_date == target_date)
-            .where(PrayerWindow.timezone == profile.timezone)
-            .where(PrayerWindow.city == profile.city)
-            .where(PrayerWindow.country == profile.country)
-            .where(PrayerWindow.method == profile.prayer_method)
+            .where(*_profile_window_filters(profile))
         )
         existing_rows = list(existing.scalars().all())
         if len(existing_rows) >= 5:
@@ -96,10 +103,7 @@ async def ensure_prayer_windows_for_date(local_date: date | None = None) -> list
                 select(PrayerWindow)
                 .where(PrayerWindow.local_date == target_date)
                 .where(PrayerWindow.prayer_name == prayer)
-                .where(PrayerWindow.timezone == profile.timezone)
-                .where(PrayerWindow.city == profile.city)
-                .where(PrayerWindow.country == profile.country)
-                .where(PrayerWindow.method == profile.prayer_method)
+                .where(*_profile_window_filters(profile))
             )
             row = row_result.scalar_one_or_none()
             if not row:
@@ -139,54 +143,138 @@ def _choose_scored_status(status: str, is_retroactive: bool) -> str:
     return status
 
 
-async def _get_window_or_raise(prayer_date: date, prayer_name: str) -> PrayerWindow:
+async def _get_window_or_raise(prayer_date: date, prayer_name: str, prayer_window_id: int | None = None) -> PrayerWindow:
+    if prayer_window_id:
+        async with async_session() as db:
+            result = await db.execute(select(PrayerWindow).where(PrayerWindow.id == prayer_window_id))
+            window = result.scalar_one_or_none()
+        if not window:
+            raise ValueError("Prayer window not found")
+        if window.local_date != prayer_date or window.prayer_name != prayer_name:
+            raise ValueError("Prayer window does not match reminder payload")
+        return window
+
     await ensure_prayer_windows_for_date(prayer_date)
+    profile = await get_or_create_profile()
     async with async_session() as db:
         result = await db.execute(
             select(PrayerWindow)
             .where(PrayerWindow.local_date == prayer_date)
             .where(PrayerWindow.prayer_name == prayer_name)
+            .where(*_profile_window_filters(profile))
+            .order_by(PrayerWindow.id.desc())
         )
-        window = result.scalar_one_or_none()
+        window = result.scalars().first()
+        if not window:
+            fallback = await db.execute(
+                select(PrayerWindow)
+                .where(PrayerWindow.local_date == prayer_date)
+                .where(PrayerWindow.prayer_name == prayer_name)
+                .order_by(PrayerWindow.id.desc())
+            )
+            window = fallback.scalars().first()
         if not window:
             raise ValueError("Prayer window not found")
         return window
 
 
+def _apply_checkin_values(
+    row: PrayerCheckin,
+    *,
+    status_raw: str,
+    status_scored: str,
+    reported_at_utc: datetime,
+    source: str,
+    discord_user_id: str | None,
+    note: str | None,
+    is_retroactive: bool,
+    retro_reason: str | None,
+) -> None:
+    row.status_raw = status_raw
+    row.status_scored = status_scored
+    row.reported_at_utc = reported_at_utc
+    row.source = source
+    row.discord_user_id = discord_user_id
+    row.note = note
+    row.is_retroactive = is_retroactive
+    row.retro_reason = retro_reason
+
+
+async def _upsert_checkin(
+    *,
+    prayer_window_id: int,
+    status_raw: str,
+    status_scored: str,
+    reported_at_utc: datetime,
+    source: str,
+    discord_user_id: str | None,
+    note: str | None,
+    is_retroactive: bool,
+    retro_reason: str | None,
+) -> PrayerCheckin:
+    async with async_session() as db:
+        result = await db.execute(select(PrayerCheckin).where(PrayerCheckin.prayer_window_id == prayer_window_id))
+        existing = result.scalar_one_or_none()
+        if not existing:
+            existing = PrayerCheckin(prayer_window_id=prayer_window_id)
+            db.add(existing)
+
+        _apply_checkin_values(
+            existing,
+            status_raw=status_raw,
+            status_scored=status_scored,
+            reported_at_utc=reported_at_utc,
+            source=source,
+            discord_user_id=discord_user_id,
+            note=note,
+            is_retroactive=is_retroactive,
+            retro_reason=retro_reason,
+        )
+
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Concurrent check-ins can race on the unique prayer_window_id index.
+            await db.rollback()
+            result = await db.execute(select(PrayerCheckin).where(PrayerCheckin.prayer_window_id == prayer_window_id))
+            existing = result.scalar_one_or_none()
+            if not existing:
+                raise
+            _apply_checkin_values(
+                existing,
+                status_raw=status_raw,
+                status_scored=status_scored,
+                reported_at_utc=reported_at_utc,
+                source=source,
+                discord_user_id=discord_user_id,
+                note=note,
+                is_retroactive=is_retroactive,
+                retro_reason=retro_reason,
+            )
+            await db.commit()
+        await db.refresh(existing)
+        return existing
+
+
 async def log_prayer_checkin(data: PrayerCheckinRequest) -> dict:
     prayer_date = _parse_date(data.prayer_date)
-    window = await _get_window_or_raise(prayer_date, data.prayer_name)
+    window = await _get_window_or_raise(prayer_date, data.prayer_name, data.prayer_window_id)
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     if now_utc > window.ends_at_utc:
         raise ValueError("Prayer window ended. Use /checkin/retroactive for late manual logs.")
     scored_status = _choose_scored_status(data.status, is_retroactive=False)
 
-    async with async_session() as db:
-        existing_result = await db.execute(select(PrayerCheckin).where(PrayerCheckin.prayer_window_id == window.id))
-        existing = existing_result.scalar_one_or_none()
-        if not existing:
-            existing = PrayerCheckin(
-                prayer_window_id=window.id,
-                status_raw=data.status,
-                status_scored=scored_status,
-                reported_at_utc=now_utc,
-                source=data.source,
-                discord_user_id=data.discord_user_id,
-                note=data.note,
-                is_retroactive=False,
-            )
-            db.add(existing)
-        else:
-            existing.status_raw = data.status
-            existing.status_scored = scored_status
-            existing.reported_at_utc = now_utc
-            existing.source = data.source
-            existing.discord_user_id = data.discord_user_id
-            existing.note = data.note
-            existing.is_retroactive = False
-            existing.retro_reason = None
-        await db.commit()
-        await db.refresh(existing)
+    existing = await _upsert_checkin(
+        prayer_window_id=window.id,
+        status_raw=data.status,
+        status_scored=scored_status,
+        reported_at_utc=now_utc,
+        source=data.source,
+        discord_user_id=data.discord_user_id,
+        note=data.note,
+        is_retroactive=False,
+        retro_reason=None,
+    )
     return {
         "prayer_date": _format_date(prayer_date),
         "prayer_name": data.prayer_name,
@@ -199,37 +287,21 @@ async def log_prayer_checkin(data: PrayerCheckinRequest) -> dict:
 
 async def log_prayer_checkin_retroactive(data: PrayerRetroactiveCheckinRequest) -> dict:
     prayer_date = _parse_date(data.prayer_date)
-    window = await _get_window_or_raise(prayer_date, data.prayer_name)
+    window = await _get_window_or_raise(prayer_date, data.prayer_name, data.prayer_window_id)
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     scored_status = _choose_scored_status(data.status, is_retroactive=True)
 
-    async with async_session() as db:
-        existing_result = await db.execute(select(PrayerCheckin).where(PrayerCheckin.prayer_window_id == window.id))
-        existing = existing_result.scalar_one_or_none()
-        if not existing:
-            existing = PrayerCheckin(
-                prayer_window_id=window.id,
-                status_raw=data.status,
-                status_scored=scored_status,
-                reported_at_utc=now_utc,
-                source=data.source,
-                discord_user_id=data.discord_user_id,
-                note=data.note,
-                is_retroactive=True,
-                retro_reason="manual_retroactive",
-            )
-            db.add(existing)
-        else:
-            existing.status_raw = data.status
-            existing.status_scored = scored_status
-            existing.reported_at_utc = now_utc
-            existing.source = data.source
-            existing.discord_user_id = data.discord_user_id
-            existing.note = data.note
-            existing.is_retroactive = True
-            existing.retro_reason = "manual_retroactive"
-        await db.commit()
-        await db.refresh(existing)
+    existing = await _upsert_checkin(
+        prayer_window_id=window.id,
+        status_raw=data.status,
+        status_scored=scored_status,
+        reported_at_utc=now_utc,
+        source=data.source,
+        discord_user_id=data.discord_user_id,
+        note=data.note,
+        is_retroactive=True,
+        retro_reason="manual_retroactive",
+    )
     return {
         "prayer_date": _format_date(prayer_date),
         "prayer_name": data.prayer_name,
@@ -301,6 +373,7 @@ async def auto_mark_unknown_expired() -> int:
 
 async def get_due_prayer_reminders() -> list[dict]:
     schedule = await get_today_schedule()
+    profile = await get_or_create_profile()
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     channel_name = await _get_prayer_channel_name()
     async with async_session() as db:
@@ -308,6 +381,7 @@ async def get_due_prayer_reminders() -> list[dict]:
             select(PrayerWindow)
             .outerjoin(PrayerReminder, PrayerReminder.prayer_window_id == PrayerWindow.id)
             .where(PrayerWindow.local_date == _parse_date(schedule["date"]))
+            .where(*_profile_window_filters(profile))
             .where(PrayerWindow.starts_at_utc <= now_utc)
             .where(PrayerWindow.ends_at_utc > now_utc)
             .where(PrayerReminder.id.is_(None))

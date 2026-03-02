@@ -436,6 +436,7 @@ class PrayerScheduleTodayResponse(BaseModel):
 
 
 class PrayerCheckinRequest(BaseModel):
+    prayer_window_id: Optional[int] = Field(default=None, gt=0)
     prayer_date: str
     prayer_name: Literal["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
     status: Literal["on_time", "late", "missed"]
@@ -445,6 +446,7 @@ class PrayerCheckinRequest(BaseModel):
 
 
 class PrayerRetroactiveCheckinRequest(BaseModel):
+    prayer_window_id: Optional[int] = Field(default=None, gt=0)
     prayer_date: str
     prayer_name: Literal["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
     status: Literal["on_time", "late", "missed"]

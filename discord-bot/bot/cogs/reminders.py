@@ -211,7 +211,7 @@ class RemindersCog(commands.Cog, name="Reminders"):
                     "✅ on-time | 🕒 late | ❌ missed"
                 )
                 embed = discord.Embed(title=title, description=desc, color=0x16A34A)
-                embed.set_footer(text=f"prayer:{item['prayer_date']}:{item['prayer_name']}")
+                embed.set_footer(text=f"prayer:{item['prayer_date']}:{item['prayer_name']}:{item['window_id']}")
                 msg = await channel.send(embed=embed)
                 for emoji in PRAYER_EMOJI_TO_STATUS:
                     await msg.add_reaction(emoji)
@@ -269,9 +269,13 @@ class RemindersCog(commands.Cog, name="Reminders"):
         footer = (embed.footer.text or "").strip() if embed.footer else ""
         if not footer.startswith("prayer:"):
             return
-        try:
-            _, prayer_date, prayer_name = footer.split(":")
-        except Exception:
+        parts = footer.split(":")
+        if len(parts) == 4:
+            _, prayer_date, prayer_name, raw_window_id = parts
+        elif len(parts) == 3:
+            _, prayer_date, prayer_name = parts
+            raw_window_id = ""
+        else:
             return
 
         status = PRAYER_EMOJI_TO_STATUS[emoji]
@@ -282,6 +286,8 @@ class RemindersCog(commands.Cog, name="Reminders"):
             "source": "discord_reaction",
             "discord_user_id": str(payload.user_id),
         }
+        if raw_window_id.isdigit():
+            payload_data["prayer_window_id"] = int(raw_window_id)
         try:
             await api_post("/prayer/checkin", payload_data)
             await channel.send(f"Logged `{prayer_name}` for {prayer_date}: {status}.")
