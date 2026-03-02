@@ -65,6 +65,10 @@ def run_migrations() -> None:
                 cur.execute("ALTER TABLE pending_actions ADD COLUMN reviewed_by VARCHAR(120)")
             if "review_source" not in pending_cols:
                 cur.execute("ALTER TABLE pending_actions ADD COLUMN review_source VARCHAR(40)")
+        if "memory" in existing_tables:
+            memory_cols = {row[1] for row in cur.execute("PRAGMA table_info(memory)").fetchall()}
+            if "session_id" not in memory_cols:
+                cur.execute("ALTER TABLE memory ADD COLUMN session_id INTEGER")
 
         cur.execute(
             """
@@ -93,6 +97,7 @@ async def init_db():
     from app.models import (  # noqa: F401
         Agent,
         AuditLog,
+        ChatSession,
         DeenHabit,
         LifeCheckin,
         LifeItem,
@@ -102,6 +107,8 @@ async def init_db():
         PrayerReminder,
         PrayerWindow,
         ProviderConfig,
+        QuranBookmark,
+        QuranReading,
         UserProfile,
     )
 

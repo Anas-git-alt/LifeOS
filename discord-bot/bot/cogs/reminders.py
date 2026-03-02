@@ -109,17 +109,46 @@ class RemindersCog(commands.Cog, name="Reminders"):
             await ctx.send(f"Failed to log retroactive prayer: {str(exc)[:200]}")
 
     @commands.command(name="quran")
-    async def quran(self, ctx, juz: int, pages: int = 0, *, note: str = ""):
-        """Log Quran reading: !quran 2 4 [note]."""
-        today = datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
+    async def quran(self, ctx, end_page: int, start_page: int = 0, *, note: str = ""):
+        """Log Quran reading: !quran 25 (auto-start from bookmark) or !quran 25 10 (pages 10-25)."""
         try:
             result = await api_post(
-                "/prayer/habits/quran",
-                {"date": today, "juz": juz, "pages": pages, "note": note or None},
+                "/prayer/habits/quran/log",
+                {
+                    "end_page": end_page,
+                    "start_page": start_page if start_page > 0 else None,
+                    "note": note or None,
+                    "source": "discord",
+                },
             )
-            await ctx.send(f"📖 Quran logged ({result['local_date']}): juz={juz}, pages={pages}.")
+            await ctx.send(
+                f"📖 Quran logged ({result['local_date']}): pages {result['start_page']}–{result['end_page']} "
+                f"({result['pages_read']} pages read)."
+            )
         except Exception as exc:
             await ctx.send(f"Failed to log Quran progress: {str(exc)[:180]}")
+
+    @commands.command(name="quranprogress")
+    async def quranprogress(self, ctx):
+        """Show Quran reading progress and current bookmark."""
+        try:
+            data = await api_get("/prayer/habits/quran/progress")
+            embed = discord.Embed(
+                title="📖 Quran Progress",
+                description=(
+                    f"**Current Bookmark:** Page {data['current_page']} of {data['total_pages']}\n"
+                    f"**Total Pages Read:** {data['pages_read_total']}\n"
+                    f"**Khatma Progress:** {data['completion_pct']}%"
+                ),
+                color=0x16A34A,
+            )
+            if data.get("recent_readings"):
+                recent = data["recent_readings"][:5]
+                lines = [f"• p.{r['start_page']}–{r['end_page']} ({r['pages_read']}p) — {r['local_date']}" for r in recent]
+                embed.add_field(name="Recent", value="\n".join(lines), inline=False)
+            await ctx.send(embed=embed)
+        except Exception as exc:
+            await ctx.send(f"Failed to get Quran progress: {str(exc)[:180]}")
 
     @commands.command(name="tahajjud")
     async def tahajjud(self, ctx, state: str, prayer_date: str | None = None):
@@ -294,6 +323,27 @@ class RemindersCog(commands.Cog, name="Reminders"):
         except Exception as exc:
             await channel.send(f"Failed to log prayer check-in: {str(exc)[:200]}")
 
+    @commands.command(name="goal")
+    async def create_goal(self, ctx, domain: str, *, title: str):
+        """Create a goal: !goal deen Memorize Surat Al-Baqara."""
+        valid_domains = {"deen", "family", "work", "health", "planning"}
+        if domain.lower() not in valid_domains:
+            await ctx.send(f"Invalid domain. Use: {', '.join(sorted(valid_domains))}")
+            return
+        try:
+            result = await api_post(
+                "/life/items",
+                {
+                    "domain": domain.lower(),
+                    "title": title.strip(),
+                    "kind": "goal",
+                    "priority": "medium",
+                    "source_agent": "discord",
+                },
+            )
+            await ctx.send(f"🎯 Goal created (#{result['id']}): **{result['title']}** [{result['domain']}]")
+        except Exception as exc:
+            await ctx.send(f"Failed to create goal: {str(exc)[:180]}")
 
 async def setup(bot):
     await bot.add_cog(RemindersCog(bot))

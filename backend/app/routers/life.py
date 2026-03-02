@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models import (
+    GoalProgressResponse,
     LifeCheckinCreate,
     LifeCheckinResponse,
     LifeItemCreate,
@@ -11,7 +12,7 @@ from app.models import (
     TodayAgendaResponse,
 )
 from app.security import require_api_token
-from app.services.life import add_checkin, create_life_item, get_today_agenda, list_life_items, update_life_item
+from app.services.life import add_checkin, create_life_item, get_goal_progress, get_today_agenda, list_life_items, update_life_item
 
 router = APIRouter()
 
@@ -62,3 +63,15 @@ async def get_today():
         overdue=[LifeItemResponse.model_validate(item) for item in agenda["overdue"]],
         domain_summary=agenda["domain_summary"],
     )
+
+
+@router.get(
+    "/items/{item_id}/progress",
+    response_model=GoalProgressResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def get_item_progress(item_id: int):
+    result = await get_goal_progress(item_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Life item not found")
+    return GoalProgressResponse.model_validate(result)

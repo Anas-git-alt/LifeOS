@@ -1,6 +1,6 @@
 # 🧠 LifeOS — Free Self-Hosted AI Agent System
 
-> Discord-first, approval-gated AI agents for life organizing. Runs on WSL2 & VPS via Docker Compose. $0 by default.
+> Discord-first, session-aware AI agents for life organizing. Runs on WSL2 & VPS via Docker Compose. $0 by default.
 
 Production docs:
 - `docs/LOCAL_PROD_RUNBOOK.md`
@@ -31,8 +31,8 @@ docker compose up --build -d
 
 # 5. Verify
 docker compose ps        # All services "Up"
-curl http://localhost:8000/api/health  # {"status":"healthy"}
-# Open http://localhost:3000 for WebUI
+curl http://localhost:8100/api/health  # {"status":"healthy"}
+# Open http://localhost:3100 for WebUI
 ```
 
 ---
@@ -41,9 +41,9 @@ curl http://localhost:8000/api/health  # {"status":"healthy"}
 
 | Service | Purpose | Port | Volumes | Key Env Vars |
 |---|---|---|---|---|
-| **backend** | FastAPI API + agent orchestrator + scheduler | 8000 | `./storage`, `./skills` | All LLM keys, `DATABASE_URL` |
+| **backend** | FastAPI API + agent orchestrator + scheduler | `8100 -> 8000` | `./storage`, `./skills` | All LLM keys, `DATABASE_URL` |
 | **discord-bot** | Discord.py bot with cogs | — | — | `DISCORD_BOT_TOKEN`, `BACKEND_URL` |
-| **webui** | React SPA control plane (nginx) | 3000 | — | — (proxies to backend) |
+| **webui** | React SPA control plane (nginx) | `3100 -> 80` | — | — (proxies to backend) |
 
 ---
 
@@ -175,15 +175,15 @@ docker compose ps
 
 ```bash
 # Backend health
-curl http://localhost:8000/api/health
+curl http://localhost:8100/api/health
 # Expected: {"status":"healthy","service":"lifeos-backend","version":"0.1.0"}
 
 # List agents
-curl http://localhost:8000/api/agents/
-# Expected: 6 default agents
+curl http://localhost:8100/api/agents/
+# Expected: 7 default agents (including `sandbox`)
 
 # WebUI
-# Open http://localhost:3000 in your browser
+# Open http://localhost:3100 in your browser
 
 # Discord
 # In any channel, type: !status
@@ -199,7 +199,7 @@ curl http://localhost:8000/api/agents/
 | Bot not responding in Discord | Check `DISCORD_BOT_TOKEN` in `.venv/.env`; verify Message Content Intent is ON |
 | Backend crash on startup | Run `docker compose logs backend` — usually a missing env var |
 | WebUI blank page | Check `docker compose logs webui`; ensure backend is healthy first |
-| Port 8000 already in use | `sudo lsof -i :8000` and kill the process, or change `BACKEND_PORT` |
+| Port 8100 already in use | `sudo lsof -i :8100` and kill the process, or change `BACKEND_PUBLIC_PORT` |
 | Can't connect to LLM | Verify API key in `.venv/.env`; check `!providers` in Discord |
 | SQLite locked error | Only one backend instance should run; `docker compose down` first |
 | WSL2 can't access internet | Run `wsl --shutdown` in PowerShell, then reopen Ubuntu |
@@ -254,8 +254,8 @@ sudo apt install -y ufw
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow ssh
-sudo ufw allow 3000/tcp   # WebUI (or restrict to your IP)
-# Do NOT expose 8000 directly — WebUI proxies to it
+sudo ufw allow 3100/tcp   # WebUI (or restrict to your IP)
+# Do NOT expose 8100 directly to public internet unless required
 sudo ufw enable
 ```
 
@@ -271,7 +271,7 @@ sudo apt update && sudo apt install -y caddy
 
 # Add to /etc/caddy/Caddyfile
 # yourdomain.com {
-#     reverse_proxy localhost:3000
+#     reverse_proxy localhost:3100
 # }
 
 sudo systemctl restart caddy
@@ -310,15 +310,22 @@ sudo systemctl enable fail2ban
 | **health-fitness** | Workout plans, meals, consistency tracking | #fitness-log | Daily 8am |
 | **daily-planner** | Morning briefing, ADHD time blocks, conflicts | #daily-plan | Daily 7am |
 | **weekly-review** | Sunday recap, wins/misses, next week goals | #weekly-review | Sunday 10am |
+| **sandbox** | General testing agent for prompts, tools, and experiments | — | Manual |
 
 ### Example Discord Commands
 
 ```
 !daily                    → Get today's schedule
+!sandbox Plan my week around work + prayer
 !ask prayer-deen Did I pray Dhuhr?
 !ask health-fitness I did 30 min yoga today
 !wife promised to get flowers tomorrow
 !workout upper body push, 40 mins
+!sessions sandbox         → List sandbox sessions
+!newsession sandbox Focus week plan
+!usesession sandbox 12
+!history sandbox          → Show active session history
+!clearsession sandbox     → Reset active session context
 !prayer                   → Log a prayer
 !prayertoday              → Show today's real prayer windows
 !prayerlog 2026-03-01 Fajr late overslept
@@ -333,6 +340,35 @@ sudo systemctl enable fail2ban
 !providers                → LLM provider status
 !agents                   → List all agents
 ```
+
+### Chat Sessions (WebUI + Discord)
+
+- **WebUI**: open `Agents` → select an agent → `Chat` tab.
+- Create or switch sessions from the left panel.
+- Use **Clear context** to wipe only that session history.
+- Session titles auto-generate from the first 1-3 prompts.
+- **Discord** keeps an active session per `(guild, channel, user, agent)`:
+  - `!sessions <agent>`
+  - `!newsession <agent> [title]`
+  - `!usesession <agent> <session_id>`
+  - `!renamesession <agent> <session_id> <title>`
+  - `!clearsession <agent> [session_id]`
+  - `!history <agent> [session_id]`
+  - `!ask` and `!sandbox` automatically use the active session.
+
+### Deen Accountability (Prayer + Habits)
+
+- Prayer schedule + windows: `GET /api/prayer/schedule/today`
+- Prayer check-ins:
+  - Real-time: `POST /api/prayer/checkin`
+  - Retroactive: `POST /api/prayer/checkin/retroactive`
+- Deen habits:
+  - Quran: `POST /api/prayer/habits/quran`
+  - Tahajjud: `POST /api/prayer/habits/tahajjud`
+  - Adhkar: `POST /api/prayer/habits/adhkar`
+- Weekly metrics: `GET /api/prayer/weekly-summary` (on-time rate, completion, retroactive logs, Quran, tahajjud, adhkar)
+- Discord prayer reminders support reaction logging:
+  - `✅` on-time, `🕒` late, `❌` missed
 
 ### Sample Daily Report
 
@@ -425,7 +461,7 @@ git pull origin main
 docker compose up --build -d
 
 # 4. Verify
-curl http://localhost:8000/api/health
+curl http://localhost:8100/api/health
 # Type !status in Discord
 
 # 5. If broken, rollback
@@ -502,17 +538,19 @@ User ──► WebUI  ──────────────────► 
                                     Approval Queue     Google/OpenAI)
                                           ↕
                                    SQLite Database
-                                   (agents, memory,
-                                    approvals, audit)
+                                   (agents, chat_sessions,
+                                    memory, prayer windows,
+                                    deen habits, approvals, audit)
 ```
 
 ### Approval Flow
 
-1. Agent drafts action → saved as `PENDING` in database
+1. Agent drafts action and is risk-classified (`low` / `medium` / `high`)
 2. Bot posts to `#approval-queue` with ✅/❌ reactions
-3. User approves via Discord reaction OR WebUI button OR `!approve <id>`
-4. If approved → action executes; if rejected → logged and discarded
-5. All decisions logged in audit_log table
+3. Medium/high-risk actions become `PENDING`; low-risk responses can return immediately
+4. User approves via Discord reaction OR WebUI button OR `!approve <id>`
+5. If approved → action executes; if rejected → logged and discarded
+6. All decisions logged in audit_log table
 
 ---
 
@@ -533,10 +571,10 @@ User ──► WebUI  ──────────────────► 
 ## 🔒 Security Notes
 
 - Secrets stored in `.venv/.env` — excluded by `.gitignore`
-- All agent actions require approval (never auto-execute)
+- Approvals are risk-based (`medium/high` require approval, `low` can auto-complete)
 - Docker containers run as non-root where possible
-- No external ports exposed by default except 3000 (webUI) and 8000 (API)
-- On VPS: UFW firewall blocks everything except SSH + 3000
+- Default localhost bindings are `127.0.0.1:3100` (webui) and `127.0.0.1:8100` (backend)
+- On VPS: expose WebUI with reverse proxy and keep backend internal where possible
 - API keys have minimal scopes — rotate quarterly
 - **Never commit `.venv/.env`** — the backup script checks for this
 

@@ -4,12 +4,37 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import Agent, AgentCreate, AgentResponse, AgentUpdate, ChatRequest, ChatResponse
+from app.models import (
+    Agent,
+    AgentCreate,
+    AgentResponse,
+    AgentUpdate,
+    ChatMessageResponse,
+    ChatRequest,
+    ChatResponse,
+    ChatSessionCreate,
+    ChatSessionResponse,
+    ChatSessionUpdate,
+)
 from app.security import require_api_token
+from app.services.chat_sessions import (
+    clear_session_context,
+    create_session,
+    get_session_messages,
+    list_sessions,
+    rename_session,
+)
 from app.services.orchestrator import handle_message, run_scheduled_agent
 from app.services.scheduler import add_agent_job, remove_agent_job
 
 router = APIRouter()
+
+
+async def _ensure_agent_exists(agent_name: str) -> None:
+    async with async_session() as db:
+        result = await db.execute(select(Agent).where(Agent.name == agent_name))
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
 
 @router.get("/", response_model=list[AgentResponse])
@@ -88,13 +113,83 @@ async def chat_with_agent(data: ChatRequest):
         agent_name=data.agent_name,
         user_message=data.message,
         approval_policy=data.approval_policy,
+        session_id=data.session_id,
+        session_enabled=True,
     )
+    if result.get("error_code") == "session_not_found":
+        raise HTTPException(status_code=404, detail=result["response"])
     return ChatResponse(
         agent_name=data.agent_name,
         response=result["response"],
         pending_action_id=result.get("pending_action_id"),
         risk_level=result.get("risk_level", "low"),
+        session_id=result.get("session_id"),
+        session_title=result.get("session_title"),
     )
+
+
+@router.get(
+    "/{agent_name}/sessions",
+    response_model=list[ChatSessionResponse],
+    dependencies=[Depends(require_api_token)],
+)
+async def list_agent_sessions(agent_name: str):
+    await _ensure_agent_exists(agent_name)
+    sessions = await list_sessions(agent_name)
+    return [ChatSessionResponse.model_validate(session) for session in sessions]
+
+
+@router.post(
+    "/{agent_name}/sessions",
+    response_model=ChatSessionResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def create_agent_session(agent_name: str, data: ChatSessionCreate):
+    await _ensure_agent_exists(agent_name)
+    session = await create_session(agent_name=agent_name, title=data.title)
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.put(
+    "/{agent_name}/sessions/{session_id}",
+    response_model=ChatSessionResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def update_agent_session(agent_name: str, session_id: int, data: ChatSessionUpdate):
+    await _ensure_agent_exists(agent_name)
+    try:
+        session = await rename_session(agent_name=agent_name, session_id=session_id, title=data.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.post(
+    "/{agent_name}/sessions/{session_id}/clear",
+    response_model=ChatSessionResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def clear_agent_session(agent_name: str, session_id: int):
+    await _ensure_agent_exists(agent_name)
+    try:
+        session = await clear_session_context(agent_name=agent_name, session_id=session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.get(
+    "/{agent_name}/sessions/{session_id}/messages",
+    response_model=list[ChatMessageResponse],
+    dependencies=[Depends(require_api_token)],
+)
+async def list_agent_session_messages(agent_name: str, session_id: int, limit: int = 200):
+    await _ensure_agent_exists(agent_name)
+    try:
+        messages = await get_session_messages(agent_name=agent_name, session_id=session_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [ChatMessageResponse.model_validate(message) for message in messages]
 
 
 @router.post(

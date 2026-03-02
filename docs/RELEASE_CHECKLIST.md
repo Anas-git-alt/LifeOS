@@ -13,10 +13,14 @@
 
 ## Functional
 - [ ] `!today`, `!add`, `!done`, `!miss`, `!focus`, `!profile` commands work.
+- [ ] Session commands work: `!sessions`, `!newsession`, `!usesession`, `!renamesession`, `!clearsession`, `!history`.
+- [ ] `!ask` and `!sandbox` keep context in the active session per user/channel/agent.
 - [ ] `!prayertoday`, `!prayerlog`, `!quran`, `!tahajjud`, `!adhkar` commands work.
 - [ ] Approvals are owner-only in command and reaction paths.
 - [ ] Prayer reaction check-ins (`✅/🕒/❌`) log correctly for reminder messages.
 - [ ] WebUI Today/Life Items/Profile pages load and mutate data with token.
+- [ ] WebUI agent Chat tab supports create/switch/rename/clear session and message history restore.
+- [ ] `/api/agents/{agent}/sessions*` endpoints work end-to-end.
 - [ ] `/api/prayer/weekly-summary` includes prayer accuracy, retroactive count, Quran, tahajjud, and adhkar metrics.
 
 ## Data Safety

@@ -2,7 +2,7 @@
 
 import enum
 from datetime import date, datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 from sqlalchemy import (
@@ -53,6 +53,24 @@ class Agent(Base):
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False, default="New chat")
+    prompt_seed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class PendingAction(Base):
@@ -106,6 +124,7 @@ class MemoryEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(
@@ -147,6 +166,7 @@ class LifeItem(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     status: Mapped[str] = mapped_column(String(20), default="open")
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    start_date: Mapped[Optional[date]] = mapped_column(nullable=True)
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(20), default="low")
@@ -236,6 +256,32 @@ class DeenHabit(Base):
     )
 
 
+class QuranReading(Base):
+    __tablename__ = "quran_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    local_date: Mapped[date] = mapped_column(nullable=False)
+    start_page: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_page: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class QuranBookmark(Base):
+    __tablename__ = "quran_bookmark"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    current_page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class AgentCreate(BaseModel):
     name: str
     description: str = ""
@@ -313,6 +359,7 @@ class ChatRequest(BaseModel):
     agent_name: str
     message: str
     approval_policy: str = "auto"
+    session_id: Optional[int] = None
 
 
 class ChatResponse(BaseModel):
@@ -320,6 +367,39 @@ class ChatResponse(BaseModel):
     response: str
     pending_action_id: Optional[int] = None
     risk_level: str = "low"
+    session_id: Optional[int] = None
+    session_title: Optional[str] = None
+
+
+class ChatSessionCreate(BaseModel):
+    title: Optional[str] = None
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str
+
+
+class ChatSessionResponse(BaseModel):
+    id: int
+    agent_name: str
+    title: str
+    prompt_seed_count: int
+    created_at: datetime
+    updated_at: datetime
+    last_message_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class ProfileUpdate(BaseModel):
@@ -359,6 +439,7 @@ class LifeItemCreate(BaseModel):
     notes: Optional[str] = None
     priority: str = "medium"
     due_at: Optional[datetime] = None
+    start_date: Optional[str] = None
     recurrence_rule: Optional[str] = None
     source_agent: Optional[str] = None
     risk_level: str = "low"
@@ -383,6 +464,7 @@ class LifeItemResponse(BaseModel):
     priority: str
     status: str
     due_at: Optional[datetime]
+    start_date: Optional[str] = None
     recurrence_rule: Optional[str]
     source_agent: Optional[str]
     risk_level: str
@@ -471,6 +553,38 @@ class QuranHabitRequest(BaseModel):
     note: Optional[str] = None
 
 
+class QuranReadingRequest(BaseModel):
+    start_page: Optional[int] = Field(default=None, ge=1, le=604)
+    end_page: int = Field(ge=1, le=604)
+    note: Optional[str] = None
+    source: str = "api"
+
+
+class QuranReadingResponse(BaseModel):
+    id: int
+    local_date: str
+    start_page: int
+    end_page: int
+    pages_read: int
+    note: Optional[str]
+    source: str
+
+    class Config:
+        from_attributes = True
+
+
+class QuranProgressResponse(BaseModel):
+    current_page: int
+    total_pages: int = 604
+    pages_read_total: int
+    completion_pct: float
+    recent_readings: list[QuranReadingResponse]
+
+
+class QuranBookmarkResponse(BaseModel):
+    current_page: int
+
+
 class TahajjudHabitRequest(BaseModel):
     date: Optional[str] = None
     done: bool
@@ -508,3 +622,31 @@ class PrayerWeeklySummaryResponse(BaseModel):
     adhkar_morning_done: int
     adhkar_evening_done: int
     guidance: list[str]
+
+
+class PrayerDayStatus(BaseModel):
+    date: str
+    prayers: dict[str, Optional[str]]  # {Fajr: on_time|late|missed|unknown|null, ...}
+    window_ids: dict[str, Optional[int]]  # {Fajr: 42, ...}
+
+
+class PrayerDashboardResponse(BaseModel):
+    days: list[PrayerDayStatus]
+    summary: dict[str, Any]  # on_time_count, late_count, etc.
+
+
+class PrayerCheckinEditRequest(BaseModel):
+    prayer_date: str
+    prayer_name: Literal["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    status: Literal["on_time", "late", "missed"]
+    note: Optional[str] = None
+
+
+class GoalProgressResponse(BaseModel):
+    item: LifeItemResponse
+    days_since_start: Optional[int]
+    checkin_count: int
+    done_count: int
+    partial_count: int
+    missed_count: int
+    checkins: list[dict]

@@ -32,12 +32,35 @@ export const getAgent = (name) => request(`/agents/${name}`);
 export const createAgent = (data) => request("/agents/", { method: "POST", body: JSON.stringify(data) });
 export const updateAgent = (name, data) => request(`/agents/${name}`, { method: "PUT", body: JSON.stringify(data) });
 export const deleteAgent = (name) => request(`/agents/${name}`, { method: "DELETE" });
-export const chatWithAgent = (agentName, message, approvalPolicy = "auto") =>
+export const chatWithAgent = (agentName, message, approvalPolicy = "auto", sessionId = null) =>
   request("/agents/chat", {
     method: "POST",
-    body: JSON.stringify({ agent_name: agentName, message, approval_policy: approvalPolicy }),
+    body: JSON.stringify({
+      agent_name: agentName,
+      message,
+      approval_policy: approvalPolicy,
+      session_id: sessionId,
+    }),
   });
 export const runScheduledAgent = (agentName) => request(`/agents/${agentName}/run-scheduled`, { method: "POST" });
+export const listAgentSessions = (agentName) => request(`/agents/${agentName}/sessions`);
+export const createAgentSession = (agentName, title = null) =>
+  request(`/agents/${agentName}/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+export const renameAgentSession = (agentName, sessionId, title) =>
+  request(`/agents/${agentName}/sessions/${sessionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ title }),
+  });
+export const clearAgentSession = (agentName, sessionId) =>
+  request(`/agents/${agentName}/sessions/${sessionId}/clear`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+export const getAgentSessionMessages = (agentName, sessionId, limit = 200) =>
+  request(`/agents/${agentName}/sessions/${sessionId}/messages?limit=${limit}`);
 
 export const getPendingActions = () => request("/approvals/");
 export const getAllActions = () => request("/approvals/all");
@@ -73,3 +96,24 @@ export const updateLifeItem = (id, data) =>
 export const checkinLifeItem = (id, result, note = "") =>
   request(`/life/items/${id}/checkin`, { method: "POST", body: JSON.stringify({ result, note }) });
 export const getTodayAgenda = () => request("/life/today");
+export const getGoalProgress = (itemId) => request(`/life/items/${itemId}/progress`);
+
+// Prayer dashboard
+export const getPrayerDashboard = (endDate = null) => {
+  const query = endDate ? `?end_date=${endDate}` : "";
+  return request(`/prayer/dashboard${query}`);
+};
+export const editPrayerCheckin = (prayerDate, prayerName, status, note = null) =>
+  request("/prayer/checkin/edit", {
+    method: "PUT",
+    body: JSON.stringify({ prayer_date: prayerDate, prayer_name: prayerName, status, note }),
+  });
+
+// Quran page-based tracking
+export const logQuranReading = (endPage, startPage = null, note = null) =>
+  request("/prayer/habits/quran/log", {
+    method: "POST",
+    body: JSON.stringify({ end_page: endPage, start_page: startPage, note }),
+  });
+export const getQuranProgress = () => request("/prayer/habits/quran/progress");
+export const getQuranBookmark = () => request("/prayer/habits/quran/bookmark");

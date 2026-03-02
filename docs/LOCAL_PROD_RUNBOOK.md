@@ -21,9 +21,15 @@ Port overrides (optional):
 ## 3) Daily Ops
 1. Check status in Discord with `!status`.
 2. Review pending approvals via `!pending`.
-3. Review focus agenda via `!today` or WebUI Today page.
-4. Verify prayer schedule with `!prayertoday`.
-5. Check weekly deen metrics with `GET /api/prayer/weekly-summary` (token required).
+3. Verify session-based chat controls:
+   - WebUI: Agents → select agent → Chat tab (create/switch/clear session).
+   - Discord: `!sessions sandbox`, `!newsession sandbox`, `!usesession sandbox <id>`, `!history sandbox`.
+4. Review focus agenda via `!today` or WebUI Today page.
+5. Verify Deen workflows:
+   - `!prayertoday`
+   - `!prayerlog YYYY-MM-DD <Fajr|Dhuhr|Asr|Maghrib|Isha> <on_time|late|missed> [note]`
+   - `!quran <juz> [pages]`, `!tahajjud <done|missed> [date]`, `!adhkar <morning|evening> <done|missed> [date]`
+6. Check weekly deen metrics with `GET /api/prayer/weekly-summary` (token required).
 
 ## 4) Backup and Restore
 1. Manual backup: `./scripts/backup.sh`
@@ -36,7 +42,11 @@ Port overrides (optional):
 2. `docker compose logs -f discord-bot`
 3. If token auth errors in WebUI, re-save token in token banner.
 4. If scheduler stops, restart backend container.
-5. If prayer reminders are missing:
+5. If chat sessions fail in Discord:
+   - Run `!sessions <agent>` to verify session ID exists
+   - Run `!usesession <agent> <session_id>` or `!newsession <agent>`
+   - Confirm backend is reachable from bot (`docker compose logs -f discord-bot`)
+6. If prayer reminders are missing:
    - Verify profile city/country/timezone in `!profile`
    - Verify `DISCORD_OWNER_IDS` includes your user ID
    - Check `GET /api/prayer/schedule/today` and `GET /api/prayer/due-reminders`

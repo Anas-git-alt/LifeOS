@@ -4,9 +4,12 @@ import AgentConfig from "./components/AgentConfig";
 import AgentList from "./components/AgentList";
 import ApprovalQueue from "./components/ApprovalQueue";
 import Dashboard from "./components/Dashboard";
+import GoalProgress from "./components/GoalProgress";
 import LifeItems from "./components/LifeItems";
+import PrayerDashboard from "./components/PrayerDashboard";
 import ProfileSettings from "./components/ProfileSettings";
 import ProviderConfig from "./components/ProviderConfig";
+import QuranLog from "./components/QuranLog";
 import Sidebar from "./components/Sidebar";
 import TodayView from "./components/TodayView";
 import TokenBanner from "./components/TokenBanner";
@@ -20,9 +23,21 @@ const PAGE_META = {
     title: "Today Focus",
     subtitle: "Plan the day with priorities, due items, and current context.",
   },
+  "prayer-dashboard": {
+    title: "Prayer Dashboard",
+    subtitle: "Weekly prayer completion grid — adjust any prayer status.",
+  },
+  quran: {
+    title: "Quran Log",
+    subtitle: "Track your reading page by page with auto-resume bookmark.",
+  },
   life: {
     title: "Life Items",
     subtitle: "Capture and review tasks across deen, family, work, and health.",
+  },
+  "goal-progress": {
+    title: "Goal Progress",
+    subtitle: "Track progress, check-ins, and completion over time.",
   },
   agents: {
     title: "Agents",
@@ -49,6 +64,7 @@ const PAGE_META = {
 export default function App() {
   const [page, setPage] = useState("dashboard");
   const [selectedAgent, setSelectedAgent] = useState(null);
+  const [selectedGoalId, setSelectedGoalId] = useState(null);
   const [hasToken, setHasToken] = useState(() => Boolean((localStorage.getItem("lifeos_token") || "").trim()));
   const [showTokenEditor, setShowTokenEditor] = useState(() => !Boolean((localStorage.getItem("lifeos_token") || "").trim()));
 
@@ -66,14 +82,25 @@ export default function App() {
     setPage("agent-config");
   };
 
+  const handleGoalSelect = (itemId) => {
+    setSelectedGoalId(itemId);
+    setPage("goal-progress");
+  };
+
   const renderPage = () => {
     switch (page) {
       case "dashboard":
         return <Dashboard onChangeToken={() => setShowTokenEditor(true)} />;
       case "today":
         return <TodayView />;
+      case "prayer-dashboard":
+        return <PrayerDashboard />;
+      case "quran":
+        return <QuranLog />;
       case "life":
-        return <LifeItems />;
+        return <LifeItems onGoalSelect={handleGoalSelect} />;
+      case "goal-progress":
+        return <GoalProgress itemId={selectedGoalId} onBack={() => setPage("life")} />;
       case "agents":
         return <AgentList onSelect={handleAgentSelect} />;
       case "agent-config":
@@ -143,6 +170,18 @@ export default function App() {
                   Dashboard
                 </button>
                 <button
+                  className={`quick-nav-btn ${page === "prayer-dashboard" ? "active" : ""}`}
+                  onClick={() => setPage("prayer-dashboard")}
+                >
+                  🕌 Prayer
+                </button>
+                <button
+                  className={`quick-nav-btn ${page === "quran" ? "active" : ""}`}
+                  onClick={() => setPage("quran")}
+                >
+                  📖 Quran
+                </button>
+                <button
                   className={`quick-nav-btn ${page === "agents" ? "active" : ""}`}
                   onClick={() => setPage("agents")}
                 >
@@ -168,3 +207,4 @@ export default function App() {
     </div>
   );
 }
+

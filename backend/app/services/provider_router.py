@@ -41,6 +41,14 @@ PROVIDERS = {
 }
 
 
+class LLMProvidersExhaustedError(RuntimeError):
+    """Raised when all configured providers fail."""
+
+    def __init__(self, failures: list[str]):
+        self.failures = failures
+        super().__init__(f"All LLM providers failed ({', '.join(failures)}).")
+
+
 def _summarize_failure(provider: str, exc: Exception) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return f"{provider}:timeout"
@@ -86,7 +94,7 @@ async def chat_completion(
             failures.append(_summarize_failure(provider_name, exc))
             continue
 
-    raise RuntimeError(f"All LLM providers failed ({', '.join(failures)}).")
+    raise LLMProvidersExhaustedError(failures)
 
 
 async def _call_provider(
@@ -138,7 +146,12 @@ async def _call_provider(
             if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
                 raise
         if attempt < 3:
-            await asyncio.sleep(2 ** (attempt - 1))
+            delay = 2 ** (attempt - 1)
+            if isinstance(last_exc, httpx.HTTPStatusError) and last_exc.response.status_code == 429:
+                retry_after = last_exc.response.headers.get("Retry-After", "").strip()
+                if retry_after.isdigit():
+                    delay = max(delay, min(int(retry_after), 15))
+            await asyncio.sleep(delay)
     if last_exc:
         raise last_exc
     raise RuntimeError(f"{provider} call failed without explicit exception")

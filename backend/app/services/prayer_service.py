@@ -466,3 +466,76 @@ async def refresh_today_and_tomorrow_windows() -> None:
     today = datetime.now(timezone.utc).astimezone(tz).date()
     await ensure_prayer_windows_for_date(today)
     await ensure_prayer_windows_for_date(today + timedelta(days=1))
+
+
+async def get_weekly_dashboard(target_date_str: str | None = None) -> dict:
+    """Return a 7-day x 5-prayer grid with checkin statuses for the dashboard."""
+    profile = await get_or_create_profile()
+    tz = ZoneInfo(profile.timezone)
+
+    if target_date_str:
+        end_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    else:
+        end_date = datetime.now(timezone.utc).astimezone(tz).date()
+    start_date = end_date - timedelta(days=6)
+
+    # Ensure windows exist for all 7 days
+    for i in range(7):
+        await ensure_prayer_windows_for_date(start_date + timedelta(days=i))
+
+    async with async_session() as db:
+        windows_result = await db.execute(
+            select(PrayerWindow)
+            .where(PrayerWindow.local_date >= start_date)
+            .where(PrayerWindow.local_date <= end_date)
+            .where(*_profile_window_filters(profile))
+        )
+        windows = list(windows_result.scalars().all())
+
+        window_ids = [w.id for w in windows]
+        checkins_result = await db.execute(
+            select(PrayerCheckin)
+            .where(PrayerCheckin.prayer_window_id.in_(window_ids))
+        ) if window_ids else None
+        checkins_by_window = {}
+        if checkins_result:
+            checkins_by_window = {c.prayer_window_id: c for c in checkins_result.scalars().all()}
+
+    # Build per-day prayer status
+    days = []
+    summary = {"on_time": 0, "late": 0, "missed": 0, "unknown": 0, "total": 0}
+
+    for i in range(7):
+        d = start_date + timedelta(days=i)
+        day_windows = [w for w in windows if w.local_date == d]
+        prayers: dict[str, str | None] = {}
+        window_id_map: dict[str, int | None] = {}
+
+        for prayer_name in PRAYER_ORDER:
+            window = next((w for w in day_windows if w.prayer_name == prayer_name), None)
+            if not window:
+                prayers[prayer_name] = None
+                window_id_map[prayer_name] = None
+                continue
+            window_id_map[prayer_name] = window.id
+            checkin = checkins_by_window.get(window.id)
+            if not checkin:
+                prayers[prayer_name] = None
+            else:
+                prayers[prayer_name] = checkin.status_scored
+                summary["total"] += 1
+                if checkin.status_scored in summary:
+                    summary[checkin.status_scored] += 1
+
+        days.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "prayers": prayers,
+            "window_ids": window_id_map,
+        })
+
+    # Count total expected prayers (windows with data)
+    total_windows = len([w for w in windows])
+    summary["total_windows"] = total_windows
+
+    return {"days": days, "summary": summary}
+

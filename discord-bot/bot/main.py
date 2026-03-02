@@ -58,10 +58,24 @@ async def custom_help(ctx):
         name="Agent",
         value=(
             "`!ask <agent> <message>`\n"
+            "`!sandbox <message>`\n"
             "`!agents`\n"
             "`!daily` `!weekly`\n"
             "`!today` `!focus`\n"
             "`!profile`"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Chat Sessions",
+        value=(
+            "`!sessions <agent>`\n"
+            "`!newsession <agent> [title]`\n"
+            "`!usesession <agent> <session_id>`\n"
+            "`!renamesession <agent> <session_id> <title>`\n"
+            "`!clearsession <agent> [session_id]`\n"
+            "`!history <agent> [session_id]`\n"
+            "Tip: `!ask` auto-uses your active session per channel."
         ),
         inline=False,
     )

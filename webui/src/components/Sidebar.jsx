@@ -9,6 +9,8 @@ export default function Sidebar({ currentPage, onNavigate }) {
       items: [
         { id: "dashboard", icon: "DB", label: "Dashboard" },
         { id: "today", icon: "TD", label: "Today" },
+        { id: "prayer-dashboard", icon: "🕌", label: "Prayer" },
+        { id: "quran", icon: "📖", label: "Quran" },
         { id: "life", icon: "LF", label: "Life Items" },
       ],
     },

@@ -31,7 +31,14 @@ async def list_life_items(domain: str | None = None, status: str | None = None) 
 
 async def create_life_item(data: LifeItemCreate) -> LifeItem:
     async with async_session() as db:
-        item = LifeItem(**data.model_dump())
+        dump = data.model_dump()
+        # Parse start_date string to date object
+        start_date_raw = dump.pop("start_date", None)
+        if start_date_raw and isinstance(start_date_raw, str):
+            dump["start_date"] = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
+        elif start_date_raw is None:
+            dump["start_date"] = None
+        item = LifeItem(**dump)
         db.add(item)
         await db.commit()
         await db.refresh(item)
@@ -126,3 +133,45 @@ async def get_today_agenda() -> dict:
             "overdue": overdue,
             "domain_summary": domain_summary,
         }
+
+
+async def get_goal_progress(item_id: int) -> dict | None:
+    """Return progress data for a specific goal/life item."""
+    async with async_session() as db:
+        result = await db.execute(select(LifeItem).where(LifeItem.id == item_id))
+        item = result.scalar_one_or_none()
+        if not item:
+            return None
+
+        checkins_result = await db.execute(
+            select(LifeCheckin)
+            .where(LifeCheckin.life_item_id == item_id)
+            .order_by(LifeCheckin.timestamp.desc())
+        )
+        checkins = list(checkins_result.scalars().all())
+
+    days_since_start = None
+    if item.start_date:
+        days_since_start = (datetime.now(timezone.utc).date() - item.start_date).days
+
+    done_count = sum(1 for c in checkins if c.result == "done")
+    partial_count = sum(1 for c in checkins if c.result == "partial")
+    missed_count = sum(1 for c in checkins if c.result == "missed")
+
+    return {
+        "item": item,
+        "days_since_start": days_since_start,
+        "checkin_count": len(checkins),
+        "done_count": done_count,
+        "partial_count": partial_count,
+        "missed_count": missed_count,
+        "checkins": [
+            {
+                "id": c.id,
+                "result": c.result,
+                "note": c.note,
+                "timestamp": c.timestamp.isoformat() if c.timestamp else None,
+            }
+            for c in checkins[:50]
+        ],
+    }

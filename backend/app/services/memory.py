@@ -8,29 +8,37 @@ from app.database import async_session
 from app.models import AuditLog, MemoryEntry
 
 
-async def get_context(agent_name: str, limit: int = 20) -> list[dict]:
+async def get_context(agent_name: str, limit: int = 20, session_id: int | None = None) -> list[dict]:
     async with async_session() as db:
-        result = await db.execute(
+        query = (
             select(MemoryEntry)
             .where(MemoryEntry.agent_name == agent_name)
             .order_by(MemoryEntry.timestamp.desc())
             .limit(limit)
         )
+        if session_id is None:
+            query = query.where(MemoryEntry.session_id.is_(None))
+        else:
+            query = query.where(MemoryEntry.session_id == session_id)
+        result = await db.execute(query)
         entries = list(result.scalars().all())
         entries.reverse()
         return [{"role": entry.role, "content": entry.content} for entry in entries]
 
 
-async def save_message(agent_name: str, role: str, content: str):
+async def save_message(agent_name: str, role: str, content: str, session_id: int | None = None):
     async with async_session() as db:
-        entry = MemoryEntry(agent_name=agent_name, role=role, content=content)
+        entry = MemoryEntry(agent_name=agent_name, role=role, content=content, session_id=session_id)
         db.add(entry)
         await db.commit()
 
 
-async def clear_memory(agent_name: str):
+async def clear_memory(agent_name: str, session_id: int | None = None):
     async with async_session() as db:
-        result = await db.execute(select(MemoryEntry).where(MemoryEntry.agent_name == agent_name))
+        query = select(MemoryEntry).where(MemoryEntry.agent_name == agent_name)
+        if session_id is not None:
+            query = query.where(MemoryEntry.session_id == session_id)
+        result = await db.execute(query)
         for entry in result.scalars().all():
             await db.delete(entry)
         await db.commit()

@@ -1,20 +1,26 @@
 """Agent orchestrator - routing, approval policy, and scheduled nudges."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import ActionStatus, Agent, AuditLog, PendingAction
+from app.models import ActionStatus, Agent, AuditLog, LifeItemCreate, PendingAction
+from app.services.chat_sessions import ensure_session, refresh_session_metadata
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message
 from app.services.memory import get_context, save_message
-from app.services.provider_router import chat_completion
+from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 from app.services.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
+LLM_UNAVAILABLE_MESSAGE = (
+    "I couldn't generate a response right now because AI providers are temporarily unavailable. "
+    "Please try again in a few minutes."
+)
 
 LOW_RISK_KEYWORDS = {
     "status",
@@ -121,25 +127,86 @@ async def _get_search_context(query: str) -> str:
         return ""
 
 
+_GOAL_PATTERN = re.compile(
+    r"\[GOAL\]\s*"
+    r'title\s*=\s*"([^"]+)"'
+    r'(?:\s+domain\s*=\s*"([^"]+)")?'
+    r'(?:\s+priority\s*=\s*"([^"]+)")?'
+    r'(?:\s+start_date\s*=\s*"([^"]+)")?'
+    r"\s*\[/GOAL\]",
+    re.IGNORECASE,
+)
+
+
+async def _extract_and_create_goals(response_text: str, agent_name: str) -> list[dict]:
+    """Parse [GOAL] blocks from agent response and create LifeItems."""
+    from app.services.life import create_life_item
+
+    created = []
+    for match in _GOAL_PATTERN.finditer(response_text):
+        title = match.group(1)
+        domain = match.group(2) or "planning"
+        priority = match.group(3) or "medium"
+        start_date = match.group(4) or None
+        try:
+            item_data = LifeItemCreate(
+                domain=domain,
+                title=title,
+                kind="goal",
+                priority=priority,
+                source_agent=agent_name,
+                start_date=start_date,
+            )
+            item = await create_life_item(item_data)
+            created.append({"id": item.id, "title": item.title, "domain": item.domain})
+            logger.info("agent_created_goal agent=%s title=%s id=%d", agent_name, title, item.id)
+        except Exception as exc:
+            logger.warning("Failed to create goal from agent response: %s", exc)
+    return created
+
+
 async def handle_message(
     agent_name: str,
     user_message: str,
     approval_policy: str = "auto",
     require_approval: Optional[bool] = None,
     source: str = "api",
+    session_id: Optional[int] = None,
+    session_enabled: bool = False,
 ) -> dict:
     """Process user text through an agent with policy-based approvals."""
+    active_session = None
+
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
         agent = result.scalar_one_or_none()
         if not agent:
-            return {"response": f"Agent '{agent_name}' not found.", "pending_action_id": None, "risk_level": "low"}
+            return {
+                "response": f"Agent '{agent_name}' not found.",
+                "pending_action_id": None,
+                "risk_level": "low",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
+            }
         if not agent.enabled:
             return {
                 "response": f"Agent '{agent_name}' is disabled.",
                 "pending_action_id": None,
                 "risk_level": "low",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
             }
+
+        if session_enabled:
+            try:
+                active_session = await ensure_session(agent_name=agent_name, session_id=session_id)
+            except ValueError as exc:
+                return {
+                    "response": str(exc),
+                    "pending_action_id": None,
+                    "risk_level": "low",
+                    "error_code": "session_not_found",
+                }
 
         system_prompt = (
             f"{agent.system_prompt}\n\n"
@@ -148,7 +215,11 @@ async def handle_message(
             "Use the date above for all date-sensitive responses.\n"
         )
 
-        context = await get_context(agent_name, limit=20)
+        context = await get_context(
+            agent_name,
+            limit=20,
+            session_id=active_session.id if active_session else None,
+        )
         messages = [{"role": "system", "content": system_prompt}, *context]
 
         final_user_content = user_message
@@ -186,12 +257,47 @@ async def handle_message(
                 fallback_provider=agent.fallback_provider,
                 fallback_model=agent.fallback_model,
             )
+        except LLMProvidersExhaustedError as exc:
+            logger.error("LLM providers exhausted for agent '%s': %s", agent_name, exc)
+            return {
+                "response": LLM_UNAVAILABLE_MESSAGE,
+                "pending_action_id": None,
+                "risk_level": "high",
+                "error_code": "llm_unavailable",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
+            }
         except Exception as exc:
             logger.error("LLM call failed for agent '%s': %s", agent_name, exc)
-            return {"response": f"LLM error: {exc}", "pending_action_id": None, "risk_level": "high"}
+            return {
+                "response": f"LLM error: {exc}",
+                "pending_action_id": None,
+                "risk_level": "high",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
+            }
 
-        await save_message(agent_name, "user", user_message)
-        await save_message(agent_name, "assistant", response_text)
+        await save_message(
+            agent_name,
+            "user",
+            user_message,
+            session_id=active_session.id if active_session else None,
+        )
+        await save_message(
+            agent_name,
+            "assistant",
+            response_text,
+            session_id=active_session.id if active_session else None,
+        )
+
+        if active_session:
+            active_session = await refresh_session_metadata(
+                agent_name=agent_name,
+                session_id=active_session.id,
+            )
+
+        # Extract and create goals from agent response
+        await _extract_and_create_goals(response_text, agent_name)
 
         pending_id = None
         needs_approval, risk_level, action_type = should_require_approval(
@@ -230,7 +336,13 @@ async def handle_message(
         )
         db.add(audit)
         await db.commit()
-        return {"response": response_text, "pending_action_id": pending_id, "risk_level": risk_level}
+        return {
+            "response": response_text,
+            "pending_action_id": pending_id,
+            "risk_level": risk_level,
+            "session_id": active_session.id if active_session else None,
+            "session_title": active_session.title if active_session else None,
+        }
 
 
 async def approve_action(action_id: int, reviewer: Optional[str] = None, source: str = "api") -> Optional[PendingAction]:
@@ -306,6 +418,9 @@ async def run_scheduled_agent(agent_name: str) -> dict:
         approval_policy="auto",
         source="scheduler",
     )
+    if run_result.get("error_code") == "llm_unavailable":
+        logger.warning("Scheduled run skipped for '%s': all providers unavailable", agent_name)
+        return {"status": "skipped", "reason": "llm_unavailable"}
     if run_result.get("pending_action_id"):
         return {"status": "pending_approval", "pending_action_id": run_result["pending_action_id"]}
     delivered = False
