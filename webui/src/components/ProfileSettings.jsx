@@ -4,6 +4,7 @@ import { getProfile, updateProfile } from "../api";
 export default function ProfileSettings() {
   const [form, setForm] = useState(null);
   const [message, setMessage] = useState("");
+  const isSuccessMessage = message === "Profile saved.";
 
   useEffect(() => {
     load();
@@ -46,7 +47,11 @@ export default function ProfileSettings() {
         <h1>Profile</h1>
         <p>Timezone, location, shift, and nudge preferences.</p>
       </header>
-      {message && <div className="glass-card" style={{ marginBottom: 14 }}>{message}</div>}
+      {message && (
+        <div className={`glass-card ${isSuccessMessage ? "status-message-success" : "status-message-error"}`} style={{ marginBottom: 14 }}>
+          {message}
+        </div>
+      )}
       <div className="glass-card" style={{ maxWidth: 720 }}>
         <div className="grid grid-2">
           <Field label="Timezone" value={form.timezone} onChange={(value) => setForm({ ...form, timezone: value })} />

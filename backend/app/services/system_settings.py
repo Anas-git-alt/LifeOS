@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.models import SystemSettings, SystemSettingsUpdate, UserProfile
+from app.services.events import publish_event
 
 SAFE_DEFAULT_DATA_START_DATE = date(2026, 3, 2)
 
@@ -80,6 +81,16 @@ async def update_system_settings(data: SystemSettingsUpdate) -> SystemSettings:
 
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "settings.updated",
+            {"kind": "settings", "id": "global"},
+            {
+                "data_start_date": row.data_start_date.strftime("%Y-%m-%d"),
+                "default_timezone": row.default_timezone,
+                "autonomy_enabled": row.autonomy_enabled,
+                "approval_required_for_mutations": row.approval_required_for_mutations,
+            },
+        )
         return row
 
 

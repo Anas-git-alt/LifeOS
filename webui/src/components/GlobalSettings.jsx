@@ -119,8 +119,8 @@ export default function GlobalSettings() {
             {saving ? "Saving..." : "Save Settings"}
           </button>
         </div>
-        {error && <p style={{ color: "#f87171", marginTop: 10 }}>{error}</p>}
-        {success && <p style={{ color: "#86efac", marginTop: 10 }}>{success}</p>}
+        {error && <p className="status-message status-message-error">{error}</p>}
+        {success && <p className="status-message status-message-success">{success}</p>}
       </form>
     </section>
   );

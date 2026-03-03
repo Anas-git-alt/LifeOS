@@ -14,6 +14,7 @@ from app.services.chat_sessions import ensure_session, refresh_session_metadata
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message
 from app.services.action_executor import execute_pending_action
+from app.services.events import publish_event
 from app.services.memory import get_context, save_message
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 from app.services.tools.web_search import web_search
@@ -324,6 +325,11 @@ async def handle_message(
             await db.commit()
             await db.refresh(pending)
             pending_id = pending.id
+            await publish_event(
+                "approvals.pending.updated",
+                {"kind": "approval", "id": str(pending.id)},
+                {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
+            )
 
         logger.info(
             "orchestrator_result agent=%s action_type=%s risk=%s pending=%s",
@@ -389,6 +395,17 @@ async def approve_action(action_id: int, reviewer: Optional[str] = None, source:
                 )
                 await db.commit()
                 action = refreshed
+    if action:
+        await publish_event(
+            "approvals.decided",
+            {"kind": "approval", "id": str(action.id)},
+            {"action_id": action.id, "status": action.status.value, "reviewed_by": action.reviewed_by},
+        )
+        await publish_event(
+            "approvals.pending.updated",
+            {"kind": "approval", "id": str(action.id)},
+            {"action_id": action.id, "status": action.status.value},
+        )
     return action
 
 
@@ -417,6 +434,16 @@ async def reject_action(
             )
         )
         await db.commit()
+        await publish_event(
+            "approvals.decided",
+            {"kind": "approval", "id": str(action.id)},
+            {"action_id": action.id, "status": action.status.value, "reviewed_by": action.reviewed_by},
+        )
+        await publish_event(
+            "approvals.pending.updated",
+            {"kind": "approval", "id": str(action.id)},
+            {"action_id": action.id, "status": action.status.value},
+        )
         return action
 
 

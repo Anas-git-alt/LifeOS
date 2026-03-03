@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.middleware import request_context_middleware
-from app.routers import agents, approvals, health, jobs, life, prayer, profile, providers, settings as system_settings
+from app.routers import agents, approvals, events, health, jobs, life, prayer, profile, providers, settings as system_settings
 from app.services.scheduler import bootstrap_agent_jobs, shutdown_scheduler, start_scheduler
 from app.services.seed import seed_default_agents
 
@@ -67,6 +67,7 @@ app.add_middleware(
 app.middleware("http")(request_context_middleware)
 
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])

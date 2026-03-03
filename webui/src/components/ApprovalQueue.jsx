@@ -59,7 +59,7 @@ export default function ApprovalQueue() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {actions.map(action => (
                         <div key={action.id} className="glass-card">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 10 }}>
                                 <div>
                                     <span style={{ fontWeight: 600, fontSize: 15 }}>
                                         #{action.id} · {action.agent_name}

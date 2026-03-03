@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select
 
 from app.database import async_session
 from app.models import ChatSession, MemoryEntry
+from app.services.events import publish_event
 
 DEFAULT_SESSION_TITLE = "New chat"
 MAX_TITLE_LENGTH = 160
@@ -110,6 +111,11 @@ async def create_session(agent_name: str, title: str | None = None) -> ChatSessi
         db.add(session)
         await db.commit()
         await db.refresh(session)
+        await publish_event(
+            "agents.sessions.updated",
+            {"kind": "agent", "id": agent_name},
+            {"agent_name": agent_name, "session_id": session.id, "action": "created"},
+        )
         return session
 
 
@@ -157,6 +163,11 @@ async def rename_session(agent_name: str, session_id: int, title: str) -> ChatSe
         db.add(session)
         await db.commit()
         await db.refresh(session)
+        await publish_event(
+            "agents.sessions.updated",
+            {"kind": "agent", "id": agent_name},
+            {"agent_name": agent_name, "session_id": session.id, "action": "renamed"},
+        )
         return session
 
 
@@ -182,6 +193,11 @@ async def clear_session_context(agent_name: str, session_id: int) -> ChatSession
         db.add(session)
         await db.commit()
         await db.refresh(session)
+        await publish_event(
+            "agents.sessions.updated",
+            {"kind": "agent", "id": agent_name},
+            {"agent_name": agent_name, "session_id": session.id, "action": "cleared"},
+        )
         return session
 
 
@@ -234,4 +250,9 @@ async def refresh_session_metadata(agent_name: str, session_id: int) -> ChatSess
         db.add(session)
         await db.commit()
         await db.refresh(session)
+        await publish_event(
+            "agents.sessions.updated",
+            {"kind": "agent", "id": agent_name},
+            {"agent_name": agent_name, "session_id": session.id, "action": "updated"},
+        )
         return session

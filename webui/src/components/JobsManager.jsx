@@ -130,6 +130,12 @@ export default function JobsManager() {
     }
   };
 
+  const getJobStatusMeta = (job) => {
+    if (job.paused) return { label: "paused", badge: "badge-pending" };
+    if (job.enabled) return { label: "active", badge: "badge-active" };
+    return { label: "disabled", badge: "badge-rejected" };
+  };
+
   return (
     <section className="glass-card">
       <div className="page-header">
@@ -160,20 +166,22 @@ export default function JobsManager() {
       <form onSubmit={onSubmit}>
         <div className="grid grid-2">
           <div className="form-group">
-            <label>Job Name</label>
-            <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} required />
+            <label htmlFor="job-name">Job Name</label>
+            <input id="job-name" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} required />
           </div>
           <div className="form-group">
-            <label>Description</label>
+            <label htmlFor="job-description">Description</label>
             <input
+              id="job-description"
               value={form.description}
               onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
               placeholder="What this job is for and expected outcome."
             />
           </div>
           <div className="form-group">
-            <label>Agent</label>
+            <label htmlFor="job-agent">Agent</label>
             <select
+              id="job-agent"
               value={form.agent_name}
               onChange={(e) => setForm((prev) => ({ ...prev, agent_name: e.target.value }))}
               required
@@ -187,8 +195,9 @@ export default function JobsManager() {
             </select>
           </div>
           <div className="form-group">
-            <label>Cron</label>
+            <label htmlFor="job-cron">Cron</label>
             <input
+              id="job-cron"
               value={form.cron_expression}
               onChange={(e) => setForm((prev) => ({ ...prev, cron_expression: e.target.value }))}
               placeholder="30 7 mon-fri or 30 7 * * mon-fri"
@@ -196,24 +205,27 @@ export default function JobsManager() {
             />
           </div>
           <div className="form-group">
-            <label>Timezone</label>
+            <label htmlFor="job-timezone">Timezone</label>
             <input
+              id="job-timezone"
               value={form.timezone}
               onChange={(e) => setForm((prev) => ({ ...prev, timezone: e.target.value }))}
               required
             />
           </div>
           <div className="form-group">
-            <label>Target Channel</label>
+            <label htmlFor="job-target-channel">Target Channel</label>
             <input
+              id="job-target-channel"
               value={form.target_channel}
               onChange={(e) => setForm((prev) => ({ ...prev, target_channel: e.target.value.replace(/^#/, "") }))}
               placeholder="fitness-log"
             />
           </div>
           <div className="form-group">
-            <label>Prompt Template</label>
+            <label htmlFor="job-prompt-template">Prompt Template</label>
             <input
+              id="job-prompt-template"
               value={form.prompt_template}
               onChange={(e) => setForm((prev) => ({ ...prev, prompt_template: e.target.value }))}
               placeholder="Run your scheduled check-in now."
@@ -250,7 +262,7 @@ export default function JobsManager() {
         </div>
       </form>
 
-      {error && <p style={{ color: "#f87171", marginTop: 12 }}>{error}</p>}
+      {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
       {loading ? (
         <p style={{ marginTop: 14 }}>Loading jobs...</p>
       ) : (
@@ -259,25 +271,27 @@ export default function JobsManager() {
             <p>No jobs found.</p>
           ) : (
             <div className="grid">
-              {jobs.map((job) => (
-                <article key={job.id} className="glass-card" style={{ padding: 14 }}>
-                  <div className="page-header-row">
-                    <div>
-                      <h3 style={{ marginBottom: 6 }}>
+              {jobs.map((job) => {
+                const status = getJobStatusMeta(job);
+                return (
+                <article key={job.id} className="glass-card job-card">
+                  <div className="job-card-head">
+                    <div className="job-card-summary">
+                      <h3>
                         #{job.id} {job.name}
                       </h3>
-                      <p>
+                      <p className="job-card-meta">
                         Agent: <strong>{job.agent_name || "n/a"}</strong> · Cron: <code>{job.cron_expression}</code> · TZ:{" "}
                         <strong>{job.timezone}</strong>
                       </p>
-                      {job.description && <p style={{ marginTop: 6 }}>Description: {job.description}</p>}
-                      <p style={{ marginTop: 6 }}>
+                      {job.description && <p className="job-card-meta">Description: {job.description}</p>}
+                      <p className="job-card-meta">
                         Last run: {job.last_run_at || "never"} · Next run: {job.next_run_at || "n/a"} · Status:{" "}
-                        {job.paused ? "paused" : job.enabled ? "active" : "disabled"}
+                        <span className={`badge ${status.badge}`}>{status.label}</span>
                       </p>
-                      {job.last_error && <p style={{ color: "#fca5a5", marginTop: 6 }}>Last error: {job.last_error}</p>}
+                      {job.last_error && <p className="error-text job-card-meta">Last error: {job.last_error}</p>}
                     </div>
-                    <div className="action-row">
+                    <div className="job-card-actions">
                       <button className="btn btn-ghost" onClick={() => setEditingJobId(job.id)}>
                         Edit
                       </button>
@@ -295,10 +309,10 @@ export default function JobsManager() {
                   {runsByJob[job.id] && (
                     <div style={{ marginTop: 10 }}>
                       <strong>Recent Runs</strong>
-                      <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+                      <ul className="run-log-list">
                         {runsByJob[job.id].map((run) => (
                           <li key={run.id}>
-                            {run.created_at} · {run.status}
+                            {run.created_at} · <span className={`badge ${run.status === "success" ? "badge-approved" : run.status === "running" ? "badge-pending" : "badge-rejected"}`}>{run.status}</span>
                             {run.error ? ` · ${run.error}` : ""}
                           </li>
                         ))}
@@ -306,7 +320,8 @@ export default function JobsManager() {
                     </div>
                   )}
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

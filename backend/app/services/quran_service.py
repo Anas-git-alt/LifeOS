@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.database import async_session
 from app.models import QuranBookmark, QuranReading, QuranReadingRequest
@@ -92,7 +92,7 @@ async def get_progress() -> dict:
         total_result = await db.execute(
             select(
                 func.sum(
-                    func.case(
+                    case(
                         (
                             QuranReading.end_page >= QuranReading.start_page,
                             QuranReading.end_page - QuranReading.start_page + 1,

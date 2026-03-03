@@ -73,7 +73,8 @@
 }
 
 .sidebar-btn.active {
-  outline: 1px solid var(--accent-purple-soft);
+  outline: 1px solid var(--color-success-border);
+  background: var(--color-success-bg);
 }
 
 .sidebar-btn:active {
@@ -106,13 +107,33 @@
   background: var(--bg-glass);
 }
 
+.sidebar-footer-connected {
+  border-color: var(--color-success-border);
+}
+
+.sidebar-footer-disconnected {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+  color: var(--text-primary);
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: var(--accent-gold);
-  box-shadow: 0 0 0 5px rgba(214, 175, 98, 0.16);
+  background: var(--status-dot-bg, var(--color-success));
+  box-shadow: 0 0 0 5px var(--status-dot-shadow, var(--color-success-soft));
   animation: pulseDot 2.2s ease-in-out infinite;
+}
+
+.status-dot-success {
+  --status-dot-bg: var(--color-success);
+  --status-dot-shadow: var(--color-success-soft);
+}
+
+.status-dot-danger {
+  --status-dot-bg: var(--color-danger);
+  --status-dot-shadow: var(--color-danger-soft);
 }
 
 .main-content {
@@ -232,6 +253,9 @@
 }
 
 .quick-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
   border: 1px solid var(--border-glass);
   border-radius: 10px;
   padding: 10px;
@@ -245,14 +269,19 @@
 
 .quick-nav-btn:hover,
 .quick-nav-btn.active {
-  border-color: var(--accent-purple-soft);
-  background: rgba(155, 108, 255, 0.12);
+  border-color: var(--color-success-border);
+  background: var(--color-success-bg);
   color: var(--text-primary);
   transform: translateY(-1px);
 }
 
 .page-header {
   margin-bottom: 18px;
+}
+
+.page-header :is(h1, h2) {
+  margin: 0 0 8px;
+  line-height: 1.2;
 }
 
 .page-header-row {
@@ -265,10 +294,12 @@
 .page-header h1 {
   font-size: clamp(1.3rem, 2.4vw, 1.6rem);
   font-weight: 700;
+  line-height: 1.2;
   margin-bottom: 8px;
 }
 
 .page-header p {
+  margin: 0;
   color: var(--text-secondary);
 }
 
@@ -307,13 +338,26 @@
 
 .action-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 12px;
   flex-wrap: wrap;
 }
 
 .form-group {
+  display: grid;
+  gap: 7px;
   margin-bottom: 12px;
+  align-content: start;
+}
+
+.form-group > label {
+  margin: 0;
+}
+
+.form-group > :is(input, select, textarea) {
+  width: 100%;
+  margin: 0;
 }
 
 .checkbox-row {
@@ -321,12 +365,15 @@
   align-items: center;
   gap: 10px;
   margin: 8px 0;
+  line-height: 1.3;
   color: var(--text-secondary);
 }
 
 .checkbox-row input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  margin: 0;
+  accent-color: var(--color-success);
 }
 
 .token-banner {
@@ -374,7 +421,7 @@
 
 .token-banner-error {
   margin-top: 10px;
-  color: #e3a3a3;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
@@ -400,6 +447,57 @@
   background: rgba(173, 182, 194, 0.08);
   color: var(--accent-silver);
   border: 1px solid rgba(173, 182, 194, 0.2);
+}
+
+.status-message {
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.status-message-success {
+  color: var(--color-success);
+}
+
+.status-message-error {
+  color: var(--color-danger);
+}
+
+.job-card {
+  padding: 14px;
+}
+
+.job-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.job-card-summary {
+  min-width: 0;
+}
+
+.job-card-summary h3 {
+  margin-bottom: 6px;
+}
+
+.job-card-meta {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.job-card-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.run-log-list {
+  margin-top: 8px;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
 }
 
 .agent-config-tabs {
@@ -527,10 +625,10 @@
 @keyframes pulseDot {
   0%,
   100% {
-    box-shadow: 0 0 0 5px rgba(214, 175, 98, 0.16);
+    box-shadow: 0 0 0 5px var(--status-dot-shadow, var(--color-success-soft));
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(214, 175, 98, 0.08);
+    box-shadow: 0 0 0 8px var(--status-dot-shadow, rgba(34, 197, 94, 0.08));
   }
 }
 
@@ -626,6 +724,15 @@
   .grid-4 {
     grid-template-columns: 1fr;
   }
+
+  .job-card-head {
+    flex-direction: column;
+  }
+
+  .job-card-actions {
+    justify-items: stretch;
+    width: 100%;
+  }
 }
 
 /* Prayer Dashboard Grid */
@@ -640,10 +747,40 @@
   top: 0;
   background: var(--bg-secondary);
   z-index: 2;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.prayer-grid-table th,
+.prayer-grid-table td {
+  vertical-align: middle;
+}
+
+.prayer-grid-date {
+  text-align: left;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.prayer-grid-col-head {
+  text-align: center;
+  padding: 10px 14px;
+}
+
+.prayer-grid-cell {
+  text-align: center;
+  padding: 8px 10px;
+  position: relative;
 }
 
 .prayer-cell-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
+  line-height: 1;
   font-family: inherit;
   transition: all 0.2s ease;
 }
@@ -659,6 +796,148 @@
   flex-wrap: wrap;
   justify-content: center;
   animation: fadeInUp 0.15s ease;
+}
+
+.mission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mission-header {
+  margin-bottom: 14px;
+}
+
+.widget-card {
+  padding: 18px;
+  min-height: 220px;
+}
+
+.widget-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.widget-card-head h2 {
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+}
+
+.widget-card-head p {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.widget-card-head-right {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.widget-status {
+  display: inline-flex;
+  align-items: center;
+}
+
+.widget-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.widget-card-body {
+  display: grid;
+  gap: 8px;
+}
+
+.widget-card-footer {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-glass);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.widget-list {
+  display: grid;
+  gap: 8px;
+}
+
+.widget-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.widget-row strong {
+  color: var(--text-primary);
+}
+
+.widget-row.stack {
+  display: grid;
+  justify-content: initial;
+}
+
+.status-text-success {
+  color: var(--color-success);
+}
+
+.status-text-danger {
+  color: var(--color-danger);
+}
+
+.status-text-warning {
+  color: var(--color-warning);
+}
+
+.error-text {
+  color: var(--color-danger);
+}
+
+.topbar-actions .btn,
+.action-row .btn {
+  min-width: 104px;
+}
+
+.widget-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.widget-skeleton-line {
+  display: block;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(173, 182, 194, 0.1), rgba(173, 182, 194, 0.24), rgba(173, 182, 194, 0.1));
+  background-size: 240px 12px;
+  animation: shimmer 1.4s infinite linear;
+}
+
+.widget-empty-state,
+.widget-error-state {
+  display: grid;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.widget-error-state {
+  color: var(--color-danger);
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -240px 0;
+  }
+  100% {
+    background-position: 240px 0;
+  }
 }
 
 @keyframes fadeInUp {
@@ -680,5 +959,11 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .mission-grid {
+    grid-template-columns: 1fr;
   }
 }

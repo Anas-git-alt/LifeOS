@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 
 from app.database import async_session
 from app.models import AuditLog, MemoryEntry
+from app.services.events import publish_event
 from app.services.system_settings import get_data_start_date
 
 
@@ -43,6 +44,13 @@ async def save_message(agent_name: str, role: str, content: str, session_id: int
         entry = MemoryEntry(agent_name=agent_name, role=role, content=content, session_id=session_id)
         db.add(entry)
         await db.commit()
+        await db.refresh(entry)
+        if session_id is not None:
+            await publish_event(
+                "agents.messages.appended",
+                {"kind": "chat_session", "id": str(session_id)},
+                {"agent_name": agent_name, "session_id": session_id, "message_id": entry.id, "role": role},
+            )
 
 
 async def clear_memory(agent_name: str, session_id: int | None = None):

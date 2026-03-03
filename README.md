@@ -624,6 +624,14 @@ User ──► WebUI  ──────────────────► 
 - API keys have minimal scopes — rotate quarterly
 - **Never commit `.venv/.env`** — the backup script checks for this
 
+### WebUI Auth + Realtime (SSE)
+
+- Standard API calls remain token-header based: `X-LifeOS-Token: <API_SECRET_KEY>`.
+- `NEW POST /api/events/auth` exchanges a valid token header for a short-lived HttpOnly cookie scoped to `/api/events`.
+- `NEW GET /api/events` uses that cookie to open an SSE stream (`text/event-stream`).
+- This preserves existing token semantics while handling the EventSource header limitation cleanly.
+- Request logging uses path-only fields in middleware, so query-string tokens are not required for SSE auth.
+
 ---
 
 ## 📄 License

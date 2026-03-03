@@ -56,13 +56,13 @@ export default function QuranLog() {
                 <h1>📖 Quran Reading Log</h1>
                 <p>Page-based tracking with auto-resume bookmark.</p>
             </header>
-            {error && <div className="glass-card" style={{ color: "var(--accent-red)", marginBottom: 16 }}>{error}</div>}
-            {success && <div className="glass-card" style={{ color: "var(--accent-gold)", marginBottom: 16 }}>{success}</div>}
+            {error && <div className="glass-card status-message-error" style={{ marginBottom: 16 }}>{error}</div>}
+            {success && <div className="glass-card status-message-success" style={{ marginBottom: 16 }}>{success}</div>}
 
             {/* Bookmark & Progress */}
             <div className="grid grid-3" style={{ marginBottom: 20 }}>
                 <div className="glass-card">
-                    <div className="stat-value" style={{ color: "var(--accent-gold)" }}>{currentPage}</div>
+                    <div className="stat-value status-text-success">{currentPage}</div>
                     <div className="stat-label">Current Bookmark (next start)</div>
                 </div>
                 <div className="glass-card">

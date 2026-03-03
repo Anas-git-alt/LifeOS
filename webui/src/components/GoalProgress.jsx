@@ -151,7 +151,7 @@ export default function GoalProgress({ itemId, onBack }) {
                                 fontSize: 13,
                             }}>
                                 <span style={{
-                                    color: c.result === "done" ? "var(--accent-gold)" : c.result === "missed" ? "var(--accent-red)" : "var(--text-secondary)",
+                                    color: c.result === "done" ? "var(--color-success)" : c.result === "missed" ? "var(--color-danger)" : "var(--text-secondary)",
                                     fontWeight: 600,
                                 }}>
                                     {c.result === "done" ? "✅" : c.result === "missed" ? "❌" : "🔄"} {c.result}

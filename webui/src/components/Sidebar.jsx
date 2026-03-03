@@ -1,13 +1,13 @@
 import { useState } from "react";
 
-export default function Sidebar({ currentPage, onNavigate }) {
+export default function Sidebar({ currentPage, onNavigate, isConnected = false }) {
   const [open, setOpen] = useState(false);
 
   const navGroups = [
     {
       title: "Overview",
       items: [
-        { id: "dashboard", icon: "DB", label: "Dashboard" },
+        { id: "dashboard", icon: "MC", label: "Mission Control" },
         { id: "today", icon: "TD", label: "Today" },
         { id: "prayer-dashboard", icon: "🕌", label: "Prayer" },
         { id: "quran", icon: "📖", label: "Quran" },
@@ -65,9 +65,9 @@ export default function Sidebar({ currentPage, onNavigate }) {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <span className="status-dot" />
-          <span>Workspace connected</span>
+        <div className={`sidebar-footer ${isConnected ? "sidebar-footer-connected" : "sidebar-footer-disconnected"}`}>
+          <span className={`status-dot ${isConnected ? "status-dot-success" : "status-dot-danger"}`} />
+          <span>{isConnected ? "Workspace connected" : "Workspace disconnected"}</span>
         </div>
       </aside>
     </>

@@ -4,11 +4,11 @@ import AgentConfig from "./components/AgentConfig";
 import AgentList from "./components/AgentList";
 import AgentWizard from "./components/AgentWizard";
 import ApprovalQueue from "./components/ApprovalQueue";
-import Dashboard from "./components/Dashboard";
 import GlobalSettings from "./components/GlobalSettings";
 import GoalProgress from "./components/GoalProgress";
 import LifeItems from "./components/LifeItems";
 import JobsManager from "./components/JobsManager";
+import MissionControl from "./components/MissionControl";
 import PrayerDashboard from "./components/PrayerDashboard";
 import ProfileSettings from "./components/ProfileSettings";
 import ProviderConfig from "./components/ProviderConfig";
@@ -19,8 +19,8 @@ import TokenBanner from "./components/TokenBanner";
 
 const PAGE_META = {
   dashboard: {
-    title: "Command Center",
-    subtitle: "Track system health, approvals, and active agents in one place.",
+    title: "Mission Control",
+    subtitle: "Realtime pulse across system health, approvals, jobs, and agent activity.",
   },
   today: {
     title: "Today Focus",
@@ -90,6 +90,16 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const syncTokenState = () => {
+      setHasToken(Boolean((localStorage.getItem("lifeos_token") || "").trim()));
+    };
+    window.addEventListener("storage", syncTokenState);
+    return () => {
+      window.removeEventListener("storage", syncTokenState);
+    };
+  }, []);
+
   const activePageMeta = PAGE_META[page] || PAGE_META.dashboard;
 
   const handleAgentSelect = (agentName) => {
@@ -105,7 +115,7 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case "dashboard":
-        return <Dashboard onChangeToken={() => setShowTokenEditor(true)} />;
+        return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
       case "today":
         return <TodayView />;
       case "prayer-dashboard":
@@ -133,13 +143,13 @@ export default function App() {
       case "settings":
         return <GlobalSettings />;
       default:
-        return <Dashboard />;
+        return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
     }
   };
 
   return (
     <div className="app-layout">
-      <Sidebar currentPage={page} onNavigate={setPage} />
+      <Sidebar currentPage={page} onNavigate={setPage} isConnected={hasToken} />
       <main className="main-content">
         <header className="topbar glass-card">
           <div className="topbar-title-block">
@@ -172,6 +182,10 @@ export default function App() {
                   setHasToken(true);
                   setShowTokenEditor(false);
                 }}
+                onInvalidToken={() => {
+                  setHasToken(false);
+                  setShowTokenEditor(true);
+                }}
               />
             )}
             {renderPage()}
@@ -188,7 +202,7 @@ export default function App() {
                   className={`quick-nav-btn ${page === "dashboard" ? "active" : ""}`}
                   onClick={() => setPage("dashboard")}
                 >
-                  Dashboard
+                  Mission Control
                 </button>
                 <button
                   className={`quick-nav-btn ${page === "prayer-dashboard" ? "active" : ""}`}

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import async_session
 from app.models import Agent, PrayerCheckin, PrayerCheckinRequest, PrayerReminder, PrayerRetroactiveCheckinRequest, PrayerWindow
+from app.services.events import publish_event
 from app.services.profile import get_or_create_profile
 from app.services.system_settings import get_data_start_date
 
@@ -276,7 +277,7 @@ async def log_prayer_checkin(data: PrayerCheckinRequest) -> dict:
         is_retroactive=False,
         retro_reason=None,
     )
-    return {
+    result = {
         "prayer_date": _format_date(prayer_date),
         "prayer_name": data.prayer_name,
         "status_raw": existing.status_raw,
@@ -284,6 +285,12 @@ async def log_prayer_checkin(data: PrayerCheckinRequest) -> dict:
         "is_retroactive": existing.is_retroactive,
         "reported_at_utc": existing.reported_at_utc.replace(tzinfo=timezone.utc),
     }
+    await publish_event(
+        "prayer.weekly_summary.updated",
+        {"kind": "prayer_checkin", "id": f"{result['prayer_date']}:{result['prayer_name']}"},
+        result,
+    )
+    return result
 
 
 async def log_prayer_checkin_retroactive(data: PrayerRetroactiveCheckinRequest) -> dict:
@@ -303,7 +310,7 @@ async def log_prayer_checkin_retroactive(data: PrayerRetroactiveCheckinRequest) 
         is_retroactive=True,
         retro_reason="manual_retroactive",
     )
-    return {
+    result = {
         "prayer_date": _format_date(prayer_date),
         "prayer_name": data.prayer_name,
         "status_raw": existing.status_raw,
@@ -311,6 +318,12 @@ async def log_prayer_checkin_retroactive(data: PrayerRetroactiveCheckinRequest) 
         "is_retroactive": existing.is_retroactive,
         "reported_at_utc": existing.reported_at_utc.replace(tzinfo=timezone.utc),
     }
+    await publish_event(
+        "prayer.weekly_summary.updated",
+        {"kind": "prayer_checkin", "id": f"{result['prayer_date']}:{result['prayer_name']}"},
+        result,
+    )
+    return result
 
 
 async def get_today_schedule() -> dict:
@@ -467,6 +480,11 @@ async def refresh_today_and_tomorrow_windows() -> None:
     today = datetime.now(timezone.utc).astimezone(tz).date()
     await ensure_prayer_windows_for_date(today)
     await ensure_prayer_windows_for_date(today + timedelta(days=1))
+    await publish_event(
+        "prayer.schedule.updated",
+        {"kind": "prayer_schedule", "id": today.strftime("%Y-%m-%d")},
+        {"date": today.strftime("%Y-%m-%d"), "timezone": profile.timezone},
+    )
 
 
 async def get_weekly_dashboard(target_date_str: str | None = None) -> dict:

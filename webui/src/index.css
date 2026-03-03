@@ -25,9 +25,20 @@
   --accent-silver: #adb6c2;
 
   --accent-main: var(--accent-purple);
-  --accent-green: #7e8ea3;
-  --accent-red: #d16464;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
   --accent-amber: var(--accent-gold);
+  --color-success: #22c55e;
+  --color-success-soft: rgba(34, 197, 94, 0.2);
+  --color-success-bg: rgba(34, 197, 94, 0.12);
+  --color-success-border: rgba(34, 197, 94, 0.45);
+  --color-danger: #ef4444;
+  --color-danger-soft: rgba(239, 68, 68, 0.2);
+  --color-danger-bg: rgba(239, 68, 68, 0.13);
+  --color-danger-border: rgba(239, 68, 68, 0.45);
+  --color-warning: #f59e0b;
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.45);
 
   --button-bg: #252734;
   --button-text: #f3f5fa;
@@ -118,6 +129,11 @@ body::before {
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+  min-height: 40px;
+  white-space: nowrap;
+  vertical-align: middle;
   cursor: pointer;
   transition: transform 0.2s ease, filter 0.2s ease;
 }
@@ -132,6 +148,16 @@ body::before {
   transform: none;
 }
 
+.btn:focus-visible,
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, #8e5df7 0%, #a06fff 100%);
   color: var(--button-text);
@@ -142,8 +168,8 @@ body::before {
 }
 
 .btn-success {
-  background: linear-gradient(135deg, #ce9f4f 0%, #dcb975 100%);
-  color: #17130b;
+  background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+  color: #f0fdf4;
 }
 
 .btn-success:hover {
@@ -151,8 +177,8 @@ body::before {
 }
 
 .btn-danger {
-  background: #7b3636;
-  color: #f6eaea;
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+  color: #fff5f5;
 }
 
 .btn-danger:hover {
@@ -173,34 +199,37 @@ body::before {
 .badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 4px 10px;
   border-radius: 20px;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
+  text-transform: capitalize;
 }
 
 .badge-pending {
-  background: rgba(214, 175, 98, 0.12);
-  border: 1px solid rgba(214, 175, 98, 0.5);
-  color: var(--accent-gold);
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  color: var(--color-warning);
 }
 
 .badge-approved {
-  background: rgba(173, 182, 194, 0.12);
-  border: 1px solid rgba(173, 182, 194, 0.5);
-  color: var(--accent-silver);
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
 }
 
 .badge-rejected {
-  background: rgba(209, 100, 100, 0.14);
-  border: 1px solid rgba(209, 100, 100, 0.45);
-  color: #e3a3a3;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
 }
 
 .badge-active {
-  background: rgba(155, 108, 255, 0.14);
-  border: 1px solid rgba(155, 108, 255, 0.5);
-  color: #c7adff;
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
 }
 
 input,
@@ -210,6 +239,8 @@ textarea {
   border: 1px solid rgba(173, 182, 194, 0.24);
   border-radius: 10px;
   padding: 10px 14px;
+  min-height: 40px;
+  line-height: 1.3;
   color: var(--text-primary);
   font-family: inherit;
   font-size: 14px;
@@ -228,6 +259,7 @@ textarea:focus {
 label {
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.25;
   color: var(--text-secondary);
   margin-bottom: 6px;
   display: block;

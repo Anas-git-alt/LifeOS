@@ -109,3 +109,21 @@ def test_data_start_date_filters_goal_progress_checkins():
             json={"data_start_date": "2026-03-02"},
         )
         assert restore_resp.status_code == 200
+
+
+def test_quran_progress_endpoint_returns_payload():
+    with TestClient(app) as client:
+        log_resp = client.post(
+            "/api/prayer/habits/quran/log",
+            headers=_headers(),
+            json={"end_page": 5, "source": "integration_test"},
+        )
+        assert log_resp.status_code == 200
+
+        progress_resp = client.get("/api/prayer/habits/quran/progress", headers=_headers())
+        assert progress_resp.status_code == 200
+        payload = progress_resp.json()
+        assert payload["total_pages"] == 604
+        assert isinstance(payload["pages_read_total"], int)
+        assert isinstance(payload["completion_pct"], float)
+        assert isinstance(payload["recent_readings"], list)

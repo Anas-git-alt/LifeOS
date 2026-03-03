@@ -18,6 +18,7 @@ from app.models import (
     ScheduledJobUpdate,
 )
 from app.security import require_api_token
+from app.services.events import publish_event
 from app.services.jobs import (
     create_job,
     delete_job,
@@ -87,6 +88,11 @@ async def propose_job_action(data: ProposedActionPayload):
         db.add(pending)
         await db.commit()
         await db.refresh(pending)
+        await publish_event(
+            "approvals.pending.updated",
+            {"kind": "approval", "id": str(pending.id)},
+            {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
+        )
         return {"pending_action_id": pending.id, "status": pending.status.value}
 
 

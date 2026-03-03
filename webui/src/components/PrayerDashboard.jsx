@@ -5,9 +5,9 @@ const PRAYERS = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
 const STATUS_OPTIONS = ["on_time", "late", "missed"];
 const STATUS_DISPLAY = { on_time: "✅", late: "🕒", missed: "❌", unknown: "❓" };
 const STATUS_COLORS = {
-    on_time: "var(--accent-gold)",
-    late: "#d6af62aa",
-    missed: "var(--accent-red)",
+    on_time: "var(--color-success)",
+    late: "var(--color-warning)",
+    missed: "var(--color-danger)",
     unknown: "var(--text-muted)",
 };
 
@@ -54,13 +54,13 @@ export default function PrayerDashboard() {
                 <h1>🕌 Prayer Dashboard</h1>
                 <p>Weekly prayer completion — click any cell to adjust.</p>
             </header>
-            {error && <div className="glass-card" style={{ color: "var(--accent-red)", marginBottom: 16 }}>{error}</div>}
+            {error && <div className="glass-card error-text" style={{ marginBottom: 16 }}>{error}</div>}
 
             {dashboard && (
                 <>
                     <div className="grid grid-4" style={{ marginBottom: 20 }}>
                         <div className="glass-card">
-                            <div className="stat-value" style={{ color: "var(--accent-gold)" }}>{onTimeRate}%</div>
+                            <div className="stat-value status-text-success">{onTimeRate}%</div>
                             <div className="stat-label">On-Time Rate</div>
                         </div>
                         <div className="glass-card">
@@ -68,11 +68,11 @@ export default function PrayerDashboard() {
                             <div className="stat-label">Completion Rate</div>
                         </div>
                         <div className="glass-card">
-                            <div className="stat-value" style={{ color: "var(--accent-gold)" }}>{summary.on_time || 0}</div>
+                            <div className="stat-value status-text-success">{summary.on_time || 0}</div>
                             <div className="stat-label">On Time</div>
                         </div>
                         <div className="glass-card">
-                            <div className="stat-value" style={{ color: "var(--accent-red)" }}>{summary.missed || 0}</div>
+                            <div className="stat-value status-text-danger">{summary.missed || 0}</div>
                             <div className="stat-label">Missed</div>
                         </div>
                     </div>
@@ -81,9 +81,9 @@ export default function PrayerDashboard() {
                         <table className="prayer-grid-table" id="prayer-grid">
                             <thead>
                                 <tr>
-                                    <th style={{ textAlign: "left", padding: "10px 14px", color: "var(--text-secondary)", fontSize: 13 }}>Date</th>
+                                    <th className="prayer-grid-date">Date</th>
                                     {PRAYERS.map((p) => (
-                                        <th key={p} style={{ padding: "10px 14px", color: "var(--text-secondary)", fontSize: 13, textAlign: "center" }}>{p}</th>
+                                        <th key={p} className="prayer-grid-col-head">{p}</th>
                                     ))}
                                 </tr>
                             </thead>
@@ -92,12 +92,12 @@ export default function PrayerDashboard() {
                                     const dayLabel = new Date(day.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
                                     return (
                                         <tr key={day.date}>
-                                            <td style={{ padding: "10px 14px", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>{dayLabel}</td>
+                                            <td className="prayer-grid-date">{dayLabel}</td>
                                             {PRAYERS.map((prayer) => {
                                                 const status = day.prayers[prayer];
                                                 const isEditing = editing?.date === day.date && editing?.prayer === prayer;
                                                 return (
-                                                    <td key={prayer} style={{ textAlign: "center", padding: "8px 10px", position: "relative" }}>
+                                                    <td key={prayer} className="prayer-grid-cell">
                                                         {isEditing ? (
                                                             <div className="prayer-edit-popover">
                                                                 {STATUS_OPTIONS.map((opt) => (
@@ -118,8 +118,8 @@ export default function PrayerDashboard() {
                                                                 className="prayer-cell-btn"
                                                                 onClick={() => setEditing({ date: day.date, prayer })}
                                                                 style={{
-                                                                    background: status ? `${STATUS_COLORS[status]}22` : "rgba(255,255,255,0.03)",
-                                                                    border: `1px solid ${status ? `${STATUS_COLORS[status]}55` : "var(--border-glass)"}`,
+                                                                    background: status ? `${STATUS_COLORS[status]}1c` : "rgba(255,255,255,0.03)",
+                                                                    border: `1px solid ${status ? `${STATUS_COLORS[status]}70` : "var(--border-glass)"}`,
                                                                     color: status ? STATUS_COLORS[status] : "var(--text-muted)",
                                                                     borderRadius: 10,
                                                                     padding: "8px 14px",

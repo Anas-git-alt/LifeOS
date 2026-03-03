@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { getHealth, setToken } from "../api";
+import { getSettings, setToken } from "../api";
 
-export default function TokenBanner({ canClose = false, onClose, onValidToken }) {
+export default function TokenBanner({ canClose = false, onClose, onValidToken, onInvalidToken }) {
   const [token, setLocalToken] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -25,11 +25,13 @@ export default function TokenBanner({ canClose = false, onClose, onValidToken })
     setToken(trimmed);
 
     try {
-      await getHealth();
+      await getSettings();
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
       if (onValidToken) onValidToken();
     } catch (err) {
+      setToken("");
+      if (onInvalidToken) onInvalidToken();
       setError(err.message || "Token validation failed.");
     } finally {
       setSaving(false);
@@ -44,7 +46,7 @@ export default function TokenBanner({ canClose = false, onClose, onValidToken })
           <p>Set `X-LifeOS-Token` for this browser session.</p>
         </div>
         <div className="token-banner-head-actions">
-          <span className={`badge ${saved ? "badge-approved" : "badge-pending"}`}>{saved ? "Saved" : "Not saved"}</span>
+          <span className={`badge ${saved ? "badge-approved" : "badge-rejected"}`}>{saved ? "Saved" : "Not saved"}</span>
           {canClose && (
             <button type="button" className="btn btn-ghost token-banner-close" onClick={onClose}>
               Hide

@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 
 from app.database import async_session
 from app.models import Agent, JobRunLog, ScheduledJob, ScheduledJobCreate, ScheduledJobUpdate
+from app.services.events import publish_event
 
 
 def default_job_description(
@@ -84,6 +85,11 @@ async def create_job(data: ScheduledJobCreate) -> ScheduledJob:
         db.add(row)
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "jobs.updated",
+            {"kind": "job", "id": str(row.id)},
+            {"action": "created", "job_id": row.id, "name": row.name, "status": row.last_status},
+        )
         return row
 
 
@@ -112,6 +118,17 @@ async def update_job(job_id: int, data: ScheduledJobUpdate) -> ScheduledJob | No
             )
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "jobs.updated",
+            {"kind": "job", "id": str(row.id)},
+            {
+                "action": "updated",
+                "job_id": row.id,
+                "paused": row.paused,
+                "enabled": row.enabled,
+                "last_status": row.last_status,
+            },
+        )
         return row
 
 
@@ -124,6 +141,11 @@ async def delete_job(job_id: int) -> bool:
         await db.execute(delete(JobRunLog).where(JobRunLog.job_id == job_id))
         await db.delete(row)
         await db.commit()
+        await publish_event(
+            "jobs.updated",
+            {"kind": "job", "id": str(job_id)},
+            {"action": "deleted", "job_id": job_id},
+        )
         return True
 
 
@@ -175,6 +197,23 @@ async def record_job_run(
             row.last_run_at = last_run_at
             row.next_run_at = next_run_at
         await db.commit()
+        await publish_event(
+            "jobs.run.updated",
+            {"kind": "job_run", "id": str(log_row.id)},
+            {
+                "job_id": job_id,
+                "run_id": log_row.id,
+                "status": status,
+                "error": error,
+                "finished_at": finished_at.isoformat(),
+            },
+        )
+        if message:
+            await publish_event(
+                "jobs.run.log.appended",
+                {"kind": "job_run", "id": str(log_row.id)},
+                {"job_id": job_id, "run_id": log_row.id, "lines": [message]},
+            )
 
 
 async def seed_jobs_from_agent_cadence() -> int:

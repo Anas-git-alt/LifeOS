@@ -28,6 +28,10 @@
 - [ ] Jobs support `description` field and existing jobs have meaningful descriptions.
 - [ ] Discord NL flows (`!schedule`, `!spawnagent`) ask follow-ups when required fields are missing.
 - [ ] Approving NL-created actions executes create-job/create-agent and records audit trail.
+- [ ] Mission Control page loads with widget data (System, Approvals, Jobs, Today, Agents).
+- [ ] `NEW /api/events` SSE stream connects from WebUI after token entry (no manual refresh required).
+- [ ] Start a job run and confirm Mission Control Jobs widget updates live.
+- [ ] Make an approval decision and confirm Mission Control Approvals widget updates live.
 
 ## Data Safety
 - [ ] Backup completed with `./scripts/backup.sh`.

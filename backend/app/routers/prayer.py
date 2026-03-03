@@ -35,6 +35,7 @@ from app.services.prayer_service import (
     mark_prayer_reminder_sent,
 )
 from app.services.quran_service import get_or_create_bookmark, get_progress, log_reading
+from app.services.events import publish_event
 from app.database import async_session
 
 router = APIRouter()
@@ -95,6 +96,11 @@ async def log_quran_reading(data: QuranReadingRequest):
     """Log a Quran reading session with page-based tracking."""
     try:
         result = await log_reading(data)
+        await publish_event(
+            "prayer.weekly_summary.updated",
+            {"kind": "quran_reading", "id": str(result.get("id", "latest"))},
+            {"habit": "quran", "event": "logged"},
+        )
         return QuranReadingResponse.model_validate(result)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -126,6 +132,11 @@ async def log_quran(data: QuranHabitRequest):
         db.add(row)
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "prayer.weekly_summary.updated",
+            {"kind": "deen_habit", "id": str(row.id)},
+            {"habit": "quran", "event": "logged"},
+        )
         return HabitLogResponse(id=row.id, local_date=row.local_date.strftime("%Y-%m-%d"), habit_type=row.habit_type, done=row.done)
 
 
@@ -144,6 +155,11 @@ async def log_tahajjud(data: TahajjudHabitRequest):
         db.add(row)
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "prayer.weekly_summary.updated",
+            {"kind": "deen_habit", "id": str(row.id)},
+            {"habit": "tahajjud", "event": "logged"},
+        )
         return HabitLogResponse(id=row.id, local_date=row.local_date.strftime("%Y-%m-%d"), habit_type=row.habit_type, done=row.done)
 
 
@@ -162,6 +178,11 @@ async def log_adhkar(data: AdhkarHabitRequest):
         db.add(row)
         await db.commit()
         await db.refresh(row)
+        await publish_event(
+            "prayer.weekly_summary.updated",
+            {"kind": "deen_habit", "id": str(row.id)},
+            {"habit": f"adhkar_{data.period}", "event": "logged"},
+        )
         return HabitLogResponse(id=row.id, local_date=row.local_date.strftime("%Y-%m-%d"), habit_type=row.habit_type, done=row.done)
 
 
@@ -188,4 +209,3 @@ async def due_prayer_nudges():
 async def nudge_sent(payload: dict):
     await mark_prayer_nudge_sent(int(payload.get("window_id")))
     return {"ok": True}
-
