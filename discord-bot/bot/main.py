@@ -23,7 +23,7 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 @bot.event
 async def setup_hook():
-    for cog in ["bot.cogs.agents", "bot.cogs.approvals", "bot.cogs.health", "bot.cogs.reminders"]:
+    for cog in ["bot.cogs.agents", "bot.cogs.approvals", "bot.cogs.health", "bot.cogs.reminders", "bot.cogs.automation"]:
         try:
             await bot.load_extension(cog)
             logger.info("Loaded cog: %s", cog)
@@ -95,6 +95,11 @@ async def custom_help(ctx):
     embed.add_field(
         name="Approvals",
         value="`!pending` `!approve <id>` `!reject <id> [reason]`",
+        inline=False,
+    )
+    embed.add_field(
+        name="Automation",
+        value="`!schedule <nl prompt>` `!spawnagent <nl prompt>` `!reply <answer>` `!jobs [agent]`",
         inline=False,
     )
     embed.add_field(name="System", value="`!status` `!providers`", inline=False)
