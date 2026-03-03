@@ -138,6 +138,7 @@ class AutomationCog(commands.Cog, name="Automation"):
     async def _submit_job_proposal(self, ctx, data: dict):
         details = {
             "name": data["name"],
+            "description": data.get("description"),
             "agent_name": data["agent_name"],
             "job_type": data.get("job_type", "agent_nudge"),
             "cron_expression": data["cron_expression"],

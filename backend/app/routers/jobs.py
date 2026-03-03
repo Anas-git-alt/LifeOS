@@ -43,6 +43,7 @@ def _to_response(row) -> ScheduledJobResponse:
     return ScheduledJobResponse(
         id=row.id,
         name=row.name,
+        description=row.description,
         agent_name=row.agent_name,
         job_type=row.job_type,
         cron_expression=row.cron_expression,

@@ -25,6 +25,7 @@
 - [ ] `data_start_date` can be updated via `/api/settings/` and WebUI Settings page.
 - [ ] Reports/analytics ignore records older than `data_start_date` without deleting raw rows.
 - [ ] Jobs UI + API support list/create/edit/pause/resume/delete and run logs.
+- [ ] Jobs support `description` field and existing jobs have meaningful descriptions.
 - [ ] Discord NL flows (`!schedule`, `!spawnagent`) ask follow-ups when required fields are missing.
 - [ ] Approving NL-created actions executes create-job/create-agent and records audit trail.
 

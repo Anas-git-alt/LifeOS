@@ -60,6 +60,7 @@ class ScheduledJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     job_type: Mapped[str] = mapped_column(String(40), nullable=False, default="agent_nudge")
     cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -521,6 +522,7 @@ class SystemSettingsResponse(BaseModel):
 
 class ScheduledJobCreate(BaseModel):
     name: str
+    description: Optional[str] = None
     agent_name: Optional[str] = None
     job_type: str = "agent_nudge"
     cron_expression: str
@@ -537,6 +539,7 @@ class ScheduledJobCreate(BaseModel):
 
 class ScheduledJobUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     agent_name: Optional[str] = None
     job_type: Optional[str] = None
     cron_expression: Optional[str] = None
@@ -554,6 +557,7 @@ class ScheduledJobUpdate(BaseModel):
 class ScheduledJobResponse(BaseModel):
     id: int
     name: str
+    description: Optional[str]
     agent_name: Optional[str]
     job_type: str
     cron_expression: str

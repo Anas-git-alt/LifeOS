@@ -80,6 +80,7 @@ def parse_schedule_prompt(text: str) -> dict:
     prompt_template = reminder_match.group(1).strip() if reminder_match else text.strip()
     data["prompt_template"] = prompt_template
     data["name"] = f"NL: {prompt_template[:80]}"
+    data["description"] = f"Natural-language reminder job: {prompt_template}"
     data["job_type"] = "agent_nudge"
     data["source"] = "discord_nl"
     data["created_by"] = "discord"

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
 CREATE TABLE IF NOT EXISTS scheduled_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name VARCHAR(120) NOT NULL,
+    description TEXT,
     agent_name VARCHAR(100),
     job_type VARCHAR(40) NOT NULL DEFAULT 'agent_nudge',
     cron_expression VARCHAR(120) NOT NULL,

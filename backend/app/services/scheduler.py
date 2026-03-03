@@ -13,6 +13,7 @@ from app.database import async_session
 from app.models import ScheduledJob
 from app.services.jobs import (
     disable_agent_cadence_job,
+    fill_missing_job_descriptions,
     get_job,
     list_jobs,
     record_job_run,
@@ -230,6 +231,7 @@ async def run_retention_prune_job():
 async def bootstrap_agent_jobs():
     """Register persisted jobs and keep legacy agent cadence in sync."""
     await seed_jobs_from_agent_cadence()
+    await fill_missing_job_descriptions()
     for row in await list_jobs():
         try:
             await sync_persistent_job(row.id)

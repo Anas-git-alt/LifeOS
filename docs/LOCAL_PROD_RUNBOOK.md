@@ -34,6 +34,7 @@ Port overrides (optional):
    - `GET /api/settings/` and `PUT /api/settings/` (set `data_start_date`)
    - `GET /api/jobs/`, `POST /api/jobs/`, `POST /api/jobs/{id}/pause|resume`
    - Discord NL: `!schedule ...`, `!spawnagent ...`, then `!reply ...` for follow-ups
+   - For every new job, set a clear `description` (intent + channel + expected outcome)
 
 ## 4) Backup and Restore
 1. Manual backup: `./scripts/backup.sh`

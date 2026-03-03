@@ -69,6 +69,10 @@ def run_migrations() -> None:
             memory_cols = {row[1] for row in cur.execute("PRAGMA table_info(memory)").fetchall()}
             if "session_id" not in memory_cols:
                 cur.execute("ALTER TABLE memory ADD COLUMN session_id INTEGER")
+        if "scheduled_jobs" in existing_tables:
+            job_cols = {row[1] for row in cur.execute("PRAGMA table_info(scheduled_jobs)").fetchall()}
+            if "description" not in job_cols:
+                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN description TEXT")
         if "life_items" in existing_tables:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:

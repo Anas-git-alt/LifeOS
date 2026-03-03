@@ -69,6 +69,18 @@ curl http://localhost:8100/api/health  # {"status":"healthy"}
   - `GET /api/jobs/{id}/runs` (recent run logs)
 - WebUI: **Jobs** page supports create/edit/pause/resume/delete + run visibility.
 - Jobs are timezone-aware per row (`timezone` field), defaulting to `Africa/Casablanca`.
+- Jobs now include `description` to explain intent and expected output.
+
+### 2.1) Writing Understandable Job Descriptions
+Use this short pattern:
+- **Intent**: what should happen (`Daily planning reminder`)
+- **Audience/Target**: where it goes (`post in #daily-plan`)
+- **Outcome**: what the message should help you do (`start top 3 priorities before shift`)
+
+Examples:
+- `Daily planning reminder for #daily-plan to set top 3 priorities before 14:00 shift.`
+- `Workout prompt in #fitness-log to maintain morning consistency on weekdays.`
+- `Weekly review kickoff in #weekly-review to summarize wins, misses, and next-week focus.`
 
 ### 3) Approval-gated NL Creation from Discord
 - New Discord commands:

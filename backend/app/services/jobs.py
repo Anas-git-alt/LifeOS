@@ -12,6 +12,22 @@ from app.database import async_session
 from app.models import Agent, JobRunLog, ScheduledJob, ScheduledJobCreate, ScheduledJobUpdate
 
 
+def default_job_description(
+    *,
+    name: str,
+    agent_name: str | None,
+    cron_expression: str,
+    timezone: str,
+    target_channel: str | None,
+) -> str:
+    target = f"#{target_channel}" if target_channel else "its mapped channel"
+    owner = agent_name or "system"
+    return (
+        f"{name}: runs for agent '{owner}' on cron '{cron_expression}' in timezone "
+        f"'{timezone}' and posts to {target}."
+    )
+
+
 def normalize_cron_expression(cron_expression: str) -> str:
     parts = (cron_expression or "").split()
     if len(parts) == 3:
@@ -55,6 +71,14 @@ async def create_job(data: ScheduledJobCreate) -> ScheduledJob:
     payload = data.model_dump()
     payload["cron_expression"] = normalize_cron_expression(payload["cron_expression"])
     payload["timezone"] = validate_timezone(payload["timezone"])
+    if not payload.get("description"):
+        payload["description"] = default_job_description(
+            name=payload["name"],
+            agent_name=payload.get("agent_name"),
+            cron_expression=payload["cron_expression"],
+            timezone=payload["timezone"],
+            target_channel=payload.get("target_channel"),
+        )
     async with async_session() as db:
         row = ScheduledJob(**payload)
         db.add(row)
@@ -78,6 +102,14 @@ async def update_job(job_id: int, data: ScheduledJobUpdate) -> ScheduledJob | No
 
         for key, value in payload.items():
             setattr(row, key, value)
+        if "description" not in payload or not (row.description or "").strip():
+            row.description = default_job_description(
+                name=row.name,
+                agent_name=row.agent_name,
+                cron_expression=row.cron_expression,
+                timezone=row.timezone,
+                target_channel=row.target_channel,
+            )
         await db.commit()
         await db.refresh(row)
         return row
@@ -168,11 +200,25 @@ async def seed_jobs_from_agent_cadence() -> int:
                 existing.enabled = bool(agent.enabled)
                 existing.paused = not bool(agent.enabled)
                 existing.target_channel = agent.discord_channel
+                existing.description = default_job_description(
+                    name=existing.name,
+                    agent_name=existing.agent_name,
+                    cron_expression=existing.cron_expression,
+                    timezone=existing.timezone,
+                    target_channel=existing.target_channel,
+                )
                 continue
 
             db.add(
                 ScheduledJob(
                     name=job_name,
+                    description=default_job_description(
+                        name=job_name,
+                        agent_name=agent.name,
+                        cron_expression=normalized,
+                        timezone="Africa/Casablanca",
+                        target_channel=agent.discord_channel,
+                    ),
                     agent_name=agent.name,
                     job_type="agent_nudge",
                     cron_expression=normalized,
@@ -209,6 +255,13 @@ async def upsert_agent_cadence_job(
         if not row:
             row = ScheduledJob(
                 name=f"{agent_name} cadence",
+                description=default_job_description(
+                    name=f"{agent_name} cadence",
+                    agent_name=agent_name,
+                    cron_expression=normalized,
+                    timezone="Africa/Casablanca",
+                    target_channel=target_channel,
+                ),
                 agent_name=agent_name,
                 job_type="agent_nudge",
                 cron_expression=normalized,
@@ -227,6 +280,13 @@ async def upsert_agent_cadence_job(
             row.enabled = enabled
             row.paused = not enabled
             row.timezone = row.timezone or "Africa/Casablanca"
+            row.description = row.description or default_job_description(
+                name=row.name,
+                agent_name=row.agent_name,
+                cron_expression=row.cron_expression,
+                timezone=row.timezone,
+                target_channel=row.target_channel,
+            )
         await db.commit()
         await db.refresh(row)
         return row
@@ -246,3 +306,24 @@ async def disable_agent_cadence_job(agent_name: str) -> None:
         row.enabled = False
         row.paused = True
         await db.commit()
+
+
+async def fill_missing_job_descriptions() -> int:
+    updated = 0
+    async with async_session() as db:
+        result = await db.execute(select(ScheduledJob))
+        rows = list(result.scalars().all())
+        for row in rows:
+            if (row.description or "").strip():
+                continue
+            row.description = default_job_description(
+                name=row.name,
+                agent_name=row.agent_name,
+                cron_expression=row.cron_expression,
+                timezone=row.timezone,
+                target_channel=row.target_channel,
+            )
+            updated += 1
+        if updated:
+            await db.commit()
+    return updated

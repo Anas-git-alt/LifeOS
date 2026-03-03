@@ -12,6 +12,7 @@ import {
 
 const DEFAULT_JOB = {
   name: "",
+  description: "",
   agent_name: "",
   cron_expression: "30 7 mon-fri",
   timezone: "Africa/Casablanca",
@@ -57,6 +58,7 @@ export default function JobsManager() {
     if (!selectedJob) return;
     setForm({
       name: selectedJob.name || "",
+      description: selectedJob.description || "",
       agent_name: selectedJob.agent_name || "",
       cron_expression: selectedJob.cron_expression || "",
       timezone: selectedJob.timezone || "Africa/Casablanca",
@@ -162,6 +164,14 @@ export default function JobsManager() {
             <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} required />
           </div>
           <div className="form-group">
+            <label>Description</label>
+            <input
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              placeholder="What this job is for and expected outcome."
+            />
+          </div>
+          <div className="form-group">
             <label>Agent</label>
             <select
               value={form.agent_name}
@@ -260,6 +270,7 @@ export default function JobsManager() {
                         Agent: <strong>{job.agent_name || "n/a"}</strong> · Cron: <code>{job.cron_expression}</code> · TZ:{" "}
                         <strong>{job.timezone}</strong>
                       </p>
+                      {job.description && <p style={{ marginTop: 6 }}>Description: {job.description}</p>}
                       <p style={{ marginTop: 6 }}>
                         Last run: {job.last_run_at || "never"} · Next run: {job.next_run_at || "n/a"} · Status:{" "}
                         {job.paused ? "paused" : job.enabled ? "active" : "disabled"}

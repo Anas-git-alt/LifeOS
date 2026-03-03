@@ -33,6 +33,7 @@ def test_settings_and_jobs_api_flow():
             headers=_headers(),
             json={
                 "name": job_name,
+                "description": "Integration test job description",
                 "agent_name": "sandbox",
                 "cron_expression": "30 7 mon-fri",
                 "timezone": "Africa/Casablanca",
@@ -45,6 +46,7 @@ def test_settings_and_jobs_api_flow():
         assert create_resp.status_code == 200
         job = create_resp.json()
         assert job["name"] == job_name
+        assert "description" in job
         assert job["cron_expression"] == "30 7 * * mon-fri"
         assert job["agent_name"] == "sandbox"
         job_id = int(job["id"])
