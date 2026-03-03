@@ -6,9 +6,19 @@ from sqlalchemy import delete, select
 
 from app.database import async_session
 from app.models import AuditLog, MemoryEntry
+from app.services.system_settings import get_data_start_date
 
 
-async def get_context(agent_name: str, limit: int = 20, session_id: int | None = None) -> list[dict]:
+async def get_context(
+    agent_name: str,
+    limit: int = 20,
+    session_id: int | None = None,
+    apply_data_start_filter: bool = False,
+) -> list[dict]:
+    cutoff_dt = None
+    if apply_data_start_filter:
+        data_start = await get_data_start_date()
+        cutoff_dt = datetime.combine(data_start, datetime.min.time()).replace(tzinfo=None)
     async with async_session() as db:
         query = (
             select(MemoryEntry)
@@ -16,6 +26,8 @@ async def get_context(agent_name: str, limit: int = 20, session_id: int | None =
             .order_by(MemoryEntry.timestamp.desc())
             .limit(limit)
         )
+        if cutoff_dt:
+            query = query.where(MemoryEntry.timestamp >= cutoff_dt)
         if session_id is None:
             query = query.where(MemoryEntry.session_id.is_(None))
         else:

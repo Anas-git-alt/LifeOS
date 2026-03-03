@@ -41,7 +41,9 @@ class Settings(BaseSettings):
     # General
     timezone: str = "Africa/Casablanca"
     local_mode: bool = True
-    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allow_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100"
+    )
     backend_host: str = "127.0.0.1"
     backend_port: int = 8000
     database_url: str = "sqlite+aiosqlite:///storage/lifeos.db"

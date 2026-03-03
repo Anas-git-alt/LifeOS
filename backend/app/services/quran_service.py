@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from app.database import async_session
 from app.models import QuranBookmark, QuranReading, QuranReadingRequest
 from app.services.profile import get_or_create_profile
+from app.services.system_settings import get_data_start_date
 
 TOTAL_PAGES = 604
 
@@ -84,6 +85,7 @@ async def log_reading(data: QuranReadingRequest) -> dict:
 async def get_progress() -> dict:
     """Return overall Quran reading progress and recent sessions."""
     bookmark = await get_or_create_bookmark()
+    data_start_date = await get_data_start_date()
 
     async with async_session() as db:
         # Total pages read
@@ -98,13 +100,16 @@ async def get_progress() -> dict:
                         else_=TOTAL_PAGES - QuranReading.start_page + 1 + QuranReading.end_page,
                     )
                 )
-            )
+            ).where(QuranReading.local_date >= data_start_date)
         )
         total_pages_read = total_result.scalar() or 0
 
         # Recent readings (last 10)
         recent_result = await db.execute(
-            select(QuranReading).order_by(QuranReading.created_at.desc()).limit(10)
+            select(QuranReading)
+            .where(QuranReading.local_date >= data_start_date)
+            .order_by(QuranReading.created_at.desc())
+            .limit(10)
         )
         recent = list(recent_result.scalars().all())
 

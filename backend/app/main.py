@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.middleware import request_context_middleware
-from app.routers import agents, approvals, health, life, prayer, profile, providers
+from app.routers import agents, approvals, health, jobs, life, prayer, profile, providers, settings as system_settings
 from app.services.scheduler import bootstrap_agent_jobs, shutdown_scheduler, start_scheduler
 from app.services.seed import seed_default_agents
 
@@ -71,5 +71,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
 app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
+app.include_router(system_settings.router, prefix="/api/settings", tags=["settings"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(life.router, prefix="/api/life", tags=["life"])
 app.include_router(prayer.router, prefix="/api/prayer", tags=["prayer"])

@@ -67,6 +67,8 @@ async def approval_stats():
         }
     return {
         "pending": counts.get("pending", 0),
-        "approved": counts.get("approved", 0),
+        "approved": counts.get("approved", 0) + counts.get("executed", 0),
         "rejected": counts.get("rejected", 0),
+        "executed": counts.get("executed", 0),
+        "failed": counts.get("failed", 0),
     }

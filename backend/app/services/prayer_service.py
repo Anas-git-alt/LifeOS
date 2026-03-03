@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import async_session
 from app.models import Agent, PrayerCheckin, PrayerCheckinRequest, PrayerReminder, PrayerRetroactiveCheckinRequest, PrayerWindow
 from app.services.profile import get_or_create_profile
+from app.services.system_settings import get_data_start_date
 
 PRAYER_ORDER = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
 VALID_STATUSES = {"on_time", "late", "missed", "unknown"}
@@ -478,9 +479,13 @@ async def get_weekly_dashboard(target_date_str: str | None = None) -> dict:
     else:
         end_date = datetime.now(timezone.utc).astimezone(tz).date()
     start_date = end_date - timedelta(days=6)
+    data_start_date = await get_data_start_date()
+    if data_start_date > start_date:
+        start_date = data_start_date
 
     # Ensure windows exist for all 7 days
-    for i in range(7):
+    days_span = max(0, (end_date - start_date).days + 1)
+    for i in range(days_span):
         await ensure_prayer_windows_for_date(start_date + timedelta(days=i))
 
     async with async_session() as db:
@@ -505,7 +510,7 @@ async def get_weekly_dashboard(target_date_str: str | None = None) -> dict:
     days = []
     summary = {"on_time": 0, "late": 0, "missed": 0, "unknown": 0, "total": 0}
 
-    for i in range(7):
+    for i in range(days_span):
         d = start_date + timedelta(days=i)
         day_windows = [w for w in windows if w.local_date == d]
         prayers: dict[str, str | None] = {}
@@ -538,4 +543,3 @@ async def get_weekly_dashboard(target_date_str: str | None = None) -> dict:
     summary["total_windows"] = total_windows
 
     return {"days": days, "summary": summary}
-

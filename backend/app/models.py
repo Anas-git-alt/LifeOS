@@ -55,6 +55,52 @@ class Agent(Base):
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
+class ScheduledJob(Base):
+    __tablename__ = "scheduled_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    job_type: Mapped[str] = mapped_column(String(40), nullable=False, default="agent_nudge")
+    cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Africa/Casablanca")
+    target_channel: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    prompt_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    created_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class JobRunLog(Base):
+    __tablename__ = "job_run_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("scheduled_jobs.id"), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
@@ -145,6 +191,24 @@ class UserProfile(Base):
     quiet_hours_start: Mapped[str] = mapped_column(String(5), default="23:00")
     quiet_hours_end: Mapped[str] = mapped_column(String(5), default="06:00")
     nudge_mode: Mapped[str] = mapped_column(String(20), default="moderate")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    data_start_date: Mapped[date] = mapped_column(nullable=False)
+    default_timezone: Mapped[str] = mapped_column(String(64), default="Africa/Casablanca")
+    autonomy_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    approval_required_for_mutations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -430,6 +494,108 @@ class ProfileResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SystemSettingsUpdate(BaseModel):
+    data_start_date: Optional[str] = Field(
+        default=None,
+        description="Inclusive YYYY-MM-DD. Data before this date is ignored in reporting.",
+    )
+    default_timezone: Optional[str] = None
+    autonomy_enabled: Optional[bool] = None
+    approval_required_for_mutations: Optional[bool] = None
+
+
+class SystemSettingsResponse(BaseModel):
+    id: int
+    data_start_date: str
+    default_timezone: str
+    autonomy_enabled: bool
+    approval_required_for_mutations: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ScheduledJobCreate(BaseModel):
+    name: str
+    agent_name: Optional[str] = None
+    job_type: str = "agent_nudge"
+    cron_expression: str
+    timezone: str = "Africa/Casablanca"
+    target_channel: Optional[str] = None
+    prompt_template: Optional[str] = None
+    enabled: bool = True
+    paused: bool = False
+    approval_required: bool = True
+    source: str = "manual"
+    created_by: Optional[str] = None
+    config_json: Optional[dict] = None
+
+
+class ScheduledJobUpdate(BaseModel):
+    name: Optional[str] = None
+    agent_name: Optional[str] = None
+    job_type: Optional[str] = None
+    cron_expression: Optional[str] = None
+    timezone: Optional[str] = None
+    target_channel: Optional[str] = None
+    prompt_template: Optional[str] = None
+    enabled: Optional[bool] = None
+    paused: Optional[bool] = None
+    approval_required: Optional[bool] = None
+    source: Optional[str] = None
+    created_by: Optional[str] = None
+    config_json: Optional[dict] = None
+
+
+class ScheduledJobResponse(BaseModel):
+    id: int
+    name: str
+    agent_name: Optional[str]
+    job_type: str
+    cron_expression: str
+    timezone: str
+    target_channel: Optional[str]
+    prompt_template: Optional[str]
+    enabled: bool
+    paused: bool
+    approval_required: bool
+    source: str
+    created_by: Optional[str]
+    config_json: Optional[dict]
+    last_run_at: Optional[datetime]
+    next_run_at: Optional[datetime]
+    last_status: Optional[str]
+    last_error: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class JobRunLogResponse(BaseModel):
+    id: int
+    job_id: int
+    started_at: datetime
+    finished_at: datetime
+    status: str
+    message: Optional[str]
+    error: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProposedActionPayload(BaseModel):
+    summary: str
+    details: dict[str, Any]
+    requested_by: Optional[str] = None
+    source: str = "api"
 
 
 class LifeItemCreate(BaseModel):

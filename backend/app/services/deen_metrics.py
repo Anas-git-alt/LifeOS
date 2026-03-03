@@ -11,6 +11,7 @@ from app.database import async_session
 from app.models import DeenHabit, PrayerCheckin, PrayerWindow
 from app.services.profile import get_or_create_profile
 from app.services.prayer_service import ensure_prayer_windows_for_date, get_today_schedule
+from app.services.system_settings import get_data_start_date
 
 
 def _fmt(d: date) -> str:
@@ -22,8 +23,12 @@ async def get_weekly_summary() -> dict:
     tz = ZoneInfo(profile.timezone)
     today = datetime.now(timezone.utc).astimezone(tz).date()
     start_date = today - timedelta(days=6)
+    data_start_date = await get_data_start_date()
+    if data_start_date > start_date:
+        start_date = data_start_date
 
-    for i in range(7):
+    days_span = max(0, (today - start_date).days + 1)
+    for i in range(days_span):
         await ensure_prayer_windows_for_date(start_date + timedelta(days=i))
 
     async with async_session() as db:

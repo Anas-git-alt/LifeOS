@@ -1,25 +1,50 @@
 """Scheduler service for periodic agent runs and maintenance tasks."""
 
+from datetime import datetime, timezone
 import logging
+from zoneinfo import ZoneInfo
 
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session
-from app.models import Agent
+from app.models import ScheduledJob
+from app.services.jobs import (
+    disable_agent_cadence_job,
+    get_job,
+    list_jobs,
+    record_job_run,
+    seed_jobs_from_agent_cadence,
+    upsert_agent_cadence_job,
+)
 from app.services.memory import prune_old_data
 from app.services.orchestrator import run_scheduled_agent
 from app.services.prayer_service import auto_mark_unknown_expired, refresh_today_and_tomorrow_windows
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+def _new_scheduler() -> AsyncIOScheduler:
+    return AsyncIOScheduler(timezone=settings.timezone)
+
+
+scheduler = _new_scheduler()
 
 
 def start_scheduler():
+    global scheduler
     if not scheduler.running:
-        scheduler.start()
+        try:
+            scheduler.start()
+        except RuntimeError as exc:
+            # FastAPI TestClient can close/re-open loops between lifespan runs.
+            if "Event loop is closed" in str(exc):
+                scheduler = _new_scheduler()
+                scheduler.start()
+            else:
+                raise
         logger.info("Scheduler started")
 
 
@@ -36,35 +61,122 @@ def _parse_cadence(cron_expression: str) -> tuple[str, str, str]:
     minute = parts[0]
     hour = parts[1]
     day_of_week = parts[2] if len(parts) > 2 else "*"
+    if len(parts) == 5:
+        # Preserve compatibility for legacy tests while accepting full crontab input.
+        minute = parts[0]
+        hour = parts[1]
+        day_of_week = parts[4]
     return minute, hour, day_of_week
 
 
-def add_agent_job(agent_name: str, cron_expression: str):
-    minute, hour, day_of_week = _parse_cadence(cron_expression)
-    job_id = f"agent_{agent_name}"
-    if scheduler.get_job(job_id):
-        scheduler.remove_job(job_id)
+def _scheduler_job_id(job_id: int) -> str:
+    return f"scheduled_job_{job_id}"
+
+
+def _to_db_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def _update_job_next_run(job_id: int, next_run: datetime | None) -> None:
+    async with async_session() as db:
+        result = await db.execute(
+            select(ScheduledJob).where(ScheduledJob.id == job_id)
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            return
+        row.next_run_at = _to_db_datetime(next_run)
+        await db.commit()
+
+
+async def sync_persistent_job(job_id: int) -> None:
+    row = await get_job(job_id)
+    scheduler_id = _scheduler_job_id(job_id)
+    existing = scheduler.get_job(scheduler_id)
+    if not row:
+        if existing:
+            scheduler.remove_job(scheduler_id)
+        return
+
+    if not row.enabled or row.paused:
+        if existing:
+            scheduler.remove_job(scheduler_id)
+        await _update_job_next_run(job_id, None)
+        return
+
+    trigger = CronTrigger.from_crontab(row.cron_expression, timezone=ZoneInfo(row.timezone))
     scheduler.add_job(
-        run_scheduled_agent,
-        "cron",
-        minute=minute,
-        hour=hour,
-        day_of_week=day_of_week,
-        id=job_id,
-        kwargs={"agent_name": agent_name},
+        run_persistent_job,
+        trigger=trigger,
+        id=scheduler_id,
+        kwargs={"job_id": job_id},
         replace_existing=True,
         coalesce=True,
         max_instances=1,
         misfire_grace_time=600,
     )
-    logger.info("Scheduled %s at minute=%s hour=%s dow=%s", agent_name, minute, hour, day_of_week)
+    scheduled = scheduler.get_job(scheduler_id)
+    await _update_job_next_run(job_id, scheduled.next_run_time if scheduled else None)
+    logger.info(
+        "Scheduled persistent job id=%s name=%s cron=%s tz=%s",
+        row.id,
+        row.name,
+        row.cron_expression,
+        row.timezone,
+    )
 
 
-def remove_agent_job(agent_name: str):
-    job_id = f"agent_{agent_name}"
-    if scheduler.get_job(job_id):
-        scheduler.remove_job(job_id)
-        logger.info("Removed scheduled job %s", job_id)
+async def run_persistent_job(job_id: int) -> None:
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    status = "completed"
+    message: str | None = None
+    error: str | None = None
+
+    try:
+        row = await get_job(job_id)
+        if not row:
+            status = "skipped"
+            message = "job_not_found"
+        elif not row.enabled or row.paused:
+            status = "skipped"
+            message = "job_disabled_or_paused"
+        elif row.job_type == "agent_nudge":
+            if not row.agent_name:
+                status = "failed"
+                error = "agent_name is required for agent_nudge jobs"
+            else:
+                result = await run_scheduled_agent(
+                    agent_name=row.agent_name,
+                    prompt_override=row.prompt_template,
+                    target_channel_override=row.target_channel,
+                )
+                status = str(result.get("status", "completed"))
+                message = str(result)
+        else:
+            status = "failed"
+            error = f"Unsupported job_type '{row.job_type}'"
+    except Exception as exc:
+        status = "failed"
+        error = str(exc)
+        logger.exception("Persistent job %s failed", job_id)
+    finally:
+        finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        scheduled = scheduler.get_job(_scheduler_job_id(job_id))
+        next_run = scheduled.next_run_time if scheduled else None
+        await record_job_run(
+            job_id=job_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            message=message,
+            error=error,
+            last_run_at=finished_at,
+            next_run_at=_to_db_datetime(next_run),
+        )
 
 
 def ensure_maintenance_jobs():
@@ -116,16 +228,30 @@ async def run_retention_prune_job():
 
 
 async def bootstrap_agent_jobs():
-    """Register all enabled agent cadence jobs from DB."""
-    async with async_session() as db:
-        result = await db.execute(
-            select(Agent).where(Agent.enabled.is_(True)).where(Agent.cadence.is_not(None))
-        )
-        agents = [agent for agent in result.scalars().all() if (agent.cadence or "").strip()]
-    for agent in agents:
+    """Register persisted jobs and keep legacy agent cadence in sync."""
+    await seed_jobs_from_agent_cadence()
+    for row in await list_jobs():
         try:
-            add_agent_job(agent.name, agent.cadence or "")
+            await sync_persistent_job(row.id)
         except Exception as exc:
-            logger.warning("Failed scheduling agent '%s': %s", agent.name, exc)
+            logger.warning("Failed scheduling persistent job id=%s: %s", row.id, exc)
     ensure_maintenance_jobs()
     ensure_prayer_jobs()
+
+
+async def sync_agent_job(agent_name: str, cadence: str, enabled: bool, target_channel: str | None) -> None:
+    row = await upsert_agent_cadence_job(
+        agent_name=agent_name,
+        cadence=cadence,
+        enabled=enabled,
+        target_channel=target_channel,
+    )
+    await sync_persistent_job(row.id)
+
+
+async def unschedule_agent_jobs(agent_name: str) -> None:
+    await disable_agent_cadence_job(agent_name)
+    rows = await list_jobs(agent_name=agent_name)
+    for row in rows:
+        if row.source == "agent_cadence":
+            await sync_persistent_job(row.id)

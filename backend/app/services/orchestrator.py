@@ -9,9 +9,11 @@ from sqlalchemy import select
 
 from app.database import async_session
 from app.models import ActionStatus, Agent, AuditLog, LifeItemCreate, PendingAction
+from app.redaction import redact_sensitive
 from app.services.chat_sessions import ensure_session, refresh_session_metadata
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message
+from app.services.action_executor import execute_pending_action
 from app.services.memory import get_context, save_message
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 from app.services.tools.web_search import web_search
@@ -215,10 +217,12 @@ async def handle_message(
             "Use the date above for all date-sensitive responses.\n"
         )
 
+        reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
         context = await get_context(
             agent_name,
             limit=20,
             session_id=active_session.id if active_session else None,
+            apply_data_start_filter=reporting_mode,
         )
         messages = [{"role": "system", "content": system_prompt}, *context]
 
@@ -258,7 +262,7 @@ async def handle_message(
                 fallback_model=agent.fallback_model,
             )
         except LLMProvidersExhaustedError as exc:
-            logger.error("LLM providers exhausted for agent '%s': %s", agent_name, exc)
+            logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
             return {
                 "response": LLM_UNAVAILABLE_MESSAGE,
                 "pending_action_id": None,
@@ -268,9 +272,10 @@ async def handle_message(
                 "session_title": active_session.title if active_session else None,
             }
         except Exception as exc:
-            logger.error("LLM call failed for agent '%s': %s", agent_name, exc)
+            safe_error = redact_sensitive(str(exc))
+            logger.error("LLM call failed for agent '%s': %s", agent_name, safe_error)
             return {
-                "response": f"LLM error: {exc}",
+                "response": f"LLM error: {safe_error}",
                 "pending_action_id": None,
                 "risk_level": "high",
                 "session_id": active_session.id if active_session else None,
@@ -364,7 +369,27 @@ async def approve_action(action_id: int, reviewer: Optional[str] = None, source:
             )
         )
         await db.commit()
-        return action
+    execution_ok = False
+    execution_result = ""
+    if action.action_type in {"create_job", "create_agent"}:
+        execution_ok, execution_result = await execute_pending_action(action)
+        async with async_session() as db:
+            result = await db.execute(select(PendingAction).where(PendingAction.id == action_id))
+            refreshed = result.scalar_one_or_none()
+            if refreshed:
+                refreshed.status = ActionStatus.EXECUTED if execution_ok else ActionStatus.FAILED
+                refreshed.result = execution_result
+                db.add(
+                    AuditLog(
+                        agent_name=refreshed.agent_name,
+                        action=f"execute:{refreshed.action_type}",
+                        details=execution_result[:500],
+                        status="executed" if execution_ok else "failed",
+                    )
+                )
+                await db.commit()
+                action = refreshed
+    return action
 
 
 async def reject_action(
@@ -401,14 +426,18 @@ async def get_all_agents() -> list[Agent]:
         return list(result.scalars().all())
 
 
-async def run_scheduled_agent(agent_name: str) -> dict:
+async def run_scheduled_agent(
+    agent_name: str,
+    prompt_override: str | None = None,
+    target_channel_override: str | None = None,
+) -> dict:
     """Execute a scheduled nudge and send it to the mapped Discord channel."""
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
         agent = result.scalar_one_or_none()
         if not agent or not agent.enabled:
             return {"status": "skipped", "reason": "agent_disabled_or_missing"}
-        profile_prompt = (
+        profile_prompt = prompt_override or (
             "Run your scheduled status check-in now. Keep it concise, supportive, and actionable. "
             "Do not execute external actions."
         )
@@ -424,6 +453,7 @@ async def run_scheduled_agent(agent_name: str) -> dict:
     if run_result.get("pending_action_id"):
         return {"status": "pending_approval", "pending_action_id": run_result["pending_action_id"]}
     delivered = False
-    if agent and agent.discord_channel:
-        delivered = await send_channel_message(agent.discord_channel, run_result.get("response", ""))
+    target_channel = target_channel_override or (agent.discord_channel if agent else None)
+    if target_channel:
+        delivered = await send_channel_message(target_channel, run_result.get("response", ""))
     return {"status": "delivered" if delivered else "completed", "delivered": delivered}

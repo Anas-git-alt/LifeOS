@@ -1,10 +1,13 @@
 """Agents router: CRUD, chat, and scheduled execution."""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.database import async_session
 from app.models import (
+    ActionStatus,
     Agent,
     AgentCreate,
     AgentResponse,
@@ -15,6 +18,8 @@ from app.models import (
     ChatSessionCreate,
     ChatSessionResponse,
     ChatSessionUpdate,
+    PendingAction,
+    ProposedActionPayload,
 )
 from app.security import require_api_token
 from app.services.chat_sessions import (
@@ -25,7 +30,7 @@ from app.services.chat_sessions import (
     rename_session,
 )
 from app.services.orchestrator import handle_message, run_scheduled_agent
-from app.services.scheduler import add_agent_job, remove_agent_job
+from app.services.scheduler import sync_agent_job, unschedule_agent_jobs
 
 router = APIRouter()
 
@@ -66,7 +71,12 @@ async def create_agent(data: AgentCreate):
         await db.refresh(agent)
     if agent.enabled and agent.cadence:
         try:
-            add_agent_job(agent.name, agent.cadence)
+            await sync_agent_job(
+                agent_name=agent.name,
+                cadence=agent.cadence,
+                enabled=agent.enabled,
+                target_channel=agent.discord_channel,
+            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid cadence: {exc}") from exc
     return AgentResponse.model_validate(agent)
@@ -86,11 +96,16 @@ async def update_agent(agent_name: str, data: AgentUpdate):
 
     if agent.enabled and agent.cadence:
         try:
-            add_agent_job(agent.name, agent.cadence)
+            await sync_agent_job(
+                agent_name=agent.name,
+                cadence=agent.cadence,
+                enabled=agent.enabled,
+                target_channel=agent.discord_channel,
+            )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid cadence: {exc}") from exc
     else:
-        remove_agent_job(agent.name)
+        await unschedule_agent_jobs(agent.name)
     return AgentResponse.model_validate(agent)
 
 
@@ -103,7 +118,7 @@ async def delete_agent(agent_name: str):
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
         await db.delete(agent)
         await db.commit()
-    remove_agent_job(agent_name)
+    await unschedule_agent_jobs(agent_name)
     return {"detail": f"Agent '{agent_name}' deleted"}
 
 
@@ -198,3 +213,22 @@ async def list_agent_session_messages(agent_name: str, session_id: int, limit: i
 )
 async def run_agent_scheduled(agent_name: str):
     return await run_scheduled_agent(agent_name)
+
+
+@router.post("/propose", dependencies=[Depends(require_api_token)])
+async def propose_agent(data: ProposedActionPayload):
+    async with async_session() as db:
+        pending = PendingAction(
+            agent_name="agent-factory",
+            action_type="create_agent",
+            summary=data.summary,
+            details=json.dumps(data.details),
+            status=ActionStatus.PENDING,
+            risk_level="medium",
+            reviewed_by=None,
+            review_source=data.source,
+        )
+        db.add(pending)
+        await db.commit()
+        await db.refresh(pending)
+        return {"pending_action_id": pending.id, "status": pending.status.value}

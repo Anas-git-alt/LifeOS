@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.database import async_session
 from app.models import LifeCheckin, LifeCheckinCreate, LifeItem, LifeItemCreate, LifeItemUpdate, UserProfile
+from app.services.system_settings import get_data_start_date
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -137,6 +138,8 @@ async def get_today_agenda() -> dict:
 
 async def get_goal_progress(item_id: int) -> dict | None:
     """Return progress data for a specific goal/life item."""
+    data_start_date = await get_data_start_date()
+    cutoff_dt = datetime.combine(data_start_date, datetime.min.time()).replace(tzinfo=None)
     async with async_session() as db:
         result = await db.execute(select(LifeItem).where(LifeItem.id == item_id))
         item = result.scalar_one_or_none()
@@ -146,13 +149,15 @@ async def get_goal_progress(item_id: int) -> dict | None:
         checkins_result = await db.execute(
             select(LifeCheckin)
             .where(LifeCheckin.life_item_id == item_id)
+            .where(LifeCheckin.timestamp >= cutoff_dt)
             .order_by(LifeCheckin.timestamp.desc())
         )
         checkins = list(checkins_result.scalars().all())
 
     days_since_start = None
     if item.start_date:
-        days_since_start = (datetime.now(timezone.utc).date() - item.start_date).days
+        effective_start = max(item.start_date, data_start_date)
+        days_since_start = (datetime.now(timezone.utc).date() - effective_start).days
 
     done_count = sum(1 for c in checkins if c.result == "done")
     partial_count = sum(1 for c in checkins if c.result == "partial")
