@@ -30,6 +30,10 @@ Port overrides (optional):
    - `!prayerlog YYYY-MM-DD <Fajr|Dhuhr|Asr|Maghrib|Isha> <on_time|late|missed> [note]`
    - `!quran <juz> [pages]`, `!tahajjud <done|missed> [date]`, `!adhkar <morning|evening> <done|missed> [date]`
 6. Check weekly deen metrics with `GET /api/prayer/weekly-summary` (token required).
+7. Manage runtime settings and jobs:
+   - `GET /api/settings/` and `PUT /api/settings/` (set `data_start_date`)
+   - `GET /api/jobs/`, `POST /api/jobs/`, `POST /api/jobs/{id}/pause|resume`
+   - Discord NL: `!schedule ...`, `!spawnagent ...`, then `!reply ...` for follow-ups
 
 ## 4) Backup and Restore
 1. Manual backup: `./scripts/backup.sh`

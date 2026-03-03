@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import AgentConfig from "./components/AgentConfig";
 import AgentList from "./components/AgentList";
+import AgentWizard from "./components/AgentWizard";
 import ApprovalQueue from "./components/ApprovalQueue";
 import Dashboard from "./components/Dashboard";
+import GlobalSettings from "./components/GlobalSettings";
 import GoalProgress from "./components/GoalProgress";
 import LifeItems from "./components/LifeItems";
+import JobsManager from "./components/JobsManager";
 import PrayerDashboard from "./components/PrayerDashboard";
 import ProfileSettings from "./components/ProfileSettings";
 import ProviderConfig from "./components/ProviderConfig";
@@ -43,6 +46,14 @@ const PAGE_META = {
     title: "Agents",
     subtitle: "Manage roles, models, cadence, and orchestration quality.",
   },
+  "agent-create": {
+    title: "Spawn Agent",
+    subtitle: "Create new agents from a guided form with optional approval queue.",
+  },
+  jobs: {
+    title: "Jobs",
+    subtitle: "Manage all cron jobs globally and per agent with run visibility.",
+  },
   "agent-config": {
     title: "Agent Configuration",
     subtitle: "Adjust selected agent behavior without leaving your flow.",
@@ -58,6 +69,10 @@ const PAGE_META = {
   profile: {
     title: "Profile",
     subtitle: "Personal preferences, account settings, and secure defaults.",
+  },
+  settings: {
+    title: "Global Settings",
+    subtitle: "Control reporting filters, autonomy toggles, and runtime defaults.",
   },
 };
 
@@ -103,6 +118,10 @@ export default function App() {
         return <GoalProgress itemId={selectedGoalId} onBack={() => setPage("life")} />;
       case "agents":
         return <AgentList onSelect={handleAgentSelect} />;
+      case "agent-create":
+        return <AgentWizard />;
+      case "jobs":
+        return <JobsManager />;
       case "agent-config":
         return <AgentConfig agentName={selectedAgent} onBack={() => setPage("agents")} />;
       case "approvals":
@@ -111,6 +130,8 @@ export default function App() {
         return <ProviderConfig />;
       case "profile":
         return <ProfileSettings />;
+      case "settings":
+        return <GlobalSettings />;
       default:
         return <Dashboard />;
     }
@@ -188,6 +209,12 @@ export default function App() {
                   Agents
                 </button>
                 <button
+                  className={`quick-nav-btn ${page === "jobs" ? "active" : ""}`}
+                  onClick={() => setPage("jobs")}
+                >
+                  Jobs
+                </button>
+                <button
                   className={`quick-nav-btn ${page === "approvals" ? "active" : ""}`}
                   onClick={() => setPage("approvals")}
                 >
@@ -207,4 +234,3 @@ export default function App() {
     </div>
   );
 }
-

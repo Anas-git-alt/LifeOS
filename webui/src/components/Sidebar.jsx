@@ -18,13 +18,18 @@ export default function Sidebar({ currentPage, onNavigate }) {
       title: "Automation",
       items: [
         { id: "agents", icon: "AG", label: "Agents" },
+        { id: "agent-create", icon: "NEW", label: "Spawn Agent" },
+        { id: "jobs", icon: "JB", label: "Jobs" },
         { id: "approvals", icon: "AP", label: "Approvals" },
         { id: "providers", icon: "PV", label: "Providers" },
       ],
     },
     {
       title: "Account",
-      items: [{ id: "profile", icon: "ME", label: "Profile" }],
+      items: [
+        { id: "profile", icon: "ME", label: "Profile" },
+        { id: "settings", icon: "CFG", label: "Settings" },
+      ],
     },
   ];
 

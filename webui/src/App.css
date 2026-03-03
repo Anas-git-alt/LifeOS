@@ -316,6 +316,19 @@
   margin-bottom: 12px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
 .token-banner {
   margin-bottom: 16px;
   padding: 16px;

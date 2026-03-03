@@ -47,6 +47,40 @@ curl http://localhost:8100/api/health  # {"status":"healthy"}
 
 ---
 
+## 🆕 New Runtime Controls (v0.2+)
+
+### 1) Data Start Date (report filtering, no data deletion)
+- API: `GET /api/settings/`, `PUT /api/settings/`
+- WebUI: **Global Settings** page
+- Behavior:
+  - `data_start_date` is **inclusive**
+  - analytics/reports/streak-style summaries ignore older entries
+  - raw historical rows remain in SQLite (nothing is deleted)
+- Default:
+  - initialized from first-run local date when possible
+  - safe fallback is `2026-03-02` (Africa/Casablanca)
+
+### 2) First-class Jobs Management
+- API:
+  - `GET /api/jobs/` (global) / `GET /api/jobs/?agent_name=<name>` (per-agent)
+  - `POST /api/jobs/`, `PUT /api/jobs/{id}`
+  - `POST /api/jobs/{id}/pause`, `POST /api/jobs/{id}/resume`
+  - `DELETE /api/jobs/{id}`
+  - `GET /api/jobs/{id}/runs` (recent run logs)
+- WebUI: **Jobs** page supports create/edit/pause/resume/delete + run visibility.
+- Jobs are timezone-aware per row (`timezone` field), defaulting to `Africa/Casablanca`.
+
+### 3) Approval-gated NL Creation from Discord
+- New Discord commands:
+  - `!schedule <natural language>`
+  - `!spawnagent <natural language>`
+  - `!reply <answer>` for follow-up prompts
+  - `!jobs [agent]`
+- Missing fields trigger follow-up questions before proposal submission.
+- Final creation is queued as `PendingAction` and requires approval (`!approve`).
+
+---
+
 ## 📋 Setup Guide A: Windows → WSL2 → Running System
 
 ### Prerequisites

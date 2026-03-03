@@ -85,6 +85,27 @@ export const getReadiness = () => request("/readiness");
 
 export const getProfile = () => request("/profile/");
 export const updateProfile = (data) => request("/profile/", { method: "PUT", body: JSON.stringify(data) });
+export const getSettings = () => request("/settings/");
+export const updateSettings = (data) => request("/settings/", { method: "PUT", body: JSON.stringify(data) });
+
+export const getJobs = (agentName = "") => request(`/jobs/${agentName ? `?agent_name=${encodeURIComponent(agentName)}` : ""}`);
+export const getJob = (jobId) => request(`/jobs/${jobId}`);
+export const createJob = (data) => request("/jobs/", { method: "POST", body: JSON.stringify(data) });
+export const updateJob = (jobId, data) => request(`/jobs/${jobId}`, { method: "PUT", body: JSON.stringify(data) });
+export const pauseJob = (jobId) => request(`/jobs/${jobId}/pause`, { method: "POST", body: JSON.stringify({}) });
+export const resumeJob = (jobId) => request(`/jobs/${jobId}/resume`, { method: "POST", body: JSON.stringify({}) });
+export const deleteJob = (jobId) => request(`/jobs/${jobId}`, { method: "DELETE" });
+export const getJobRuns = (jobId, limit = 20) => request(`/jobs/${jobId}/runs?limit=${limit}`);
+export const proposeJob = (summary, details) =>
+  request("/jobs/propose", {
+    method: "POST",
+    body: JSON.stringify({ summary, details, source: "webui", requested_by: "webui" }),
+  });
+export const proposeAgent = (summary, details) =>
+  request("/agents/propose", {
+    method: "POST",
+    body: JSON.stringify({ summary, details, source: "webui", requested_by: "webui" }),
+  });
 
 export const getLifeItems = (params = {}) => {
   const query = new URLSearchParams(params).toString();
