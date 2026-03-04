@@ -135,6 +135,57 @@ class AutomationCog(commands.Cog, name="Automation"):
         except Exception as exc:
             await ctx.send(f"Failed to list jobs: {str(exc)[:200]}")
 
+    @commands.command(name="job")
+    async def get_job(self, ctx, job_id: int):
+        try:
+            row = await api_get(f"/jobs/{job_id}")
+            status = "paused" if row.get("paused") else ("on" if row.get("enabled") else "off")
+            lines = [
+                f"**Name:** {row.get('name')}",
+                f"**Agent:** {row.get('agent_name') or 'system'}",
+                f"**Schedule:** {row.get('cron_expression')} ({row.get('timezone')})",
+                f"**Target:** #{row.get('target_channel')}" if row.get("target_channel") else "**Target:** mapped channel",
+                f"**Status:** {status}",
+                f"**Last:** {row.get('last_status') or 'n/a'}",
+                f"**Next Run:** {str(row.get('next_run_at') or 'n/a')[:19].replace('T', ' ')}",
+            ]
+            await ctx.send(f"Job #{job_id}\n" + "\n".join(lines))
+        except Exception as exc:
+            await ctx.send(f"Failed to load job: {str(exc)[:200]}")
+
+    @commands.command(name="pausejob")
+    async def pause_job(self, ctx, job_id: int):
+        try:
+            row = await api_post(f"/jobs/{job_id}/pause", {})
+            await ctx.send(f"Paused job #{row['id']}: {row['name']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to pause job: {str(exc)[:200]}")
+
+    @commands.command(name="resumejob")
+    async def resume_job(self, ctx, job_id: int):
+        try:
+            row = await api_post(f"/jobs/{job_id}/resume", {})
+            await ctx.send(f"Resumed job #{row['id']}: {row['name']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to resume job: {str(exc)[:200]}")
+
+    @commands.command(name="jobruns")
+    async def list_job_runs(self, ctx, job_id: int, limit: int = 5):
+        safe_limit = max(1, min(limit, 20))
+        try:
+            rows = await api_get(f"/jobs/{job_id}/runs?limit={safe_limit}")
+            if not rows:
+                await ctx.send(f"No run logs found for job #{job_id}.")
+                return
+            lines = []
+            for row in rows:
+                finished = str(row.get("finished_at", ""))[:16].replace("T", " ")
+                err = f" | err={str(row.get('error'))[:60]}" if row.get("error") else ""
+                lines.append(f"#{row['id']} {row.get('status')} at {finished}{err}")
+            await ctx.send(f"Recent runs for job #{job_id}:\n" + "\n".join(lines))
+        except Exception as exc:
+            await ctx.send(f"Failed to list job runs: {str(exc)[:200]}")
+
     async def _submit_job_proposal(self, ctx, data: dict):
         details = {
             "name": data["name"],

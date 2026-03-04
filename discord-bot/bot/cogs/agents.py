@@ -6,6 +6,7 @@ from discord.ext import commands
 from bot.utils import api_get, api_post, api_put
 
 VALID_DOMAINS = {"deen", "family", "work", "health", "planning"}
+VALID_ITEM_STATUSES = {"open", "done", "missed"}
 
 
 class AgentsCog(commands.Cog, name="Agents"):
@@ -253,6 +254,46 @@ class AgentsCog(commands.Cog, name="Agents"):
         except Exception as exc:
             await ctx.send(f"Failed to add item: {self._trim_error(exc)}")
 
+    @commands.command(name="items")
+    async def list_items(self, ctx, arg1: str = "", arg2: str = ""):
+        domain = ""
+        status = "open"
+        for raw in [arg1, arg2]:
+            token = raw.strip().lower()
+            if not token:
+                continue
+            if token in VALID_DOMAINS and not domain:
+                domain = token
+                continue
+            if token in VALID_ITEM_STATUSES:
+                status = token
+                continue
+            await ctx.send(
+                "Usage: `!items [domain] [status]` where domain is "
+                f"{', '.join(sorted(VALID_DOMAINS))} and status is {', '.join(sorted(VALID_ITEM_STATUSES))}."
+            )
+            return
+        try:
+            params = [f"status={status}"]
+            if domain:
+                params.append(f"domain={domain}")
+            rows = await api_get(f"/life/items?{'&'.join(params)}")
+            if not rows:
+                label = f"domain={domain or 'any'}, status={status}"
+                await ctx.send(f"No items found ({label}).")
+                return
+            lines = []
+            for row in rows[:20]:
+                due_at = row.get("due_at")
+                due_txt = f" · due {str(due_at).replace('T', ' ')[:16]} UTC" if due_at else ""
+                lines.append(
+                    f"#{row['id']} [{row.get('domain')}/{row.get('priority')}] "
+                    f"{row.get('title')} · {row.get('status')}{due_txt}"
+                )
+            await ctx.send("Life items:\n" + "\n".join(lines))
+        except Exception as exc:
+            await ctx.send(f"Failed to list items: {self._trim_error(exc)}")
+
     @commands.command(name="done")
     async def done_item(self, ctx, item_id: int, *, note: str = ""):
         try:
@@ -268,6 +309,44 @@ class AgentsCog(commands.Cog, name="Agents"):
             await ctx.send(f"Marked #{item_id} as missed.")
         except Exception as exc:
             await ctx.send(f"Failed to mark missed: {self._trim_error(exc)}")
+
+    @commands.command(name="reopen")
+    async def reopen_item(self, ctx, item_id: int):
+        try:
+            item = await api_put(f"/life/items/{item_id}", {"status": "open"})
+            await ctx.send(f"Reopened #{item['id']}: {item['title']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to reopen item: {self._trim_error(exc)}")
+
+    @commands.command(name="goalprogress")
+    async def goal_progress(self, ctx, item_id: int):
+        try:
+            data = await api_get(f"/life/items/{item_id}/progress")
+            item = data.get("item", {})
+            embed = discord.Embed(
+                title=f"Goal Progress · #{item.get('id', item_id)}",
+                description=item.get("title", "Life item"),
+                color=0x0EA5E9,
+            )
+            embed.add_field(
+                name="Counts",
+                value=(
+                    f"check-ins={data.get('checkin_count', 0)} | "
+                    f"done={data.get('done_count', 0)} | "
+                    f"partial={data.get('partial_count', 0)} | "
+                    f"missed={data.get('missed_count', 0)}"
+                ),
+                inline=False,
+            )
+            if data.get("days_since_start") is not None:
+                embed.add_field(name="Days Since Start", value=str(data["days_since_start"]), inline=True)
+            checkins = data.get("checkins") or []
+            if checkins:
+                lines = [f"{c['result']} · {(c.get('timestamp') or '')[:16].replace('T', ' ')}" for c in checkins[:5]]
+                embed.add_field(name="Recent", value="\n".join(lines), inline=False)
+            await ctx.send(embed=embed)
+        except Exception as exc:
+            await ctx.send(f"Failed to fetch goal progress: {self._trim_error(exc)}")
 
     @commands.command(name="profile")
     async def profile(self, ctx):

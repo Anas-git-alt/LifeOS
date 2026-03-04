@@ -20,6 +20,34 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
+HELP_TOPICS = {
+    "agent": "Agent chat and workflows.\n`!ask <agent> <message>` `!sandbox <message>` `!agents` `!daily` `!weekly`",
+    "sessions": (
+        "Session memory controls.\n"
+        "`!sessions <agent>` `!newsession <agent> [title]` `!usesession <agent> <id>`\n"
+        "`!renamesession <agent> <id> <title>` `!clearsession <agent> [id]` `!history <agent> [id]`"
+    ),
+    "life": (
+        "Life item and agenda tracking.\n"
+        "`!today` `!focus` `!profile`\n"
+        "`!add <domain> <text>` `!items [domain] [status]`\n"
+        "`!done <id> [note]` `!miss <id> [note]` `!reopen <id>` `!goal <domain> <title>` `!goalprogress <id>`"
+    ),
+    "deen": (
+        "Prayer and habits.\n"
+        "`!prayer` `!prayertoday` `!prayerlog <YYYY-MM-DD> <prayer> <status> [note]`\n"
+        "`!quran <end_page> [start_page] [note]` `!quranprogress`\n"
+        "`!tahajjud <done|missed> [date]` `!adhkar <morning|evening> <done|missed> [date]`"
+    ),
+    "approvals": "Owner-only action queue.\n`!pending` `!approve <id>` `!reject <id> [reason]`",
+    "jobs": (
+        "Automation and scheduled jobs.\n"
+        "`!schedule <prompt>` `!spawnagent <prompt>` `!reply <answer>`\n"
+        "`!jobs [agent]` `!job <id>` `!pausejob <id>` `!resumejob <id>` `!jobruns <id> [limit]`"
+    ),
+    "system": "System diagnostics.\n`!status` `!providers`",
+}
+
 
 @bot.event
 async def setup_hook():
@@ -52,56 +80,36 @@ async def on_command_error(ctx, error):
 
 
 @bot.command(name="help")
-async def custom_help(ctx):
-    embed = discord.Embed(title="LifeOS Commands", description="Discord-first control surface", color=0x2563EB)
-    embed.add_field(
-        name="Agent",
-        value=(
-            "`!ask <agent> <message>`\n"
-            "`!sandbox <message>`\n"
-            "`!agents`\n"
-            "`!daily` `!weekly`\n"
-            "`!today` `!focus`\n"
-            "`!profile`"
-        ),
-        inline=False,
+async def custom_help(ctx, *, topic: str = ""):
+    topic_key = topic.strip().lower()
+    if topic_key:
+        details = HELP_TOPICS.get(topic_key)
+        if not details:
+            await ctx.send(
+                "Unknown help topic. Try one of: "
+                + ", ".join(sorted(HELP_TOPICS.keys()))
+                + ". Example: `!help life`"
+            )
+            return
+        embed = discord.Embed(
+            title=f"LifeOS Help · {topic_key}",
+            description=details,
+            color=0x2563EB,
+        )
+        await ctx.send(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="LifeOS Commands",
+        description="Use `!help <topic>` for details. Topics: agent, sessions, life, deen, approvals, jobs, system",
+        color=0x2563EB,
     )
-    embed.add_field(
-        name="Chat Sessions",
-        value=(
-            "`!sessions <agent>`\n"
-            "`!newsession <agent> [title]`\n"
-            "`!usesession <agent> <session_id>`\n"
-            "`!renamesession <agent> <session_id> <title>`\n"
-            "`!clearsession <agent> [session_id]`\n"
-            "`!history <agent> [session_id]`\n"
-            "Tip: `!ask` auto-uses your active session per channel."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Life",
-        value=(
-            "`!add <domain> <text>`\n"
-            "`!done <id> [note]`\n"
-            "`!miss <id> [note]`\n"
-            "`!prayertoday` `!prayerlog <date> <prayer> <status>`\n"
-            "`!quran <juz> [pages]` `!tahajjud <done|missed> [date]`\n"
-            "`!adhkar <morning|evening> <done|missed> [date]`\n"
-            "domains: deen, family, work, health, planning"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Approvals",
-        value="`!pending` `!approve <id>` `!reject <id> [reason]`",
-        inline=False,
-    )
-    embed.add_field(
-        name="Automation",
-        value="`!schedule <nl prompt>` `!spawnagent <nl prompt>` `!reply <answer>` `!jobs [agent]`",
-        inline=False,
-    )
+    embed.add_field(name="Agent", value="`!ask` `!sandbox` `!agents` `!daily` `!weekly`", inline=False)
+    embed.add_field(name="Sessions", value="`!sessions` `!newsession` `!usesession` `!renamesession` `!clearsession` `!history`", inline=False)
+    embed.add_field(name="Life", value="`!today` `!focus` `!profile` `!add` `!items` `!done` `!miss` `!reopen` `!goal` `!goalprogress`", inline=False)
+    embed.add_field(name="Deen", value="`!prayer` `!prayertoday` `!prayerlog` `!quran` `!quranprogress` `!tahajjud` `!adhkar`", inline=False)
+    embed.add_field(name="Approvals", value="`!pending` `!approve` `!reject`", inline=False)
+    embed.add_field(name="Jobs", value="`!schedule` `!spawnagent` `!reply` `!jobs` `!job` `!pausejob` `!resumejob` `!jobruns`", inline=False)
     embed.add_field(name="System", value="`!status` `!providers`", inline=False)
     await ctx.send(embed=embed)
 
