@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     quiet_hours_start: str = "23:00"
     quiet_hours_end: str = "06:00"
     nudge_mode: str = "moderate"
+    tts_worker_url: str = "http://tts-worker:8010"
+    tts_request_timeout_seconds: float = 45.0
+    tts_health_timeout_seconds: float = 5.0
+    tts_default_engine: str = "chatterbox_turbo"
+    tts_default_model_id: str = "chatterbox-turbo"
+    tts_enable_cache: bool = True
+    tts_cache_ttl_seconds: int = 300
 
     # GitHub
     github_token: str = ""

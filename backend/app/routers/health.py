@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "lifeos-backend", "version": "0.2.0"}
+    return {"status": "healthy", "service": "lifeos-backend", "version": "1-5"}
 
 
 @router.get("/readiness")

@@ -12,10 +12,24 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".venv", ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("lifeos-bot")
 
+
+def _try_load_opus() -> None:
+    if discord.opus.is_loaded():
+        return
+    for candidate in ("libopus.so.0", "libopus.so"):
+        try:
+            discord.opus.load_opus(candidate)
+            logger.info("Loaded opus library: %s", candidate)
+            return
+        except OSError:
+            continue
+    logger.warning("Opus library not loaded; voice playback may fail.")
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
 intents.guilds = True
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
@@ -45,13 +59,24 @@ HELP_TOPICS = {
         "`!schedule <prompt>` `!spawnagent <prompt>` `!reply <answer>`\n"
         "`!jobs [agent]` `!job <id>` `!pausejob <id>` `!resumejob <id>` `!jobruns <id> [limit]`"
     ),
+    "voice": (
+        "Voice chat controls.\n"
+        "`!joinvoice <agent>` `!speak <agent> <text>` `!interrupt` `!leavevoice`"
+    ),
     "system": "System diagnostics.\n`!status` `!providers`",
 }
 
 
 @bot.event
 async def setup_hook():
-    for cog in ["bot.cogs.agents", "bot.cogs.approvals", "bot.cogs.health", "bot.cogs.reminders", "bot.cogs.automation"]:
+    for cog in [
+        "bot.cogs.agents",
+        "bot.cogs.approvals",
+        "bot.cogs.health",
+        "bot.cogs.reminders",
+        "bot.cogs.automation",
+        "bot.cogs.voice",
+    ]:
         try:
             await bot.load_extension(cog)
             logger.info("Loaded cog: %s", cog)
@@ -101,7 +126,7 @@ async def custom_help(ctx, *, topic: str = ""):
 
     embed = discord.Embed(
         title="LifeOS Commands",
-        description="Use `!help <topic>` for details. Topics: agent, sessions, life, deen, approvals, jobs, system",
+        description="Use `!help <topic>` for details. Topics: agent, sessions, life, deen, approvals, jobs, voice, system",
         color=0x2563EB,
     )
     embed.add_field(name="Agent", value="`!ask` `!sandbox` `!agents` `!daily` `!weekly`", inline=False)
@@ -110,6 +135,7 @@ async def custom_help(ctx, *, topic: str = ""):
     embed.add_field(name="Deen", value="`!prayer` `!prayertoday` `!prayerlog` `!quran` `!quranprogress` `!tahajjud` `!adhkar`", inline=False)
     embed.add_field(name="Approvals", value="`!pending` `!approve` `!reject`", inline=False)
     embed.add_field(name="Jobs", value="`!schedule` `!spawnagent` `!reply` `!jobs` `!job` `!pausejob` `!resumejob` `!jobruns`", inline=False)
+    embed.add_field(name="Voice", value="`!joinvoice` `!speak` `!interrupt` `!leavevoice`", inline=False)
     embed.add_field(name="System", value="`!status` `!providers`", inline=False)
     await ctx.send(embed=embed)
 
@@ -119,6 +145,7 @@ def main():
     if not token:
         logger.error("DISCORD_BOT_TOKEN not set in environment")
         return
+    _try_load_opus()
     bot.run(token)
 
 

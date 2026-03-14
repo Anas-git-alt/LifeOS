@@ -222,7 +222,7 @@ docker compose ps
 ```bash
 # Backend health
 curl http://localhost:8100/api/health
-# Expected: {"status":"healthy","service":"lifeos-backend","version":"0.1.0"}
+# Expected: {"status":"healthy","service":"lifeos-backend","version":"1-5"}
 
 # List agents
 curl http://localhost:8100/api/agents/

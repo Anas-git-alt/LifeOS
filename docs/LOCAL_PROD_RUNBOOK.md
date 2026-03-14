@@ -16,7 +16,7 @@
 
 Port overrides (optional):
 - `BACKEND_PUBLIC_PORT=8200 WEBUI_PUBLIC_PORT=3200 docker compose up --build -d`
-- `COMPOSE_PROJECT_NAME=lifeos-v1-2 docker compose up --build -d`
+- `COMPOSE_PROJECT_NAME=lifeos-v1-5 docker compose up --build -d`
 
 ## 3) Daily Ops
 1. Check status in Discord with `!status`.

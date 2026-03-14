@@ -2,6 +2,10 @@ FROM python:3.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg libopus0 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1000 appuser
 
 COPY requirements.txt .

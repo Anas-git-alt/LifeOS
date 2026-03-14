@@ -164,6 +164,46 @@ export const getApprovalStats = () => request("/approvals/stats");
 
 export const getProviders = () => request("/providers/");
 export const getCapabilities = () => request("/providers/capabilities");
+export const getTtsModels = () => request("/tts/models");
+export const previewAgentVoice = (agentName, text = "", language = null) =>
+  request("/tts/preview", {
+    method: "POST",
+    body: JSON.stringify({ agent_name: agentName, text, language }),
+    timeoutMs: 30000,
+  });
+export const synthesizeAgentVoice = (agentName, text, language = null, queuePolicy = "replace", runtimeOverrides = null) =>
+  request("/tts/synthesize", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_name: agentName,
+      text,
+      language,
+      queue_policy: queuePolicy,
+      runtime_overrides: runtimeOverrides,
+    }),
+    timeoutMs: 45000,
+  });
+export const getTtsHealth = () => request("/tts/health");
+export const startVoiceSession = (guildId, channelId, agentName, queuePolicy = "replace") =>
+  request("/voice/sessions/start", {
+    method: "POST",
+    body: JSON.stringify({
+      guild_id: String(guildId),
+      channel_id: String(channelId),
+      agent_name: agentName,
+      queue_policy: queuePolicy,
+    }),
+  });
+export const interruptVoiceSession = (sessionId, reason = "") =>
+  request(`/voice/sessions/${sessionId}/interrupt`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+export const stopVoiceSession = (sessionId, reason = "") =>
+  request(`/voice/sessions/${sessionId}/stop`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 
 export const getHealth = () => request("/health");
 export const getReadiness = () => request("/readiness");

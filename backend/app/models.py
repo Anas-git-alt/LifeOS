@@ -4,7 +4,7 @@ import enum
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -53,6 +53,72 @@ class Agent(Base):
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    speech_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    tts_engine: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tts_model_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    default_language: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    voice_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    preview_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    voice_params_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    reference_audio_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    voice_visible_in_runtime_picker: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TTSModelRegistry(Base):
+    __tablename__ = "tts_model_registry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    engine: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    supports_en: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    supports_fr: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_ar: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_voice_id: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_voice_instructions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_reference_audio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_emotion_control: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    quality_tier: Mapped[str] = mapped_column(String(20), nullable=False, default="balanced")
+    latency_tier: Mapped[str] = mapped_column(String(20), nullable=False, default="fast")
+    vram_estimate_mb: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    license_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class VoiceSession(Base):
+    __tablename__ = "voice_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    channel_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    session_key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    queue_policy: Mapped[str] = mapped_column(String(20), nullable=False, default="replace")
+    active_request_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    active_model_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class ScheduledJob(Base):
@@ -359,6 +425,16 @@ class AgentCreate(BaseModel):
     cadence: Optional[str] = None
     enabled: bool = True
     config_json: Optional[dict] = None
+    speech_enabled: bool = False
+    tts_engine: Optional[str] = None
+    tts_model_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    default_language: Optional[Literal["en", "fr", "ar"]] = None
+    voice_instructions: Optional[str] = None
+    preview_text: Optional[str] = None
+    voice_params_json: Optional[dict[str, Any]] = None
+    reference_audio_path: Optional[str] = None
+    voice_visible_in_runtime_picker: bool = True
 
 
 class AgentUpdate(BaseModel):
@@ -372,6 +448,16 @@ class AgentUpdate(BaseModel):
     cadence: Optional[str] = None
     enabled: Optional[bool] = None
     config_json: Optional[dict] = None
+    speech_enabled: Optional[bool] = None
+    tts_engine: Optional[str] = None
+    tts_model_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    default_language: Optional[Literal["en", "fr", "ar"]] = None
+    voice_instructions: Optional[str] = None
+    preview_text: Optional[str] = None
+    voice_params_json: Optional[dict[str, Any]] = None
+    reference_audio_path: Optional[str] = None
+    voice_visible_in_runtime_picker: Optional[bool] = None
 
 
 class AgentResponse(BaseModel):
@@ -388,6 +474,16 @@ class AgentResponse(BaseModel):
     enabled: bool
     created_at: datetime
     config_json: Optional[dict]
+    speech_enabled: bool
+    tts_engine: Optional[str]
+    tts_model_id: Optional[str]
+    voice_id: Optional[str]
+    default_language: Optional[str]
+    voice_instructions: Optional[str]
+    preview_text: Optional[str]
+    voice_params_json: Optional[dict[str, Any]]
+    reference_audio_path: Optional[str]
+    voice_visible_in_runtime_picker: bool
 
     class Config:
         from_attributes = True
@@ -820,3 +916,83 @@ class GoalProgressResponse(BaseModel):
     partial_count: int
     missed_count: int
     checkins: list[dict]
+
+
+class TTSModelCapabilityResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    engine: str
+    model_id: str
+    display_name: str
+    supports_languages: list[str]
+    supports_voice_id: bool = False
+    supports_voice_instructions: bool = False
+    supports_reference_audio: bool = False
+    supports_emotion_control: bool = False
+    supports_streaming: bool = False
+    quality_tier: str = "balanced"
+    latency_tier: str = "fast"
+    vram_estimate_mb: Optional[int] = None
+    license_label: Optional[str] = None
+    enabled: bool = True
+
+
+class TTSPayload(BaseModel):
+    agent_name: str
+    text: str
+    language: Optional[Literal["en", "fr", "ar"]] = None
+    queue_policy: Literal["replace", "append"] = "replace"
+    runtime_overrides: Optional[dict[str, Any]] = None
+
+
+class TTSSynthesizeResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    request_id: str
+    model_id: str
+    engine: str
+    sample_rate_hz: int
+    audio_b64_wav: str
+    cached: bool = False
+    duration_ms: int
+
+
+class TTSPreviewRequest(BaseModel):
+    agent_name: str
+    text: Optional[str] = None
+    language: Optional[Literal["en", "fr", "ar"]] = None
+
+
+class TTSHealthResponse(BaseModel):
+    status: str
+    warm_model_key: Optional[str]
+    queue_depth: int
+    active_request_id: Optional[str]
+    cache_entries: int
+    policy: dict[str, Any]
+
+
+class VoiceSessionStartRequest(BaseModel):
+    guild_id: str
+    channel_id: str
+    agent_name: str
+    queue_policy: Literal["replace", "append"] = "replace"
+
+
+class VoiceSessionResponse(BaseModel):
+    session_id: int
+    session_key: str
+    guild_id: str
+    channel_id: str
+    agent_name: str
+    status: str
+    generation: int
+    queue_policy: str
+
+
+class VoiceSessionInterruptRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class VoiceSessionStopRequest(BaseModel):
+    reason: Optional[str] = None

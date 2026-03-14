@@ -9,9 +9,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.middleware import request_context_middleware
-from app.routers import agents, approvals, events, health, jobs, life, prayer, profile, providers, settings as system_settings
+from app.routers import (
+    agents,
+    approvals,
+    events,
+    health,
+    jobs,
+    life,
+    prayer,
+    profile,
+    providers,
+    settings as system_settings,
+    tts,
+    voice,
+)
 from app.services.scheduler import bootstrap_agent_jobs, shutdown_scheduler, start_scheduler
 from app.services.seed import seed_default_agents
+from app.services.tts_catalog import sync_tts_registry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +55,7 @@ def _startup_self_check():
 async def lifespan(app: FastAPI):
     await init_db()
     await seed_default_agents()
+    await sync_tts_registry()
     _startup_self_check()
     start_scheduler()
     await bootstrap_agent_jobs()
@@ -51,7 +66,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LifeOS",
     description="Self-hosted AI agent system for life organizing",
-    version="0.2.0",
+    version="1-5",
     lifespan=lifespan,
 )
 
@@ -71,6 +86,8 @@ app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
+app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
+app.include_router(voice.router, prefix="/api/voice/sessions", tags=["voice"])
 app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 app.include_router(system_settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])

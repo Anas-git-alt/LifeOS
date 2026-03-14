@@ -6,7 +6,9 @@ import {
   getAgent,
   getAgentSessionMessages,
   getProviders,
+  getTtsModels,
   listAgentSessions,
+  previewAgentVoice,
   renameAgentSession,
   updateAgent,
 } from "../api";
@@ -27,9 +29,11 @@ function formatMessageTime(value) {
 export default function AgentConfig({ agentName, onBack }) {
   const [agent, setAgent] = useState(null);
   const [providers, setProviders] = useState([]);
+  const [ttsModels, setTtsModels] = useState([]);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
+  const [voicePreview, setVoicePreview] = useState({ loading: false, error: "", audioB64: "" });
   const [activeTab, setActiveTab] = useState("chat");
 
   const [sessions, setSessions] = useState([]);
@@ -56,6 +60,7 @@ export default function AgentConfig({ agentName, onBack }) {
     setChatInput("");
     loadAgent();
     loadProviders();
+    loadTtsModels();
     loadSessions(null);
   }, [agentName]);
 
@@ -78,6 +83,23 @@ export default function AgentConfig({ agentName, onBack }) {
         discord_channel: loadedAgent.discord_channel || "",
         cadence: loadedAgent.cadence || "",
         enabled: loadedAgent.enabled,
+        speech_enabled: Boolean(loadedAgent.speech_enabled),
+        tts_engine: loadedAgent.tts_engine || "chatterbox_turbo",
+        tts_model_id: loadedAgent.tts_model_id || "chatterbox-turbo",
+        voice_id: loadedAgent.voice_id || "",
+        default_language: loadedAgent.default_language || "en",
+        voice_instructions: loadedAgent.voice_instructions || "",
+        preview_text: loadedAgent.preview_text || "Assalamu Alaikum. This is a voice preview.",
+        reference_audio_path: loadedAgent.reference_audio_path || "",
+        voice_visible_in_runtime_picker:
+          loadedAgent.voice_visible_in_runtime_picker === undefined ? true : Boolean(loadedAgent.voice_visible_in_runtime_picker),
+        voice_params_json: {
+          speed: loadedAgent.voice_params_json?.speed ?? 1.0,
+          stability: loadedAgent.voice_params_json?.stability ?? 0.7,
+          temperature: loadedAgent.voice_params_json?.temperature ?? 0.6,
+          emotion_intensity: loadedAgent.voice_params_json?.emotion_intensity ?? 0.6,
+          realtime_preferred: loadedAgent.voice_params_json?.realtime_preferred ?? true,
+        },
       });
     } catch (error) {
       setSettingsMessage(`Error: ${error.message}`);
@@ -89,6 +111,15 @@ export default function AgentConfig({ agentName, onBack }) {
       setProviders(await getProviders());
     } catch (error) {
       // Keep agent settings editable even if providers endpoint fails.
+    }
+  }
+
+  async function loadTtsModels() {
+    try {
+      const rows = await getTtsModels();
+      setTtsModels(rows || []);
+    } catch {
+      setTtsModels([]);
     }
   }
 
@@ -141,6 +172,30 @@ export default function AgentConfig({ agentName, onBack }) {
       setSaving(false);
     }
   }
+
+  async function handlePreviewVoice() {
+    setVoicePreview({ loading: true, error: "", audioB64: "" });
+    try {
+      const response = await previewAgentVoice(agentName, form.preview_text, form.default_language || "en");
+      setVoicePreview({ loading: false, error: "", audioB64: response.audio_b64_wav || "" });
+    } catch (error) {
+      setVoicePreview({ loading: false, error: error.message, audioB64: "" });
+    }
+  }
+
+  const selectedTtsModel = useMemo(
+    () =>
+      ttsModels.find(
+        (model) => model.engine === form.tts_engine && model.model_id === form.tts_model_id,
+      ) || null,
+    [ttsModels, form.tts_engine, form.tts_model_id],
+  );
+
+  const languageSupported = useMemo(() => {
+    if (!selectedTtsModel) return true;
+    const supported = new Set(selectedTtsModel.supports_languages || []);
+    return supported.has(form.default_language || "en");
+  }, [selectedTtsModel, form.default_language]);
 
   async function handleCreateSession() {
     try {
@@ -425,6 +480,214 @@ export default function AgentConfig({ agentName, onBack }) {
               Enabled
             </label>
           </div>
+
+          <hr style={{ margin: "20px 0", borderColor: "rgba(148,163,184,0.25)" }} />
+
+          <h3 style={{ marginTop: 0 }}>Voice</h3>
+          <div className="form-group">
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={Boolean(form.speech_enabled)}
+                onChange={(event) => setForm({ ...form, speech_enabled: event.target.checked })}
+                style={{ width: "auto" }}
+              />
+              Speech enabled
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div className="form-group">
+              <label>TTS Engine</label>
+              <select
+                value={form.tts_engine || "chatterbox_turbo"}
+                onChange={(event) => {
+                  const nextEngine = event.target.value;
+                  const options = ttsModels.filter((model) => model.engine === nextEngine);
+                  setForm({
+                    ...form,
+                    tts_engine: nextEngine,
+                    tts_model_id: options[0]?.model_id || "",
+                  });
+                }}
+              >
+                {Array.from(new Set(ttsModels.map((model) => model.engine))).map((engine) => (
+                  <option key={engine} value={engine}>
+                    {engine}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>TTS Model</label>
+              <select
+                value={form.tts_model_id || ""}
+                onChange={(event) => setForm({ ...form, tts_model_id: event.target.value })}
+              >
+                {ttsModels
+                  .filter((model) => model.engine === form.tts_engine)
+                  .map((model) => (
+                    <option key={`${model.engine}:${model.model_id}`} value={model.model_id}>
+                      {model.display_name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div className="form-group">
+              <label>Voice ID / Speaker</label>
+              <input
+                value={form.voice_id || ""}
+                onChange={(event) => setForm({ ...form, voice_id: event.target.value })}
+                placeholder="Optional speaker/voice key"
+              />
+            </div>
+            <div className="form-group">
+              <label>Default Language</label>
+              <select
+                value={form.default_language || "en"}
+                onChange={(event) => setForm({ ...form, default_language: event.target.value })}
+              >
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="ar">Arabic</option>
+              </select>
+            </div>
+          </div>
+
+          {!languageSupported && (
+            <div className="token-banner-error" style={{ marginBottom: 12 }}>
+              Selected TTS model does not support {form.default_language?.toUpperCase()}. Choose a compatible model.
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Voice Instructions</label>
+            <textarea
+              rows={3}
+              value={form.voice_instructions || ""}
+              onChange={(event) => setForm({ ...form, voice_instructions: event.target.value })}
+              placeholder="Tone and style guidance for this agent voice"
+            />
+          </div>
+
+          <details style={{ marginBottom: 14 }}>
+            <summary style={{ cursor: "pointer" }}>Advanced voice controls</summary>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 12 }}>
+              <div className="form-group">
+                <label>Speed</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.voice_params_json?.speed ?? 1.0}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      voice_params_json: { ...(form.voice_params_json || {}), speed: Number(event.target.value) },
+                    })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label>Stability</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.voice_params_json?.stability ?? 0.7}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      voice_params_json: { ...(form.voice_params_json || {}), stability: Number(event.target.value) },
+                    })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label>Temperature</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.voice_params_json?.temperature ?? 0.6}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      voice_params_json: { ...(form.voice_params_json || {}), temperature: Number(event.target.value) },
+                    })
+                  }
+                />
+              </div>
+              <div className="form-group">
+                <label>Emotion Intensity</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.voice_params_json?.emotion_intensity ?? 0.6}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      voice_params_json: {
+                        ...(form.voice_params_json || {}),
+                        emotion_intensity: Number(event.target.value),
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Reference Audio Path (Phase 2)</label>
+              <input
+                value={form.reference_audio_path || ""}
+                onChange={(event) => setForm({ ...form, reference_audio_path: event.target.value })}
+                placeholder="/app/storage/voices/ref.wav"
+              />
+            </div>
+            <div className="form-group">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.voice_visible_in_runtime_picker)}
+                  onChange={(event) => setForm({ ...form, voice_visible_in_runtime_picker: event.target.checked })}
+                  style={{ width: "auto" }}
+                />
+                Visible in runtime voice picker
+              </label>
+            </div>
+          </details>
+
+          <div className="form-group">
+            <label>Preview text</label>
+            <textarea
+              rows={2}
+              value={form.preview_text || ""}
+              onChange={(event) => setForm({ ...form, preview_text: event.target.value })}
+            />
+          </div>
+
+          <div className="action-row" style={{ marginBottom: 16 }}>
+            <button
+              className="btn btn-ghost"
+              onClick={handlePreviewVoice}
+              disabled={!form.speech_enabled || voicePreview.loading || !languageSupported}
+              type="button"
+            >
+              {voicePreview.loading ? "Generating preview..." : "Preview Voice"}
+            </button>
+          </div>
+          {voicePreview.error && (
+            <div className="token-banner-error" style={{ marginBottom: 12 }}>
+              {voicePreview.error}
+            </div>
+          )}
+          {voicePreview.audioB64 && (
+            <audio
+              controls
+              src={`data:audio/wav;base64,${voicePreview.audioB64}`}
+              style={{ width: "100%", marginBottom: 16 }}
+            />
+          )}
 
           <div className="action-row">
             <button className="btn btn-primary" onClick={handleSaveSettings} disabled={saving}>

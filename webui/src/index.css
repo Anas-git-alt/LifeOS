@@ -264,3 +264,24 @@ label {
   margin-bottom: 6px;
   display: block;
 }
+
+:root[data-theme='ocean'] {
+  --bg-primary: #0d1420;
+  --bg-secondary: #162136;
+  --bg-tertiary: #21304c;
+  --bg-glass: rgba(232, 241, 255, 0.06);
+  --bg-glass-hover: rgba(232, 241, 255, 0.12);
+  --border-glass: rgba(137, 170, 230, 0.26);
+  --text-primary: #eef5ff;
+  --text-secondary: #b7c9e8;
+  --text-muted: #8fa3c9;
+  --accent-purple: #73a0ff;
+  --accent-purple-soft: rgba(115, 160, 255, 0.25);
+  --accent-gold: #f8d37a;
+  --accent-silver: #d9e6ff;
+  --button-bg: #294172;
+  --focus-ring: rgba(115, 160, 255, 0.5);
+  --bg-layer1: rgba(115, 160, 255, 0.2);
+  --bg-layer2: rgba(248, 211, 122, 0.1);
+  --bg-layer3: rgba(183, 201, 232, 0.11);
+}

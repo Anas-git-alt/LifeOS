@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import AgentConfig from "./components/AgentConfig";
 import AgentList from "./components/AgentList";
@@ -13,9 +13,38 @@ import PrayerDashboard from "./components/PrayerDashboard";
 import ProfileSettings from "./components/ProfileSettings";
 import ProviderConfig from "./components/ProviderConfig";
 import QuranLog from "./components/QuranLog";
-import Sidebar from "./components/Sidebar";
 import TodayView from "./components/TodayView";
 import TokenBanner from "./components/TokenBanner";
+
+const NAV_GROUPS = [
+  {
+    title: "Overview",
+    items: [
+      { id: "dashboard", icon: "MC", label: "Mission Control" },
+      { id: "today", icon: "TD", label: "Today" },
+      { id: "prayer-dashboard", icon: "PM", label: "Prayer" },
+      { id: "quran", icon: "QR", label: "Quran" },
+      { id: "life", icon: "LF", label: "Life Items" },
+    ],
+  },
+  {
+    title: "Automation",
+    items: [
+      { id: "agents", icon: "AG", label: "Agents" },
+      { id: "agent-create", icon: "NW", label: "Spawn Agent" },
+      { id: "jobs", icon: "JB", label: "Jobs" },
+      { id: "approvals", icon: "AP", label: "Approvals" },
+      { id: "providers", icon: "PV", label: "Providers" },
+    ],
+  },
+  {
+    title: "Account",
+    items: [
+      { id: "profile", icon: "ME", label: "Profile" },
+      { id: "settings", icon: "CFG", label: "Settings" },
+    ],
+  },
+];
 
 const PAGE_META = {
   dashboard: {
@@ -28,11 +57,11 @@ const PAGE_META = {
   },
   "prayer-dashboard": {
     title: "Prayer Dashboard",
-    subtitle: "Weekly prayer completion grid — adjust any prayer status.",
+    subtitle: "Weekly prayer completion grid with quick status updates.",
   },
   quran: {
     title: "Quran Log",
-    subtitle: "Track your reading page by page with auto-resume bookmark.",
+    subtitle: "Track reading page by page with auto-resume bookmark.",
   },
   life: {
     title: "Life Items",
@@ -76,6 +105,45 @@ const PAGE_META = {
   },
 };
 
+function getAllNavItems() {
+  return NAV_GROUPS.flatMap((group) => group.items);
+}
+
+function PageSurface({ hasToken, showTokenEditor, setShowTokenEditor, setHasToken, renderPage }) {
+  return (
+    <>
+      {(showTokenEditor || !hasToken) && (
+        <TokenBanner
+          canClose={hasToken}
+          onClose={() => setShowTokenEditor(false)}
+          onValidToken={() => {
+            setHasToken(true);
+            setShowTokenEditor(false);
+          }}
+          onInvalidToken={() => {
+            setHasToken(false);
+            setShowTokenEditor(true);
+          }}
+        />
+      )}
+      {renderPage()}
+    </>
+  );
+}
+
+function NavPills({ page, setPage }) {
+  return (
+    <div className="ui-nav-pills compact">
+      {getAllNavItems().map((item) => (
+        <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
+          <span aria-hidden="true">{item.icon}</span>
+          <strong>{item.label}</strong>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [page, setPage] = useState("dashboard");
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -84,167 +152,105 @@ export default function App() {
   const [showTokenEditor, setShowTokenEditor] = useState(() => !Boolean((localStorage.getItem("lifeos_token") || "").trim()));
 
   useEffect(() => {
-    document.documentElement.dataset.theme = "charcoal";
+    document.documentElement.dataset.theme = "ocean";
+    localStorage.removeItem("lifeos_ui_variant");
+
+    const syncTokenState = () => {
+      setHasToken(Boolean((localStorage.getItem("lifeos_token") || "").trim()));
+    };
+
+    window.addEventListener("storage", syncTokenState);
     return () => {
+      window.removeEventListener("storage", syncTokenState);
       delete document.documentElement.dataset.theme;
     };
   }, []);
 
-  useEffect(() => {
-    const syncTokenState = () => {
-      setHasToken(Boolean((localStorage.getItem("lifeos_token") || "").trim()));
+  const meta = PAGE_META[page] || PAGE_META.dashboard;
+
+  const renderPage = useMemo(() => {
+    const handleAgentSelect = (agentName) => {
+      setSelectedAgent(agentName);
+      setPage("agent-config");
     };
-    window.addEventListener("storage", syncTokenState);
+
+    const handleGoalSelect = (itemId) => {
+      setSelectedGoalId(itemId);
+      setPage("goal-progress");
+    };
+
     return () => {
-      window.removeEventListener("storage", syncTokenState);
+      switch (page) {
+        case "dashboard":
+          return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
+        case "today":
+          return <TodayView />;
+        case "prayer-dashboard":
+          return <PrayerDashboard />;
+        case "quran":
+          return <QuranLog />;
+        case "life":
+          return <LifeItems onGoalSelect={handleGoalSelect} />;
+        case "goal-progress":
+          return <GoalProgress itemId={selectedGoalId} onBack={() => setPage("life")} />;
+        case "agents":
+          return <AgentList onSelect={handleAgentSelect} />;
+        case "agent-create":
+          return <AgentWizard />;
+        case "jobs":
+          return <JobsManager />;
+        case "agent-config":
+          return <AgentConfig agentName={selectedAgent} onBack={() => setPage("agents")} />;
+        case "approvals":
+          return <ApprovalQueue />;
+        case "providers":
+          return <ProviderConfig />;
+        case "profile":
+          return <ProfileSettings />;
+        case "settings":
+          return <GlobalSettings />;
+        default:
+          return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
+      }
     };
-  }, []);
-
-  const activePageMeta = PAGE_META[page] || PAGE_META.dashboard;
-
-  const handleAgentSelect = (agentName) => {
-    setSelectedAgent(agentName);
-    setPage("agent-config");
-  };
-
-  const handleGoalSelect = (itemId) => {
-    setSelectedGoalId(itemId);
-    setPage("goal-progress");
-  };
-
-  const renderPage = () => {
-    switch (page) {
-      case "dashboard":
-        return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
-      case "today":
-        return <TodayView />;
-      case "prayer-dashboard":
-        return <PrayerDashboard />;
-      case "quran":
-        return <QuranLog />;
-      case "life":
-        return <LifeItems onGoalSelect={handleGoalSelect} />;
-      case "goal-progress":
-        return <GoalProgress itemId={selectedGoalId} onBack={() => setPage("life")} />;
-      case "agents":
-        return <AgentList onSelect={handleAgentSelect} />;
-      case "agent-create":
-        return <AgentWizard />;
-      case "jobs":
-        return <JobsManager />;
-      case "agent-config":
-        return <AgentConfig agentName={selectedAgent} onBack={() => setPage("agents")} />;
-      case "approvals":
-        return <ApprovalQueue />;
-      case "providers":
-        return <ProviderConfig />;
-      case "profile":
-        return <ProfileSettings />;
-      case "settings":
-        return <GlobalSettings />;
-      default:
-        return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
-    }
-  };
+  }, [hasToken, page, selectedAgent, selectedGoalId]);
 
   return (
-    <div className="app-layout">
-      <Sidebar currentPage={page} onNavigate={setPage} isConnected={hasToken} />
-      <main className="main-content">
-        <header className="topbar glass-card">
-          <div className="topbar-title-block">
-            <p className="topbar-kicker">LifeOS Workspace</p>
-            <h1>{activePageMeta.title}</h1>
-            <p>{activePageMeta.subtitle}</p>
-          </div>
-          <div className="topbar-tools">
-            <div className="topbar-search-wrap">
-              <input type="search" placeholder="Search items, agents, providers..." aria-label="Search" />
-            </div>
-            <div className="topbar-actions">
-              <button className="btn btn-ghost" onClick={() => setPage("today")}>
-                Today
-              </button>
-              <button className="btn btn-primary" onClick={() => setPage("life")}>
-                Add Focus
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <div className="workspace-grid">
-          <section className="workspace-main">
-            {(showTokenEditor || !hasToken) && (
-              <TokenBanner
-                canClose={hasToken}
-                onClose={() => setShowTokenEditor(false)}
-                onValidToken={() => {
-                  setHasToken(true);
-                  setShowTokenEditor(false);
-                }}
-                onInvalidToken={() => {
-                  setHasToken(false);
-                  setShowTokenEditor(true);
-                }}
-              />
-            )}
-            {renderPage()}
-          </section>
-
-          <aside className="workspace-rail">
-            <section className="glass-card panel-card">
-              <div className="panel-card-head">
-                <h2>Quick Navigation</h2>
-                <span>Core areas</span>
-              </div>
-              <div className="quick-nav-grid">
-                <button
-                  className={`quick-nav-btn ${page === "dashboard" ? "active" : ""}`}
-                  onClick={() => setPage("dashboard")}
-                >
-                  Mission Control
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "prayer-dashboard" ? "active" : ""}`}
-                  onClick={() => setPage("prayer-dashboard")}
-                >
-                  🕌 Prayer
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "quran" ? "active" : ""}`}
-                  onClick={() => setPage("quran")}
-                >
-                  📖 Quran
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "agents" ? "active" : ""}`}
-                  onClick={() => setPage("agents")}
-                >
-                  Agents
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "jobs" ? "active" : ""}`}
-                  onClick={() => setPage("jobs")}
-                >
-                  Jobs
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "approvals" ? "active" : ""}`}
-                  onClick={() => setPage("approvals")}
-                >
-                  Approvals
-                </button>
-                <button
-                  className={`quick-nav-btn ${page === "providers" ? "active" : ""}`}
-                  onClick={() => setPage("providers")}
-                >
-                  Providers
-                </button>
-              </div>
-            </section>
-          </aside>
+    <div className="ui-shell ui-shell-zen ui-shell-single">
+      <header className="glass-card ui-zen-header">
+        <div>
+          <p className="topbar-kicker">Version 4 Focus</p>
+          <h1>{meta.title}</h1>
+          <p>{meta.subtitle}</p>
         </div>
-      </main>
+        <button className="btn btn-primary" onClick={() => setPage("today")}>
+          Open Today
+        </button>
+      </header>
+
+      <div className="ui-zen-body">
+        <aside className="glass-card ui-zen-nav">
+          <NavPills page={page} setPage={setPage} />
+        </aside>
+
+        <section className="ui-content-wide">
+          <PageSurface
+            hasToken={hasToken}
+            showTokenEditor={showTokenEditor}
+            setShowTokenEditor={setShowTokenEditor}
+            setHasToken={setHasToken}
+            renderPage={renderPage}
+          />
+        </section>
+      </div>
+
+      <footer className="glass-card ui-zen-footer">
+        <span className={`status-dot ${hasToken ? "status-dot-success" : "status-dot-danger"}`} />
+        <span>{hasToken ? "Workspace connected" : "Workspace disconnected"}</span>
+        <button className="btn btn-ghost" onClick={() => setPage("settings")}>
+          Settings
+        </button>
+      </footer>
     </div>
   );
 }

@@ -1,11 +1,41 @@
-name: ${COMPOSE_PROJECT_NAME:-lifeos-v1-2}
+name: ${COMPOSE_PROJECT_NAME:-lifeos-v1-5}
 
 services:
+  tts-worker:
+    build:
+      context: ./tts-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8010"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./storage/tts-models:/model-cache
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=2)"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - lifeos
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      tts-worker:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}:8000"
     volumes:
@@ -33,9 +63,8 @@ services:
     env_file:
       - .venv/.env
     environment:
-      - BACKEND_URL=http://backend:8000
-    networks:
-      - lifeos
+      - BACKEND_URL=http://127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}
+    network_mode: host
 
   webui:
     build:

@@ -76,7 +76,7 @@ async def stream_events(
                     health_event = build_event(
                         "system.health.updated",
                         {"kind": "system", "id": "health"},
-                        {"status": "healthy", "service": "lifeos-backend", "version": "0.2.0"},
+                        {"status": "healthy", "service": "lifeos-backend", "version": "1-5"},
                     )
                     readiness_event = build_event(
                         "system.readiness.updated",

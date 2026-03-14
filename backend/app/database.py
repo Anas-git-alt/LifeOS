@@ -77,6 +77,30 @@ def run_migrations() -> None:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+        if "agents" in existing_tables:
+            agent_cols = {row[1] for row in cur.execute("PRAGMA table_info(agents)").fetchall()}
+            if "speech_enabled" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN speech_enabled BOOLEAN NOT NULL DEFAULT 0")
+            if "tts_engine" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN tts_engine VARCHAR(50)")
+            if "tts_model_id" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN tts_model_id VARCHAR(100)")
+            if "voice_id" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN voice_id VARCHAR(100)")
+            if "default_language" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN default_language VARCHAR(8)")
+            if "voice_instructions" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN voice_instructions TEXT")
+            if "preview_text" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN preview_text TEXT")
+            if "voice_params_json" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN voice_params_json JSON")
+            if "reference_audio_path" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN reference_audio_path VARCHAR(255)")
+            if "voice_visible_in_runtime_picker" not in agent_cols:
+                cur.execute(
+                    "ALTER TABLE agents ADD COLUMN voice_visible_in_runtime_picker BOOLEAN NOT NULL DEFAULT 1"
+                )
 
         cur.execute(
             """
@@ -120,7 +144,9 @@ async def init_db():
         QuranReading,
         ScheduledJob,
         SystemSettings,
+        TTSModelRegistry,
         UserProfile,
+        VoiceSession,
     )
 
     run_migrations()
