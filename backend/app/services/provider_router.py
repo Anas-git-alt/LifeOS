@@ -178,6 +178,10 @@ async def _call_provider(
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
+            if content is None:
+                # Some models return null content on content-filter or tool-call responses.
+                # Raise so the retry/fallback logic can try another provider.
+                raise ValueError(f"{provider}: LLM returned null content (possible content filter)")
             latency_ms = (time.monotonic() - t0) * 1000
             tokens = data.get("usage", {}).get("total_tokens", 0)
             telemetry.record_call(provider, model, latency_ms, tokens, success=True)

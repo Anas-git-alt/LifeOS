@@ -6,6 +6,7 @@ import httpx
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_TOKEN = os.getenv("LIFEOS_API_TOKEN") or os.getenv("API_SECRET_KEY", "")
+AGENT_HTTP_TIMEOUT_SECONDS = float(os.getenv("DISCORD_HTTP_TIMEOUT", "180"))
 
 
 def _headers() -> dict:
@@ -23,14 +24,14 @@ async def api_get(path: str):
 
 
 async def api_post(path: str, data: dict):
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=AGENT_HTTP_TIMEOUT_SECONDS) as client:
         resp = await client.post(f"{BACKEND_URL}/api{path}", json=data, headers=_headers())
         resp.raise_for_status()
         return resp.json()
 
 
 async def api_put(path: str, data: dict):
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=AGENT_HTTP_TIMEOUT_SECONDS) as client:
         resp = await client.put(f"{BACKEND_URL}/api{path}", json=data, headers=_headers())
         resp.raise_for_status()
         return resp.json()

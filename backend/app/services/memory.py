@@ -80,6 +80,10 @@ async def get_context(
 
 async def save_message(agent_name: str, role: str, content: str, session_id: int | None = None):
     """Persist a single message to the memory store and emit a realtime event."""
+    if not content:
+        # Guard: memory.content is NOT NULL — skip rather than crash with an IntegrityError.
+        logger.warning("save_message skipped for agent=%s role=%s: content is empty/None", agent_name, role)
+        return
     async with async_session() as db:
         entry = MemoryEntry(agent_name=agent_name, role=role, content=content, session_id=session_id)
         db.add(entry)

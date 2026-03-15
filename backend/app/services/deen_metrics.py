@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 
 from app.database import async_session
-from app.models import DeenHabit, PrayerCheckin, PrayerWindow
+from app.models import DeenHabit, PrayerCheckin, PrayerWindow, QuranReading
 from app.services.profile import get_or_create_profile
 from app.services.prayer_service import ensure_prayer_windows_for_date, get_today_schedule
 from app.services.system_settings import get_data_start_date
@@ -50,6 +50,26 @@ async def get_weekly_summary() -> dict:
         )
         habits = list(habits_result.scalars().all())
 
+        # Quran pages from the new quran_readings table (page-based tracking)
+        TOTAL_PAGES = 604
+        quran_result = await db.execute(
+            select(
+                func.sum(
+                    case(
+                        (
+                            QuranReading.end_page >= QuranReading.start_page,
+                            QuranReading.end_page - QuranReading.start_page + 1,
+                        ),
+                        else_=TOTAL_PAGES - QuranReading.start_page + 1 + QuranReading.end_page,
+                    )
+                )
+            ).where(
+                QuranReading.local_date >= start_date,
+                QuranReading.local_date <= today,
+            )
+        )
+        quran_pages_total = int(quran_result.scalar() or 0)
+
     total_prayers = len(windows)
     on_time = 0
     late = 0
@@ -76,15 +96,14 @@ async def get_weekly_summary() -> dict:
     on_time_rate = round((on_time / total_prayers) * 100, 2) if total_prayers else 0.0
     completion_rate = round(((on_time + late) / total_prayers) * 100, 2) if total_prayers else 0.0
 
-    quran_pages_total = 0
     quran_juz_max = 0
     tahajjud_done = 0
     adhkar_morning_done = 0
     adhkar_evening_done = 0
     for habit in habits:
         if habit.habit_type == "quran":
+            # Legacy juz tracking only — pages are now sourced from quran_readings table above
             value = habit.value_json or {}
-            quran_pages_total += int(value.get("pages", 0) or 0)
             quran_juz_max = max(quran_juz_max, int(value.get("juz", 0) or 0))
         elif habit.habit_type == "tahajjud" and habit.done:
             tahajjud_done += 1
