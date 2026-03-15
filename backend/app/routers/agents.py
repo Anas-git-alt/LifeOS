@@ -43,14 +43,14 @@ async def _ensure_agent_exists(agent_name: str) -> None:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
 
-@router.get("/", response_model=list[AgentResponse])
+@router.get("/", response_model=list[AgentResponse], dependencies=[Depends(require_api_token)])
 async def list_agents():
     async with async_session() as db:
         result = await db.execute(select(Agent).order_by(Agent.id))
         return [AgentResponse.model_validate(agent) for agent in result.scalars().all()]
 
 
-@router.get("/{agent_name}", response_model=AgentResponse)
+@router.get("/{agent_name}", response_model=AgentResponse, dependencies=[Depends(require_api_token)])
 async def get_agent(agent_name: str):
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))

@@ -26,6 +26,7 @@ LLM_UNAVAILABLE_MESSAGE = (
     "I couldn't generate a response right now because AI providers are temporarily unavailable. "
     "Please try again in a few minutes."
 )
+_NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
 
 
 def _today_utc() -> str:
@@ -254,10 +255,11 @@ async def handle_message(
         await _extract_and_create_goals(response_text, agent_name)
 
         pending_id = None
+        effective_approval_policy = "never" if agent_name in _NO_APPROVAL_AGENTS else approval_policy
         needs_approval, risk_level, action_type = should_require_approval(
             user_message=user_message,
             response_text=response_text,
-            approval_policy=approval_policy,
+            approval_policy=effective_approval_policy,
             require_approval=require_approval,
         )
         if needs_approval:

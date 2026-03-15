@@ -31,10 +31,10 @@
   --text-secondary: oklch(70% 0.015 240);
   --text-muted: oklch(52% 0.012 240);
 
-  /* Accent — deep indigo */
-  --accent: oklch(62% 0.19 270);
-  --accent-soft: oklch(62% 0.19 270 / 0.18);
-  --accent-dim: oklch(45% 0.15 270);
+  /* Accent — deep teal */
+  --accent: oklch(64% 0.16 200);
+  --accent-soft: oklch(64% 0.16 200 / 0.18);
+  --accent-dim: oklch(45% 0.12 200);
 
   /* Accent — warm gold (Islamic motif) */
   --accent-gold: oklch(76% 0.12 80);
@@ -56,8 +56,8 @@
   --color-warning-border: oklch(75% 0.16 75 / 0.4);
 
   /* Buttons */
-  --btn-primary-bg: oklch(44% 0.19 270);
-  --btn-primary-text: oklch(96% 0.01 270);
+  --btn-primary-bg: oklch(44% 0.16 200);
+  --btn-primary-text: oklch(96% 0.01 200);
 
   /* Radius scale */
   --radius-sm: 6px;
@@ -104,7 +104,7 @@ body {
   overflow-x: hidden;
   /* Quiet ambient: subtle diagonal grain via SVG data URI */
   background-image:
-    radial-gradient(ellipse 80% 60% at 50% -10%, oklch(62% 0.19 270 / 0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 60% at 50% -10%, oklch(64% 0.16 200 / 0.07) 0%, transparent 70%),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

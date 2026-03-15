@@ -40,6 +40,9 @@ class _ProviderWindow:
 
     # Circuit-breaker state: track recent failures in a rolling 60-second window.
     recent_failure_times: deque = field(default_factory=lambda: deque())
+    # Rate-limit tracking (e.g., HTTP 429) for early warning.
+    rate_limited_until: Optional[float] = None
+    last_error: Optional[str] = None
 
     @property
     def circuit_open(self) -> bool:
@@ -53,9 +56,11 @@ class _ProviderWindow:
             self.recent_failure_times.popleft()
         return len(self.recent_failure_times) >= 3
 
-    def record_failure(self) -> None:
+    def record_failure(self, error: Optional[str] = None) -> None:
         self.failures += 1
         self.recent_failure_times.append(time.monotonic())
+        if error:
+            self.last_error = error
 
     def reset_circuit(self) -> None:
         """Manually reset circuit breaker (e.g., after a successful call)."""
@@ -71,6 +76,7 @@ def record_call(
     latency_ms: float,
     tokens: int,
     success: bool,
+    error: Optional[str] = None,
 ) -> None:
     """Record a single LLM call for in-memory telemetry.
 
@@ -85,8 +91,22 @@ def record_call(
             w.token_counts.append(tokens)
             w.successes += 1
             w.reset_circuit()
+            w.last_error = None
         else:
-            w.record_failure()
+            w.record_failure(error=error)
+
+
+def record_rate_limit(provider: str, retry_after_seconds: Optional[int] = None) -> None:
+    """Record a provider rate-limit event (HTTP 429) for early warning."""
+    with _lock:
+        w = _windows[provider]
+        now = time.time()
+        if retry_after_seconds and retry_after_seconds > 0:
+            w.rate_limited_until = now + retry_after_seconds
+        else:
+            # Default to a short window to signal degraded status.
+            w.rate_limited_until = now + 60
+        w.last_error = "http_429"
 
 
 def is_circuit_open(provider: str) -> bool:
@@ -123,6 +143,9 @@ def get_provider_stats() -> list[dict]:
                     "circuit_open": w.circuit_open,
                     "last_called_at": w.last_called_at,
                     "last_model": w.last_model,
+                    "rate_limited_until": w.rate_limited_until,
+                    "rate_limited": bool(w.rate_limited_until and w.rate_limited_until > time.time()),
+                    "last_error": w.last_error,
                 }
             )
         return result

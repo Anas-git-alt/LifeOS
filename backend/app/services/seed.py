@@ -82,6 +82,12 @@ DEFAULT_AGENTS = [
     {
         "name": "daily-planner",
         "description": "Morning briefing, ADHD-friendly time blocks, schedule conflict alerts.",
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.2-3b-instruct:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.2-3b-instruct",
+        "config_json": {"use_web_search": False},
+        "approval_policy": "never",
         "system_prompt": (
             "You are the Daily Planner agent optimized for ADHD. "
             "Your responsibilities:\n"
@@ -101,6 +107,12 @@ DEFAULT_AGENTS = [
     {
         "name": "weekly-review",
         "description": "Sunday weekly recap, wins/misses analysis, next week planning.",
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.2-3b-instruct:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.2-3b-instruct",
+        "config_json": {"use_web_search": False},
+        "approval_policy": "never",
         "system_prompt": (
             "You are the Weekly Review agent. "
             "Your responsibilities:\n"

@@ -7,6 +7,7 @@ from bot.utils import api_get, api_post, api_put
 
 VALID_DOMAINS = {"deen", "family", "work", "health", "planning"}
 VALID_ITEM_STATUSES = {"open", "done", "missed"}
+NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
 
 
 class AgentsCog(commands.Cog, name="Agents"):
@@ -33,7 +34,8 @@ class AgentsCog(commands.Cog, name="Agents"):
         self.active_sessions[key] = int(session_id)
 
     async def _send_agent_chat(self, agent_name: str, message: str, session_id: int | None = None) -> dict:
-        payload = {"agent_name": agent_name, "message": message, "approval_policy": "auto"}
+        approval_policy = "never" if agent_name in NO_APPROVAL_AGENTS else "auto"
+        payload = {"agent_name": agent_name, "message": message, "approval_policy": approval_policy}
         if session_id:
             payload["session_id"] = session_id
         return await api_post("/agents/chat", payload)

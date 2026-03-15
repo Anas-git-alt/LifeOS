@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from app.database import async_session
+from app.config import settings
 from app.security import require_api_token
 from app.services.events import (
     SSE_AUTH_COOKIE,
@@ -48,7 +49,7 @@ async def issue_events_session(response: Response):
         value=session_token,
         httponly=True,
         samesite="strict",
-        secure=False,
+        secure=not settings.local_mode,
         max_age=max_age,
         path="/api/events",
     )

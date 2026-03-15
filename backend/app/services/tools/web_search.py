@@ -1,5 +1,6 @@
 """Web Search Tool — uses DuckDuckGo (free, no API key needed)."""
 
+import asyncio
 import httpx
 import logging
 from typing import List, Dict
@@ -40,8 +41,8 @@ async def _brave_search(query: str, max_results: int) -> List[Dict]:
         raise
 
 
-async def _ddg_search(query: str, max_results: int) -> List[Dict]:
-    """Search using DuckDuckGo."""
+def _ddg_search_sync(query: str, max_results: int) -> List[Dict]:
+    """Blocking DuckDuckGo search. Run in a thread to avoid event-loop stalls."""
     with DDGS() as ddgs:
         results = list(ddgs.text(query, max_results=max_results))
         return [
@@ -52,6 +53,11 @@ async def _ddg_search(query: str, max_results: int) -> List[Dict]:
             }
             for r in results
         ]
+
+
+async def _ddg_search(query: str, max_results: int) -> List[Dict]:
+    """Search using DuckDuckGo without blocking the event loop."""
+    return await asyncio.to_thread(_ddg_search_sync, query, max_results)
 
 
 async def web_search(query: str, max_results: int = 5) -> List[Dict]:

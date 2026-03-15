@@ -196,13 +196,20 @@ async def _call_provider(
             return content
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             latency_ms = (time.monotonic() - t0) * 1000
-            telemetry.record_call(provider, model, latency_ms, 0, success=False)
+            telemetry.record_call(provider, model, latency_ms, 0, success=False, error="timeout")
             last_exc = exc
         except httpx.HTTPStatusError as exc:
             latency_ms = (time.monotonic() - t0) * 1000
-            telemetry.record_call(provider, model, latency_ms, 0, success=False)
+            status_code = exc.response.status_code
+            telemetry.record_call(provider, model, latency_ms, 0, success=False, error=f"http_{status_code}")
             last_exc = exc
-            if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
+            if status_code == 429:
+                retry_after = exc.response.headers.get("Retry-After", "").strip()
+                if retry_after.isdigit():
+                    telemetry.record_rate_limit(provider, retry_after_seconds=int(retry_after))
+                else:
+                    telemetry.record_rate_limit(provider, retry_after_seconds=None)
+            if 400 <= status_code < 500 and status_code != 429:
                 raise
         if attempt < 3:
             delay = 2 ** (attempt - 1)
