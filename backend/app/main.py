@@ -13,6 +13,7 @@ from app.routers import (
     agents,
     approvals,
     events,
+    experiments,
     health,
     jobs,
     life,
@@ -26,6 +27,7 @@ from app.routers import (
 from app.services.scheduler import bootstrap_agent_jobs, shutdown_scheduler, start_scheduler
 from app.services.seed import seed_default_agents
 from app.services.tts_catalog import sync_tts_registry
+from app.services.provider_router import close_all_clients
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,9 +37,14 @@ logger = logging.getLogger("lifeos.backend")
 
 
 def _startup_self_check():
-    warnings: list[str] = []
+    # Hard-fail on default secret key — a log warning is not a security gate.
     if settings.api_secret_key == "change_me":
-        warnings.append("API_SECRET_KEY is default; set a strong value for production")
+        raise RuntimeError(
+            "API_SECRET_KEY is set to the default value 'change_me'. "
+            "Generate a strong secret with: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\" "
+            "and set it in your .env file before starting LifeOS."
+        )
     if not any(
         [
             settings.openrouter_api_key,
@@ -46,9 +53,7 @@ def _startup_self_check():
             settings.openai_api_key,
         ]
     ):
-        warnings.append("No LLM API keys configured")
-    for warning in warnings:
-        logger.warning("startup_check: %s", warning)
+        logger.warning("startup_check: No LLM API keys configured")
 
 
 @asynccontextmanager
@@ -61,16 +66,19 @@ async def lifespan(app: FastAPI):
     await bootstrap_agent_jobs()
     yield
     shutdown_scheduler()
+    await close_all_clients()
 
 
 app = FastAPI(
     title="LifeOS",
     description="Self-hosted AI agent system for life organizing",
-    version="1-5",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
-allowed_origins = settings.cors_origins if settings.local_mode else ["*"]
+# Always use the explicit allowlist — never open to "*".
+# LOCAL_MODE only controls whether credentials (cookies) are included.
+allowed_origins = settings.cors_origins
 allow_credentials = bool(settings.local_mode)
 app.add_middleware(
     CORSMiddleware,
@@ -93,3 +101,4 @@ app.include_router(system_settings.router, prefix="/api/settings", tags=["settin
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(life.router, prefix="/api/life", tags=["life"])
 app.include_router(prayer.router, prefix="/api/prayer", tags=["prayer"])
+app.include_router(experiments.router)

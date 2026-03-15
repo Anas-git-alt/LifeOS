@@ -1,31 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getPendingActions, getAllActions, decideAction } from '../api'
 
 export default function ApprovalQueue() {
-    const [actions, setActions] = useState([])
     const [view, setView] = useState('pending') // pending | all
-    const [loading, setLoading] = useState(true)
+    const [deciding, setDeciding] = useState(null) // action id being decided
+    const [decideError, setDecideError] = useState('')
+    const queryClient = useQueryClient()
 
-    useEffect(() => { loadActions() }, [view])
-
-    async function loadActions() {
-        setLoading(true)
-        try {
-            const data = view === 'pending' ? await getPendingActions() : await getAllActions()
-            setActions(data)
-        } catch (e) {
-            console.error('Failed to load actions:', e)
-        } finally {
-            setLoading(false)
-        }
-    }
+    const queryKey = ['approvals', view]
+    const { data: actions = [], isLoading } = useQuery({
+        queryKey,
+        queryFn: () => view === 'pending' ? getPendingActions() : getAllActions(),
+        refetchInterval: 15_000,
+    })
 
     async function handleDecide(id, approved) {
+        setDeciding(id)
+        setDecideError('')
         try {
             await decideAction(id, approved)
-            loadActions()
+            queryClient.invalidateQueries({ queryKey: ['approvals'] })
         } catch (e) {
-            alert(`Error: ${e.message}`)
+            setDecideError(`Action #${id} failed: ${e.message}`)
+        } finally {
+            setDeciding(null)
         }
     }
 
@@ -37,45 +36,63 @@ export default function ApprovalQueue() {
             </header>
 
             <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-                <button className={`btn ${view === 'pending' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setView('pending')}>
+                <button
+                    className={`btn ${view === 'pending' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setView('pending')}
+                >
                     ⏳ Pending
                 </button>
-                <button className={`btn ${view === 'all' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setView('all')}>
+                <button
+                    className={`btn ${view === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setView('all')}
+                >
                     📋 All Actions
                 </button>
-                <button className="btn btn-ghost" onClick={loadActions} style={{ marginLeft: 'auto' }}>
+                <button
+                    className="btn btn-ghost"
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ['approvals'] })}
+                    style={{ marginLeft: 'auto' }}
+                >
                     🔄 Refresh
                 </button>
             </div>
 
-            {loading ? (
-                <div className="empty-state"><div className="emoji">⏳</div>Loading...</div>
+            {decideError && <div className="approval-error glass-card" style={{ marginBottom: 12 }}>{decideError}</div>}
+
+            {isLoading ? (
+                <div className="widget-skeleton">
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="glass-card" style={{ padding: 16 }}>
+                            <div className="widget-skeleton-line" style={{ width: '40%', marginBottom: 10 }} />
+                            <div className="widget-skeleton-line" style={{ width: '80%', marginBottom: 8 }} />
+                            <div className="widget-skeleton-line" style={{ width: '60%' }} />
+                        </div>
+                    ))}
+                </div>
             ) : actions.length === 0 ? (
                 <div className="empty-state">
                     <div className="emoji">✨</div>
                     <p>{view === 'pending' ? 'No pending approvals — all clear!' : 'No actions recorded yet.'}</p>
                 </div>
             ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="approval-list">
                     {actions.map(action => (
                         <div key={action.id} className="glass-card">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 10 }}>
+                            <div className="approval-card-head">
                                 <div>
-                                    <span style={{ fontWeight: 600, fontSize: 15 }}>
+                                    <span className="approval-card-id">
                                         #{action.id} · {action.agent_name}
                                     </span>
                                     <span className={`badge badge-${action.status}`} style={{ marginLeft: 8 }}>
                                         {action.status}
                                     </span>
                                 </div>
-                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                <span className="approval-card-timestamp">
                                     {new Date(action.created_at).toLocaleString()}
                                 </span>
                             </div>
 
-                            <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 8 }}>
-                                {action.summary}
-                            </p>
+                            <p className="approval-card-body">{action.summary}</p>
 
                             {action.details && action.details !== action.summary && (
                                 <details style={{ marginBottom: 8 }}>
@@ -100,19 +117,28 @@ export default function ApprovalQueue() {
 
                             {action.status === 'pending' && (
                                 <div className="action-row">
-                                    <button className="btn btn-success" onClick={() => handleDecide(action.id, true)}>
+                                    <button
+                                        className="btn btn-success"
+                                        disabled={deciding === action.id}
+                                        onClick={() => handleDecide(action.id, true)}
+                                    >
                                         ✅ Approve
                                     </button>
-                                    <button className="btn btn-danger" onClick={() => handleDecide(action.id, false)}>
+                                    <button
+                                        className="btn btn-danger"
+                                        disabled={deciding === action.id}
+                                        onClick={() => handleDecide(action.id, false)}
+                                    >
                                         ❌ Reject
                                     </button>
+                                    {deciding === action.id && (
+                                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Saving…</span>
+                                    )}
                                 </div>
                             )}
 
                             {action.result && (
-                                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)' }}>
-                                    Result: {action.result}
-                                </div>
+                                <div className="approval-card-result">Result: {action.result}</div>
                             )}
                         </div>
                     ))}

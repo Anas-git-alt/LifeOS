@@ -3,14 +3,9 @@
 from pathlib import Path
 from typing import List
 
-from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
-
-# Load .env from .venv/.env (project root) or fallback to env vars (Docker)
-_project_root = Path(__file__).resolve().parent.parent.parent
-_env_path = _project_root / ".venv" / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path)
+# Note: the explicit load_dotenv call was removed — BaseSettings reads
+# .venv/.env automatically via the env_file Config attribute below.
 
 
 class Settings(BaseSettings):
@@ -60,6 +55,11 @@ class Settings(BaseSettings):
     tts_default_model_id: str = "chatterbox-turbo"
     tts_enable_cache: bool = True
     tts_cache_ttl_seconds: int = 300
+
+    # Feature flags
+    agency_agents_enabled: bool = False
+    memory_summarisation_enabled: bool = False
+    memory_summarisation_threshold: int = 30
 
     # GitHub
     github_token: str = ""

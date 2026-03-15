@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.database import async_session
 from app.models import Agent
 from app.config import settings
+from app.services.provider_router import PROVIDERS
 
 DEFAULT_AGENTS = [
     {
@@ -134,11 +135,93 @@ DEFAULT_AGENTS = [
     }
 ]
 
+# Advisory-only agents seeded from Agency Agents prompts.
+# Enabled only when AGENCY_AGENTS_ENABLED=true in .env.
+AGENCY_AGENTS = [
+    {
+        "name": "code-reviewer",
+        "description": "Provides thorough code reviews focused on correctness, maintainability, security, and performance.",
+        "system_prompt": (
+            "You are an expert Code Reviewer — a senior engineer who provides constructive, actionable feedback. "
+            "Your responsibilities:\n"
+            "- Review code for correctness, edge cases, and bugs\n"
+            "- Identify security vulnerabilities and potential performance bottlenecks\n"
+            "- Suggest refactors that improve readability and maintainability\n"
+            "- Explain the *why* behind every suggestion, not just the what\n"
+            "- Distinguish between blocking issues (must fix) and non-blocking nits\n"
+            "- Be direct but constructive — never condescending\n"
+            "- Reference best practices, patterns, and relevant docs when useful\n"
+            "Output format: organised by severity (🔴 Critical, 🟡 Improvement, 🟢 Nit). "
+            "End with a brief overall assessment."
+        ),
+        "discord_channel": None,
+        "cadence": None,
+        "approval_policy": "never",
+    },
+    {
+        "name": "qa-engineer",
+        "description": "Designs test cases, hunts edge cases, and improves test coverage across the codebase.",
+        "system_prompt": (
+            "You are an expert QA Engineer specialising in test design and quality assurance. "
+            "Your responsibilities:\n"
+            "- Analyse features and functions for missing test coverage\n"
+            "- Write unit, integration, and e2e test cases (pytest, vitest, Playwright)\n"
+            "- Identify edge cases, boundary conditions, and failure modes\n"
+            "- Suggest fuzz inputs, negative tests, and race-condition scenarios\n"
+            "- Review existing tests for flakiness, redundancy, and poor assertions\n"
+            "- Prioritise tests by risk and business impact\n"
+            "- Default to 'find 3-5 issues' — be a critic, not a cheerleader\n"
+            "Output format: structured test plan with Given/When/Then or arrange-act-assert style. "
+            "Include actual test code where possible."
+        ),
+        "discord_channel": None,
+        "cadence": None,
+        "approval_policy": "never",
+    },
+    {
+        "name": "editorial-writer",
+        "description": "Drafts clear, engaging content for blogs, social posts, and technical documentation.",
+        "system_prompt": (
+            "You are a senior Editorial Writer specialising in technical and thought-leadership content. "
+            "Your responsibilities:\n"
+            "- Draft blog posts, LinkedIn articles, Twitter/X threads, and technical docs\n"
+            "- Adapt tone to audience: casual for social, authoritative for technical docs\n"
+            "- Lead with a strong hook; keep paragraphs short and scannable\n"
+            "- Use concrete examples and avoid jargon without explanation\n"
+            "- Optimise for readability (Flesch-Kincaid ≥ 60) and engagement\n"
+            "- Suggest headlines, subheadings, and calls to action\n"
+            "- Proofread and flag ambiguities, passive voice, and filler words\n"
+            "Output format: full draft first, then a brief editorial note on structure and tone choices."
+        ),
+        "discord_channel": None,
+        "cadence": None,
+        "approval_policy": "never",
+    },
+]
+
 
 async def seed_default_agents():
-    """Create default agents if they don't exist."""
+    """Create default agents if they don't already exist in the database."""
+    # Validate default_provider at startup rather than getting a confusing
+    # AttributeError buried inside a loop.
+    if settings.default_provider not in PROVIDERS:
+        raise RuntimeError(
+            f"DEFAULT_PROVIDER={settings.default_provider!r} is not a known provider. "
+            f"Valid options: {', '.join(PROVIDERS)}"
+        )
+    default_model_attr = f"{settings.default_provider}_default_model"
+    default_model = getattr(settings, default_model_attr, None)
+    if not default_model:
+        raise RuntimeError(
+            f"Setting {default_model_attr.upper()} is not configured for provider '{settings.default_provider}'."
+        )
+
     async with async_session() as db:
-        for agent_data in DEFAULT_AGENTS:
+        all_agents = list(DEFAULT_AGENTS)
+        if settings.agency_agents_enabled:
+            all_agents.extend(AGENCY_AGENTS)
+
+        for agent_data in all_agents:
             result = await db.execute(
                 select(Agent).where(Agent.name == agent_data["name"])
             )
@@ -148,8 +231,8 @@ async def seed_default_agents():
                     model = settings.openai_default_model
                 else:
                     provider = settings.default_provider
-                    model = getattr(settings, f"{settings.default_provider}_default_model")
-                    
+                    model = default_model
+
                 agent = Agent(
                     name=agent_data["name"],
                     description=agent_data["description"],
@@ -158,7 +241,11 @@ async def seed_default_agents():
                     model=model,
                     discord_channel=agent_data.get("discord_channel"),
                     cadence=agent_data.get("cadence"),
-                    enabled=True
+                    enabled=True,
+                    config_json={
+                        "approval_policy": agent_data.get("approval_policy", "auto"),
+                        "use_web_search": agent_data.get("use_web_search", True),
+                    } if agent_data.get("approval_policy") else None,
                 )
                 db.add(agent)
         await db.commit()

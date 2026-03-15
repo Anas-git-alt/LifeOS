@@ -254,8 +254,16 @@ export default function AgentConfig({ agentName, onBack }) {
 
   if (!agent) {
     return (
-      <div className="empty-state">
-        <p>Loading...</p>
+      <div style={{ display: 'grid', gap: 14 }}>
+        {[260, 180, 140].map((w, i) => (
+          <div key={i} className="glass-card">
+            <div className="widget-skeleton">
+              <span className="widget-skeleton-line" style={{ width: '30%' }} />
+              <span className="widget-skeleton-line" style={{ width: `${w / 3}%` }} />
+              <span className="widget-skeleton-line" style={{ width: '55%' }} />
+            </div>
+          </div>
+        ))}
       </div>
     );
   }

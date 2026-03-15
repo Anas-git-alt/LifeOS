@@ -413,6 +413,29 @@ class QuranBookmark(Base):
     )
 
 
+
+class ExperimentRun(Base):
+    """Persistent record of a shadow-router experiment run."""
+
+    __tablename__ = "experiment_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    primary_provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    primary_model: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    shadow_provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    shadow_model: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    primary_score: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    shadow_score: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    shadow_latency_ms: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    cost_estimate: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    shadow_wins: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    promoted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    promotion_approved: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class AgentCreate(BaseModel):
     name: str
     description: str = ""

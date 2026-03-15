@@ -51,6 +51,7 @@ def run_migrations() -> None:
     conn = sqlite3.connect(sqlite_path)
     try:
         cur = conn.cursor()
+        cur.execute("BEGIN")
         # Lightweight idempotent column upgrades for existing SQLite tables.
         existing_tables = {
             row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -120,6 +121,9 @@ def run_migrations() -> None:
             cur.executescript(sql)
             cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

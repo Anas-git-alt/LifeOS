@@ -15,8 +15,10 @@ from app.services.deen_metrics import build_prayer_agent_context, build_weekly_d
 from app.services.discord_notify import send_channel_message
 from app.services.action_executor import execute_pending_action
 from app.services.events import publish_event
-from app.services.memory import get_context, save_message
+from app.services.memory import get_context, save_message, summarise_session
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
+from app.services.risk_engine import classify_risk, infer_action_type, should_require_approval
+from app.config import settings
 from app.services.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
@@ -24,33 +26,6 @@ LLM_UNAVAILABLE_MESSAGE = (
     "I couldn't generate a response right now because AI providers are temporarily unavailable. "
     "Please try again in a few minutes."
 )
-
-LOW_RISK_KEYWORDS = {
-    "status",
-    "summary",
-    "explain",
-    "advice",
-    "check-in",
-    "checkin",
-}
-MEDIUM_RISK_KEYWORDS = {
-    "remind",
-    "commitment",
-    "deadline",
-    "schedule",
-    "plan",
-    "promise",
-    "follow up",
-}
-HIGH_RISK_KEYWORDS = {
-    "send email",
-    "book",
-    "purchase",
-    "pay",
-    "external api",
-    "execute",
-    "delete",
-}
 
 
 def _today_utc() -> str:
@@ -61,55 +36,6 @@ def _should_use_web_search(agent: Agent) -> bool:
     if agent.config_json and "use_web_search" in agent.config_json:
         return bool(agent.config_json["use_web_search"])
     return True
-
-
-def classify_risk(text: str) -> str:
-    lowered = text.lower()
-    if any(keyword in lowered for keyword in HIGH_RISK_KEYWORDS):
-        return "high"
-    if any(keyword in lowered for keyword in MEDIUM_RISK_KEYWORDS):
-        return "medium"
-    if any(keyword in lowered for keyword in LOW_RISK_KEYWORDS):
-        return "low"
-    return "low"
-
-
-def infer_action_type(text: str) -> str:
-    lowered = text.lower()
-    if "status" in lowered or "summary" in lowered:
-        return "status"
-    if "check-in" in lowered or "checkin" in lowered:
-        return "check-in"
-    if "remind" in lowered:
-        return "reminder"
-    if "commitment" in lowered or "promise" in lowered:
-        return "commitment"
-    if "deadline" in lowered:
-        return "deadline"
-    return "message"
-
-
-def should_require_approval(
-    user_message: str,
-    response_text: str,
-    approval_policy: str = "auto",
-    require_approval: Optional[bool] = None,
-) -> tuple[bool, str, str]:
-    if require_approval is True:
-        risk_level = classify_risk(f"{user_message}\n{response_text}")
-        return True, risk_level, infer_action_type(user_message)
-    if require_approval is False and approval_policy == "never":
-        return False, "low", infer_action_type(user_message)
-    if approval_policy == "always":
-        risk_level = classify_risk(f"{user_message}\n{response_text}")
-        return True, risk_level, infer_action_type(user_message)
-    if approval_policy == "never":
-        return False, "low", infer_action_type(user_message)
-
-    action_type = infer_action_type(user_message)
-    risk_level = classify_risk(f"{action_type}\n{user_message}\n{response_text}")
-    needs_approval = risk_level in {"medium", "high"} and action_type not in {"status", "check-in"}
-    return needs_approval, risk_level, action_type
 
 
 async def _get_search_context(query: str) -> str:
@@ -163,8 +89,8 @@ async def _extract_and_create_goals(response_text: str, agent_name: str) -> list
             item = await create_life_item(item_data)
             created.append({"id": item.id, "title": item.title, "domain": item.domain})
             logger.info("agent_created_goal agent=%s title=%s id=%d", agent_name, title, item.id)
-        except Exception as exc:
-            logger.warning("Failed to create goal from agent response: %s", exc)
+        except Exception:
+            logger.exception("Failed to create goal from agent response (title=%r)", title)
     return created
 
 
@@ -283,12 +209,19 @@ async def handle_message(
                 "session_title": active_session.title if active_session else None,
             }
 
+        # Always persist the user turn immediately.
         await save_message(
             agent_name,
             "user",
             user_message,
             session_id=active_session.id if active_session else None,
         )
+        # NOTE: The assistant message is saved here unconditionally so that the
+        # conversation history stays coherent. If the corresponding action is
+        # later rejected the agent will see its own "I will do X" in context —
+        # this is intentional: it lets the agent know the action was proposed
+        # and can be followed up. A future improvement is to tag pending
+        # messages with a status flag and filter them in get_context.
         await save_message(
             agent_name,
             "assistant",
@@ -301,6 +234,21 @@ async def handle_message(
                 agent_name=agent_name,
                 session_id=active_session.id,
             )
+            if settings.memory_summarisation_enabled:
+                async def _llm_for_summary(messages):
+                    return await chat_completion(
+                        messages,
+                        provider=agent.provider,
+                        model=agent.model,
+                        fallback_provider=agent.fallback_provider,
+                        fallback_model=agent.fallback_model,
+                    )
+                await summarise_session(
+                    agent_name=agent_name,
+                    session_id=active_session.id,
+                    llm_call=_llm_for_summary,
+                    threshold=settings.memory_summarisation_threshold,
+                )
 
         # Extract and create goals from agent response
         await _extract_and_create_goals(response_text, agent_name)

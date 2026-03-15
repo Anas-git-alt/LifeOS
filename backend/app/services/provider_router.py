@@ -1,12 +1,14 @@
-"""Multi-provider LLM router with retry and fallback."""
+"""Multi-provider LLM router with retry, fallback, circuit breaker, and telemetry."""
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 import httpx
 
 from app.config import settings
+from app.services import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,24 @@ PROVIDERS = {
     },
 }
 
+# Shared AsyncClient instances — one per provider — so TCP connections are
+# reused across requests. Timeout is set at the client level.
+_http_clients: dict[str, httpx.AsyncClient] = {}
+
+
+def _get_client(provider: str) -> httpx.AsyncClient:
+    """Return (or lazily create) the shared httpx client for a provider."""
+    if provider not in _http_clients:
+        _http_clients[provider] = httpx.AsyncClient(timeout=45.0)
+    return _http_clients[provider]
+
+
+async def close_all_clients() -> None:
+    """Close all provider HTTP clients. Call this during application shutdown."""
+    for client in _http_clients.values():
+        await client.aclose()
+    _http_clients.clear()
+
 
 class LLMProvidersExhaustedError(RuntimeError):
     """Raised when all configured providers fail."""
@@ -69,24 +89,38 @@ async def chat_completion(
     max_tokens: int = 1024,
 ) -> str:
     failures: list[str] = []
-    try:
-        return await _call_provider(provider, model, messages, temperature, max_tokens)
-    except Exception as exc:
-        failures.append(_summarize_failure(provider, exc))
-        logger.warning("Primary provider failed: %s", failures[-1])
+
+    # Skip circuit-open primary provider immediately to avoid latency penalty.
+    if telemetry.is_circuit_open(provider):
+        logger.warning("Circuit open for primary provider '%s', skipping.", provider)
+        failures.append(f"{provider}:circuit_open")
+    else:
+        try:
+            return await _call_provider(provider, model, messages, temperature, max_tokens)
+        except Exception as exc:
+            failures.append(_summarize_failure(provider, exc))
+            logger.warning("Primary provider failed: %s", failures[-1])
 
     if fallback_provider:
-        try:
-            return await _call_provider(fallback_provider, fallback_model, messages, temperature, max_tokens)
-        except Exception as exc:
-            failures.append(_summarize_failure(fallback_provider, exc))
-            logger.warning("Fallback provider failed: %s", failures[-1])
+        if telemetry.is_circuit_open(fallback_provider):
+            logger.warning("Circuit open for fallback provider '%s', skipping.", fallback_provider)
+            failures.append(f"{fallback_provider}:circuit_open")
+        else:
+            try:
+                return await _call_provider(fallback_provider, fallback_model, messages, temperature, max_tokens)
+            except Exception as exc:
+                failures.append(_summarize_failure(fallback_provider, exc))
+                logger.warning("Fallback provider failed: %s", failures[-1])
 
     for provider_name in PROVIDERS:
         if provider_name in (provider, fallback_provider):
             continue
         api_key = getattr(settings, PROVIDERS[provider_name]["api_key_attr"], "")
         if not api_key:
+            continue
+        if telemetry.is_circuit_open(provider_name):
+            logger.debug("Circuit open for sweep provider '%s', skipping.", provider_name)
+            failures.append(f"{provider_name}:circuit_open")
             continue
         try:
             return await _call_provider(provider_name, None, messages, temperature, max_tokens)
@@ -104,6 +138,10 @@ async def _call_provider(
     temperature: float,
     max_tokens: int,
 ) -> str:
+    """Send a chat-completion request to a provider with exponential-backoff retry.
+
+    Records latency and success/failure to the telemetry module after each attempt.
+    """
     config = PROVIDERS.get(provider)
     if not config:
         raise ValueError(f"Unknown provider: {provider}")
@@ -127,21 +165,38 @@ async def _call_provider(
         "max_tokens": max_tokens,
     }
 
+    client = _get_client(provider)
     last_exc: Exception | None = None
     for attempt in range(1, 4):
+        t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                resp = await client.post(
-                    f"{config['base_url']}/chat/completions",
-                    headers=headers,
-                    json=payload,
+            resp = await client.post(
+                f"{config['base_url']}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            latency_ms = (time.monotonic() - t0) * 1000
+            tokens = data.get("usage", {}).get("total_tokens", 0)
+            telemetry.record_call(provider, model, latency_ms, tokens, success=True)
+            # Fire-and-forget shadow test — does NOT block this response.
+            try:
+                from app.services.shadow_router import maybe_shadow_test
+                asyncio.create_task(
+                    maybe_shadow_test(messages, content, provider, model)
                 )
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
+            except Exception:
+                pass  # Shadow testing must never affect production flow
+            return content
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            telemetry.record_call(provider, model, latency_ms, 0, success=False)
             last_exc = exc
         except httpx.HTTPStatusError as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            telemetry.record_call(provider, model, latency_ms, 0, success=False)
             last_exc = exc
             if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
                 raise

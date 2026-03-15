@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { editPrayerCheckin, getPrayerDashboard } from "../api";
 
 const PRAYERS = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
@@ -16,10 +16,24 @@ export default function PrayerDashboard() {
     const [error, setError] = useState("");
     const [editing, setEditing] = useState(null); // {date, prayer}
     const [saving, setSaving] = useState(false);
+    const [streakMilestone, setStreakMilestone] = useState(false);
+    const prevOnTime = useRef(0);
 
     useEffect(() => {
         load();
     }, []);
+
+    // Trigger pop animation when on_time crosses a multiple-of-5 milestone
+    useEffect(() => {
+        const onTime = dashboard?.summary?.on_time || 0;
+        if (onTime > 0 && onTime % 5 === 0 && onTime !== prevOnTime.current) {
+            setStreakMilestone(true);
+            const t = setTimeout(() => setStreakMilestone(false), 600);
+            prevOnTime.current = onTime;
+            return () => clearTimeout(t);
+        }
+        prevOnTime.current = onTime;
+    }, [dashboard?.summary?.on_time]);
 
     async function load() {
         try {
@@ -68,7 +82,9 @@ export default function PrayerDashboard() {
                             <div className="stat-label">Completion Rate</div>
                         </div>
                         <div className="glass-card">
-                            <div className="stat-value status-text-success">{summary.on_time || 0}</div>
+                            <div className={`stat-value status-text-success${streakMilestone ? ' streak-milestone' : ''}`}>
+                                {summary.on_time || 0}
+                            </div>
                             <div className="stat-label">On Time</div>
                         </div>
                         <div className="glass-card">

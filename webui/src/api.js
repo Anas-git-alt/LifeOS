@@ -18,6 +18,10 @@ export class ApiError extends Error {
 }
 
 export function getToken() {
+  // NOTE: localStorage is accessible to any JS on the page (XSS risk).
+  // For a self-hosted personal tool on localhost this is an acceptable
+  // trade-off, but do NOT store sensitive data or use this pattern in
+  // a multi-user or internet-facing deployment.
   return localStorage.getItem("lifeos_token") || import.meta.env.VITE_LIFEOS_TOKEN || "";
 }
 
@@ -275,7 +279,10 @@ export async function getAgentSessionsSummary(limitAgents = 5) {
       try {
         const rows = await listAgentSessions(agent.name);
         return rows.map((row) => ({ ...row, agent_name: agent.name }));
-      } catch {
+      } catch (err) {
+        // Log the error so developers can diagnose issues; return empty array
+        // so the summary still renders for agents that succeeded.
+        console.error(`[getAgentSessionsSummary] failed for agent '${agent.name}':`, err);
         return [];
       }
     }),
@@ -285,3 +292,7 @@ export async function getAgentSessionsSummary(limitAgents = 5) {
     .flat()
     .sort((a, b) => new Date(b.last_message_at || b.updated_at || 0) - new Date(a.last_message_at || a.updated_at || 0));
 }
+
+export const getExperiments = (limit = 50) => request(`/experiments?limit=${limit}`);
+export const getProviderTelemetry = () => request('/experiments/telemetry');
+

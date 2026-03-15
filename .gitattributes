@@ -1,0 +1,25 @@
+# Normalise line endings to LF on commit (prevents CRLF creep from Windows editors).
+* text=auto eol=lf
+
+# Force LF for source files even on Windows checkouts.
+*.py text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+
+# Treat binary files as binary (no newline conversion).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.db binary

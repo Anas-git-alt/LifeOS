@@ -4,6 +4,7 @@ import AgentConfig from "./components/AgentConfig";
 import AgentList from "./components/AgentList";
 import AgentWizard from "./components/AgentWizard";
 import ApprovalQueue from "./components/ApprovalQueue";
+import ExperimentDashboard from "./components/ExperimentDashboard";
 import GlobalSettings from "./components/GlobalSettings";
 import GoalProgress from "./components/GoalProgress";
 import LifeItems from "./components/LifeItems";
@@ -20,28 +21,29 @@ const NAV_GROUPS = [
   {
     title: "Overview",
     items: [
-      { id: "dashboard", icon: "MC", label: "Mission Control" },
-      { id: "today", icon: "TD", label: "Today" },
-      { id: "prayer-dashboard", icon: "PM", label: "Prayer" },
-      { id: "quran", icon: "QR", label: "Quran" },
-      { id: "life", icon: "LF", label: "Life Items" },
+      { id: "dashboard", icon: "⊞", label: "Mission Control" },
+      { id: "today", icon: "◈", label: "Today" },
+      { id: "prayer-dashboard", icon: "☽", label: "Prayer" },
+      { id: "quran", icon: "◎", label: "Quran" },
+      { id: "life", icon: "⋮", label: "Life Items" },
     ],
   },
   {
     title: "Automation",
     items: [
-      { id: "agents", icon: "AG", label: "Agents" },
-      { id: "agent-create", icon: "NW", label: "Spawn Agent" },
-      { id: "jobs", icon: "JB", label: "Jobs" },
-      { id: "approvals", icon: "AP", label: "Approvals" },
-      { id: "providers", icon: "PV", label: "Providers" },
+      { id: "agents", icon: "⬡", label: "Agents" },
+      { id: "agent-create", icon: "+", label: "Spawn Agent" },
+      { id: "jobs", icon: "⏱", label: "Jobs" },
+      { id: "approvals", icon: "◇", label: "Approvals" },
+      { id: "providers", icon: "⬢", label: "Providers" },
+      { id: "experiments", icon: "🧪", label: "Experiments" },
     ],
   },
   {
     title: "Account",
     items: [
-      { id: "profile", icon: "ME", label: "Profile" },
-      { id: "settings", icon: "CFG", label: "Settings" },
+      { id: "profile", icon: "○", label: "Profile" },
+      { id: "settings", icon: "⚙", label: "Settings" },
     ],
   },
 ];
@@ -103,6 +105,10 @@ const PAGE_META = {
     title: "Global Settings",
     subtitle: "Control reporting filters, autonomy toggles, and runtime defaults.",
   },
+  experiments: {
+    title: "Experiments",
+    subtitle: "Shadow A/B test log — live provider health, scores, and promotion candidates.",
+  },
 };
 
 function getAllNavItems() {
@@ -133,14 +139,26 @@ function PageSurface({ hasToken, showTokenEditor, setShowTokenEditor, setHasToke
 
 function NavPills({ page, setPage }) {
   return (
-    <div className="ui-nav-pills compact">
-      {getAllNavItems().map((item) => (
-        <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}>
-          <span aria-hidden="true">{item.icon}</span>
-          <strong>{item.label}</strong>
-        </button>
+    <nav className="ui-nav-pills compact" aria-label="Main navigation">
+      {NAV_GROUPS.map((group) => (
+        <div key={group.title} style={{ display: "contents" }}>
+          <p style={{ fontSize: "10.5px", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", padding: "8px 4px 3px", fontWeight: 600 }}>
+            {group.title}
+          </p>
+          {group.items.map((item) => (
+            <button
+              key={item.id}
+              className={page === item.id ? "active" : ""}
+              onClick={() => setPage(item.id)}
+              aria-current={page === item.id ? "page" : undefined}
+            >
+              <span aria-hidden="true" style={{ fontSize: "14px", lineHeight: 1 }}>{item.icon}</span>
+              <strong>{item.label}</strong>
+            </button>
+          ))}
+        </div>
       ))}
-    </div>
+    </nav>
   );
 }
 
@@ -152,7 +170,6 @@ export default function App() {
   const [showTokenEditor, setShowTokenEditor] = useState(() => !Boolean((localStorage.getItem("lifeos_token") || "").trim()));
 
   useEffect(() => {
-    document.documentElement.dataset.theme = "ocean";
     localStorage.removeItem("lifeos_ui_variant");
 
     const syncTokenState = () => {
@@ -160,10 +177,7 @@ export default function App() {
     };
 
     window.addEventListener("storage", syncTokenState);
-    return () => {
-      window.removeEventListener("storage", syncTokenState);
-      delete document.documentElement.dataset.theme;
-    };
+    return () => window.removeEventListener("storage", syncTokenState);
   }, []);
 
   const meta = PAGE_META[page] || PAGE_META.dashboard;
@@ -205,6 +219,8 @@ export default function App() {
           return <ApprovalQueue />;
         case "providers":
           return <ProviderConfig />;
+        case "experiments":
+          return <ExperimentDashboard />;
         case "profile":
           return <ProfileSettings />;
         case "settings":
@@ -217,36 +233,41 @@ export default function App() {
 
   return (
     <div className="ui-shell ui-shell-zen ui-shell-single">
-      <header className="glass-card ui-zen-header">
+      <header className="ui-zen-header">
         <div>
-          <p className="topbar-kicker">Version 4 Focus</p>
-          <h1>{meta.title}</h1>
-          <p>{meta.subtitle}</p>
+          <p className="topbar-kicker">LifeOS · v4</p>
+          <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 400 }}>{meta.title}</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: 2 }}>{meta.subtitle}</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setPage("today")}>
-          Open Today
+        <button className="btn btn-ghost" onClick={() => setPage("today")}>
+          Today ↗
         </button>
       </header>
 
       <div className="ui-zen-body">
-        <aside className="glass-card ui-zen-nav">
+        <aside className="ui-zen-nav">
+          <div style={{ paddingLeft: 4, marginBottom: 12 }}>
+            <span style={{ fontFamily: "var(--font-display)", fontSize: 17, letterSpacing: "-0.01em" }}>☽ LifeOS</span>
+          </div>
           <NavPills page={page} setPage={setPage} />
         </aside>
 
         <section className="ui-content-wide">
-          <PageSurface
-            hasToken={hasToken}
-            showTokenEditor={showTokenEditor}
-            setShowTokenEditor={setShowTokenEditor}
-            setHasToken={setHasToken}
-            renderPage={renderPage}
-          />
+          <div key={page} style={{ animation: "pageIn 0.2s cubic-bezier(0.16,1,0.3,1)" }}>
+            <PageSurface
+              hasToken={hasToken}
+              showTokenEditor={showTokenEditor}
+              setShowTokenEditor={setShowTokenEditor}
+              setHasToken={setHasToken}
+              renderPage={renderPage}
+            />
+          </div>
         </section>
       </div>
 
-      <footer className="glass-card ui-zen-footer">
+      <footer className="ui-zen-footer">
         <span className={`status-dot ${hasToken ? "status-dot-success" : "status-dot-danger"}`} />
-        <span>{hasToken ? "Workspace connected" : "Workspace disconnected"}</span>
+        <span>{hasToken ? "Workspace connected" : "Disconnected"}</span>
         <button className="btn btn-ghost" onClick={() => setPage("settings")}>
           Settings
         </button>
