@@ -1,0 +1,343 @@
+/* ─── Fonts ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+/* ─── Design Tokens ─────────────────────────────────────────────────────── */
+:root,
+:root[data-theme='ocean'] {
+  --sidebar-width: 256px;
+  --header-height: 64px;
+
+  /* Typography */
+  --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-display: 'DM Serif Display', Georgia, serif;
+
+  /* Background */
+  --bg-base: oklch(13% 0.01 240);
+  --bg-surface: oklch(16% 0.012 240);
+  --bg-raised: oklch(18.5% 0.013 240);
+
+  /* Tinted glass (overlays/modals only) */
+  --bg-glass: rgba(255, 255, 255, 0.04);
+  --bg-glass-hover: rgba(255, 255, 255, 0.07);
+  --border-glass: rgba(200, 215, 240, 0.14);
+
+  /* Card (no blur) */
+  --card-bg: oklch(16.5% 0.012 240);
+  --card-border: oklch(28% 0.012 240);
+  --card-border-hover: oklch(40% 0.015 240);
+
+  /* Text */
+  --text-primary: oklch(94% 0.01 240);
+  --text-secondary: oklch(70% 0.015 240);
+  --text-muted: oklch(52% 0.012 240);
+
+  /* Accent — deep teal */
+  --accent: oklch(64% 0.16 200);
+  --accent-soft: oklch(64% 0.16 200 / 0.18);
+  --accent-dim: oklch(45% 0.12 200);
+
+  /* Accent — warm gold (Islamic motif) */
+  --accent-gold: oklch(76% 0.12 80);
+  --accent-gold-soft: oklch(76% 0.12 80 / 0.15);
+
+  /* Semantic */
+  --color-success: oklch(64% 0.18 145);
+  --color-success-soft: oklch(64% 0.18 145 / 0.16);
+  --color-success-bg: oklch(64% 0.18 145 / 0.1);
+  --color-success-border: oklch(64% 0.18 145 / 0.4);
+
+  --color-danger: oklch(60% 0.2 25);
+  --color-danger-soft: oklch(60% 0.2 25 / 0.16);
+  --color-danger-bg: oklch(60% 0.2 25 / 0.1);
+  --color-danger-border: oklch(60% 0.2 25 / 0.4);
+
+  --color-warning: oklch(75% 0.16 75);
+  --color-warning-bg: oklch(75% 0.16 75 / 0.1);
+  --color-warning-border: oklch(75% 0.16 75 / 0.4);
+
+  /* Buttons */
+  --btn-primary-bg: oklch(44% 0.16 200);
+  --btn-primary-text: oklch(96% 0.01 200);
+
+  /* Radius scale */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Shadow */
+  --shadow-card: 0 1px 3px oklch(0% 0 0 / 0.35), 0 4px 16px oklch(0% 0 0 / 0.22);
+  --shadow-overlay: 0 12px 40px oklch(0% 0 0 / 0.55);
+
+  /* Focus ring */
+  --focus-ring: oklch(62% 0.19 270 / 0.5);
+
+  /* Legacy aliases (keep for components that reference these) */
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-surface);
+  --bg-tertiary: var(--bg-raised);
+  --font-family: var(--font-body);
+  --accent-purple: var(--accent);
+  --accent-purple-soft: var(--accent-soft);
+  --accent-silver: var(--text-secondary);
+  --border-glass: var(--card-border);
+  --shadow-glass: var(--shadow-card);
+  --button-bg: var(--bg-raised);
+  --button-text: var(--text-primary);
+  --bg-glass-hover: rgba(255, 255, 255, 0.07);
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ─── Body & Background ──────────────────────────────────────────────────── */
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  /* Quiet ambient: subtle diagonal grain via SVG data URI */
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% -10%, oklch(64% 0.16 200 / 0.07) 0%, transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Typography ─────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-family: var(--font-display); font-weight: 400; }
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: oklch(40% 0.01 240);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: oklch(50% 0.01 240); }
+
+/* ─── Card (no blur — default surface) ──────────────────────────────────── */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.2s ease;
+}
+
+.card:hover { border-color: var(--card-border-hover); }
+
+/* Glass card kept for overlays/panels that float above content */
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-overlay);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.glass-card:hover {
+  background: var(--bg-glass-hover);
+  border-color: oklch(40% 0.015 240);
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: nowrap;
+  min-height: 38px;
+  cursor: pointer;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  letter-spacing: 0.01em;
+}
+
+.btn:active { transform: translateY(1px); }
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn:focus-visible,
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Flat primary — indigo */
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border-color: oklch(52% 0.19 270);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.1);
+}
+.btn-primary:hover { filter: brightness(1.12); }
+
+/* Flat success — green */
+.btn-success {
+  background: oklch(38% 0.18 145);
+  color: oklch(96% 0.03 145);
+  border-color: oklch(46% 0.18 145);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.08);
+}
+.btn-success:hover { filter: brightness(1.12); }
+
+/* Flat danger — red */
+.btn-danger {
+  background: oklch(36% 0.18 25);
+  color: oklch(96% 0.02 25);
+  border-color: oklch(44% 0.18 25);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.08);
+}
+.btn-danger:hover { filter: brightness(1.12); }
+
+/* Ghost */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--card-border);
+}
+.btn-ghost:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-color: var(--card-border-hover);
+}
+
+/* ─── Badges ─────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.badge-pending {
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  color: var(--color-warning);
+  animation: pendingPulse 2.5s ease-in-out infinite;
+}
+
+.badge-approved,
+.badge-active {
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+}
+
+.badge-rejected {
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+/* ─── Form controls ──────────────────────────────────────────────────────── */
+input,
+select,
+textarea {
+  background: var(--bg-raised);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 9px 13px;
+  min-height: 38px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+label {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+  display: block;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes pendingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-warning-border); }
+  60%       { box-shadow: 0 0 0 4px transparent; }
+}
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -300px 0; }
+  100% { background-position: 300px 0; }
+}
+
+@keyframes streakPop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.22); }
+  65%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0 4px var(--status-dot-shadow, var(--color-success-soft)); }
+  50%       { box-shadow: 0 0 0 7px var(--status-dot-shadow, oklch(64% 0.18 145 / 0.05)); }
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
