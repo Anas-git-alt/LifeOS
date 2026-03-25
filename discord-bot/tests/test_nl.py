@@ -1,21 +1,72 @@
 """NL parser tests for Discord automation commands."""
 
-from bot.nl import parse_agent_prompt, parse_schedule_prompt
+from datetime import datetime, timezone
+
+from bot.nl import parse_agent_prompt, parse_schedule_prompt, parse_schedule_value
 
 
 def test_parse_schedule_prompt_extracts_cron_and_channel():
-    parsed = parse_schedule_prompt("Every weekday at 7:30 remind me to stretch in #fitness-log using health-fitness")
+    parsed = parse_schedule_prompt(
+        "Every weekday at 7:30 remind me to stretch in #fitness-log using health-fitness",
+        now=datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
     assert parsed["missing"] == []
+    assert parsed["data"]["schedule_type"] == "cron"
     assert parsed["data"]["cron_expression"] == "30 7 mon-fri"
     assert parsed["data"]["target_channel"] == "fitness-log"
+    assert parsed["data"]["notification_mode"] == "channel"
     assert parsed["data"]["agent_name"] == "health-fitness"
+    assert parsed["data"]["prompt_template"] == "stretch"
+
+
+def test_parse_schedule_prompt_supports_channel_mentions_and_once_jobs():
+    parsed = parse_schedule_prompt(
+        "Tomorrow at 9am remind me to review /workspace/docs/spec.md notify in <#123456789012345678> using sandbox",
+        now=datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
+    assert parsed["missing"] == []
+    assert parsed["data"]["schedule_type"] == "once"
+    assert parsed["data"]["target_channel_id"] == "123456789012345678"
+    assert parsed["data"]["notification_mode"] == "channel"
+    assert parsed["data"]["prompt_template"] == "review /workspace/docs/spec.md"
+
+
+def test_parse_schedule_prompt_normalizes_hidden_channel_characters():
+    parsed = parse_schedule_prompt(
+        "send me a notification in 2 min to buy medicine in #\u2060test using sandbox",
+        now=datetime(2026, 3, 25, 7, 14, tzinfo=timezone.utc),
+    )
+    assert parsed["missing"] == []
+    assert parsed["data"]["schedule_type"] == "once"
+    assert parsed["data"]["notification_mode"] == "channel"
+    assert parsed["data"]["target_channel"] == "test"
+
+
+def test_parse_schedule_prompt_defaults_to_silent_without_channel():
+    parsed = parse_schedule_prompt(
+        "in 10 min remind me to review the notes using sandbox",
+        now=datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
+    assert parsed["missing"] == []
+    assert parsed["data"]["schedule_type"] == "once"
+    assert parsed["data"]["notification_mode"] == "silent"
+    assert parsed["data"]["target_channel"] is None
 
 
 def test_parse_schedule_prompt_requests_followups_when_missing_fields():
     parsed = parse_schedule_prompt("remind me to stretch")
-    assert "target_channel" in parsed["missing"]
     assert "agent_name" in parsed["missing"]
-    assert "cron_expression" in parsed["missing"]
+    assert "schedule" in parsed["missing"]
+    assert parsed["data"]["notification_mode"] == "silent"
+
+
+def test_parse_schedule_value_rejects_past_one_time_schedule():
+    parsed = parse_schedule_value(
+        "today at 7:00",
+        now=datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
+    assert parsed["data"] == {}
+    assert parsed["errors"]
 
 
 def test_parse_agent_prompt_requires_core_fields():

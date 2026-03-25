@@ -145,7 +145,8 @@ DEFAULT_AGENTS = [
             "Format: casual, helpful, emoji-friendly 🧪🔬"
         ),
         "discord_channel": "sandbox",
-        "cadence": None
+        "cadence": None,
+        "use_web_search": False,
     }
 ]
 
@@ -245,6 +246,10 @@ async def seed_default_agents():
                 if not existing.workspace_paths_json:
                     existing.workspace_paths_json = default_workspace_paths
                 if existing.name == "sandbox":
+                    config_json = dict(existing.config_json or {})
+                    if "use_web_search" not in config_json:
+                        config_json["use_web_search"] = False
+                        existing.config_json = config_json
                     existing.workspace_enabled = True
                     existing.workspace_paths_json = default_workspace_paths
                     existing.workspace_delete_requires_approval = True
@@ -258,6 +263,12 @@ async def seed_default_agents():
                     provider = settings.default_provider
                     model = default_model
 
+                config_json: dict[str, object] = {
+                    "use_web_search": agent_data.get("use_web_search", True),
+                }
+                if agent_data.get("approval_policy") is not None:
+                    config_json["approval_policy"] = agent_data["approval_policy"]
+
                 agent = Agent(
                     name=agent_data["name"],
                     description=agent_data["description"],
@@ -267,10 +278,7 @@ async def seed_default_agents():
                     discord_channel=agent_data.get("discord_channel"),
                     cadence=agent_data.get("cadence"),
                     enabled=True,
-                    config_json={
-                        "approval_policy": agent_data.get("approval_policy", "auto"),
-                        "use_web_search": agent_data.get("use_web_search", True),
-                    } if agent_data.get("approval_policy") else None,
+                    config_json=config_json or None,
                     workspace_enabled=agent_data["name"] == "sandbox",
                     workspace_paths_json=default_workspace_paths,
                     workspace_delete_requires_approval=True,

@@ -1,85 +1,190 @@
-# 🧠 LifeOS Codebase Overview
+# LifeOS Codebase Overview
 
-This document provides a technical summary of the LifeOS codebase for developers and contributors who need to understand the system's architecture and inner workings without reading every file.
+This document describes the current architecture of the repo as it exists today.
 
----
+## System Architecture
 
-## 🏗️ System Architecture
-
-LifeOS is a distributed system consisting of three primary services coordinated via Docker Compose:
-
-1.  **Backend (FastAPI)**: The central intelligence and data hub.
-2.  **Discord Bot (discord.py)**: The primary user interface for interaction and notifications.
-3.  **WebUI (React)**: A secondary dashboard for management and configuration.
+LifeOS is a five-service Docker Compose system:
 
 ```mermaid
 graph TD
-    User -- Discord Messages --> Bot[Discord Bot]
-    User -- Browser --> Web[WebUI]
-    Bot -- API Calls --> API[Backend API]
-    Web -- API Calls --> API
-    API -- Read/Write --> DB[(SQLite)]
-    API -- Prompts --> LLM[LLM Providers]
-    Scheduler[Task Scheduler] -- Triggers --> API
+    U1["User in Discord"] --> BOT["discord-bot"]
+    U2["User in Browser"] --> WEB["webui"]
+    BOT --> API["backend"]
+    WEB --> API
+    API --> DB["SQLite"]
+    API --> OV["OpenViking"]
+    API --> TTS["tts-worker"]
+    API --> LLM["LLM providers"]
 ```
 
----
+### Service Roles
 
-## 📂 Component Breakdown
+| Service | Responsibility |
+| --- | --- |
+| `backend` | FastAPI API, orchestration, approvals, profile/settings, life items, prayer/Quran data, jobs, SSE events, workspace integration |
+| `discord-bot` | Command surface, approval reactions, prayer reminders, natural-language job and agent proposals, voice channel playback |
+| `webui` | Operator dashboard for health, jobs, approvals, agents, providers, experiments, prayer, Quran, and profile/settings |
+| `openviking` | Memory backend, repo/external resource indexing, workspace retrieval, legacy memory import target |
+| `tts-worker` | Local synthesis service used by backend TTS APIs and Discord voice playback |
 
-### 1. Backend (`/backend`)
-The backend is built with FastAPI and handles logic, data persistence, and agent orchestration.
+## Backend Boot Sequence
 
-*   **`app/models.py`**: Defines the SQLAlchemy ORM models (Database) and Pydantic schemas (API). Core tables include `agents`, `chat_sessions`, `life_items` (tasks/goals), and `prayer_windows`.
-*   **`app/services/orchestrator.py`**: The "brain" of the system. It:
-    *   Constructs system prompts for agents.
-    *   Manages context retrieval from `memory.py`.
-    *   Classifies risk levels for incoming requests.
-    *   Applies approval policies (auto, medium, high).
-*   **`app/services/provider_router.py`**: Routes LLM requests to OpenRouter, NVIDIA, Google, or OpenAI with fallback logic.
-*   **`app/services/tools/`**: Extends agent capabilities with external tools like `web_search.py` (DuckDuckGo/SearXNG).
-*   **`app/services/scheduler.py`**: Manages recurring agent nudges and health checks.
+The backend startup flow in `backend/app/main.py` currently does all of this before serving requests:
 
-### 2. Discord Bot (`/discord-bot`)
-A `discord.py` application that acts as the primary interaction surface.
+1. Enforces a non-default `API_SECRET_KEY`.
+2. Enforces the OpenViking cutover (`MEMORY_BACKEND=openviking` and `OPENVIKING_ENABLED=true`).
+3. Initializes the database.
+4. Seeds default agents.
+5. Syncs the TTS registry.
+6. Verifies OpenViking readiness.
+7. Imports legacy SQLite chat memory into OpenViking if needed.
+8. Optionally syncs workspace resources into OpenViking.
+9. Starts APScheduler and bootstraps agent cadence jobs.
 
-*   **`bot/main.py`**: Entry point that loads "Cogs" (modular command groups).
-*   **`bot/cogs/`**:
-    *   `agents.py`: Handles `!ask`, `!sandbox`, and session management.
-    *   `approvals.py`: Posts pending actions to the `#approval-queue` channel and handles emoji reactions.
-    *   `reminders.py`: Listens for scheduled events from the backend to post in channels.
+That means OpenViking is no longer optional in the current runtime design.
 
-### 3. WebUI (`/webui`)
-A Vite-powered React single-page application.
+## Major Backend Areas
 
-*   **`src/api.js`**: The central API client using `fetch` to communicate with the backend.
-*   **`src/components/`**: Modular UI elements for the dashboard, agent list, and goal tracking.
+### API Routers
 
----
+- `backend/app/routers/agents.py`: agent CRUD, chat, sessions, scheduled runs, agent proposals
+- `backend/app/routers/approvals.py`: pending actions, decision endpoint, approval stats
+- `backend/app/routers/events.py`: SSE auth and realtime event streaming for Mission Control
+- `backend/app/routers/experiments.py`: shadow-router history and provider telemetry
+- `backend/app/routers/health.py`: health and readiness
+- `backend/app/routers/jobs.py`: persistent scheduled job CRUD, proposals, run logs
+- `backend/app/routers/life.py`: life items, check-ins, today agenda, goal progress
+- `backend/app/routers/prayer.py`: prayer schedule, check-ins, weekly dashboard, Quran/tahajjud/adhkar tracking
+- `backend/app/routers/profile.py`: profile settings
+- `backend/app/routers/settings.py`: global runtime settings
+- `backend/app/routers/tts.py`: TTS model list, preview, synthesize, health
+- `backend/app/routers/voice.py`: voice session start, interrupt, stop
+- `backend/app/routers/workspace.py`: workspace archives, restore, sync
 
-## 🔄 Key Data Flows
+### Core Services
 
-### A. User Request (Discord)
-1.  User types `!ask health-fitness "What should I eat?"` in Discord.
-2.  **Bot** receives the command and sends a POST request to `/api/agents/chat`.
-3.  **Orchestrator** retrieves recent chat history and builds a prompt.
-4.  **Provider Router** calls the LLM (e.g., GPT-4 via OpenRouter).
-5.  **Orchestrator** checks the response:
-    *   If **Low Risk**: Returns response immediately to Discord.
-    *   If **High Risk**: Creates a `PendingAction` and tells the user it's waiting for approval.
-6.  **Bot** posts the action to `#approval-queue`.
-7.  User reacts with ✅ in Discord.
-8.  **Bot** calls `/api/approvals/decide`, and the action is executed/finalized.
+- `backend/app/services/orchestrator.py`: agent chat orchestration
+- `backend/app/services/provider_router.py`: primary provider, fallback provider, exhaustive sweep, retries, telemetry, and shadow test trigger
+- `backend/app/services/shadow_router.py`: non-blocking shadow calls for provider comparison
+- `backend/app/services/telemetry.py`: in-memory provider performance and circuit-breaker state
+- `backend/app/services/scheduler.py`: APScheduler wiring for agent cadence and persistent jobs
+- `backend/app/services/jobs.py`: job normalization, persistence, next-run calculation, run log publishing
+- `backend/app/services/memory.py`: legacy memory handling and OpenViking migration hooks
+- `backend/app/services/openviking_client.py`: OpenViking API wrapper
+- `backend/app/services/workspace.py`: workspace path scoping, archive/restore, OpenViking sync, action parsing
+- `backend/app/services/prayer_service.py` and `backend/app/services/quran_service.py`: prayer and Quran logic
+- `backend/app/services/chat_sessions.py`: per-agent session creation, rename, clear, and message retrieval
 
-### B. Scheduled Nudge
-1.  **Scheduler** (in Backend) fires based on an agent's cadence (e.g., "Daily 9am").
-2.  **Orchestrator** generates a "proactive" message from the agent.
-3.  **Discord Notify** service sends the message directly to the mapped Discord channel.
+## Current Frontend Structure
 
----
+The WebUI is a Vite + React app in `webui/`.
 
-## 🛠️ Performance & Design Patterns
+Main entry points:
 
-*   **Async Everywhere**: Both Backend and Bot use asychronous programming (`asyncio`) for high concurrency.
-*   **SkillOps**: New capabilities can be added by dropping a python file into `backend/app/services/tools/`.
-*   **Risk-Based Approvals**: Significant actions (like modifying a recurring goal) are held in a queue until a human confirms, preventing LLM hallucinations from causing data loss.
+- `webui/src/App.jsx`: page shell and navigation
+- `webui/src/api.js`: fetch client, token handling, and API wrappers
+- `webui/src/hooks/useEventStream.js`: SSE client with buffering and reconnects
+- `webui/src/components/MissionControl.jsx`: realtime operations dashboard
+- `webui/src/components/AgentConfig.jsx`: agent settings, voice preview, workspace sync/archive restore, chat sessions
+- `webui/src/components/JobsManager.jsx`: job CRUD and run log viewing
+- `webui/src/components/GlobalSettings.jsx`: `data_start_date`, autonomy, mutation approval
+- `webui/src/components/ExperimentDashboard.jsx`: provider telemetry and shadow test history
+
+Token flow:
+
+- The browser stores `API_SECRET_KEY` in local storage as `lifeos_token`.
+- Standard API requests send it as `X-LifeOS-Token`.
+- SSE cannot send custom headers, so the UI first exchanges the token for a short-lived HttpOnly cookie through `POST /api/events/auth`.
+
+## Discord Bot Structure
+
+The Discord bot lives in `discord-bot/`.
+
+Main modules:
+
+- `bot/main.py`: bot setup, command prefix, help topics, cog loading
+- `bot/cogs/agents.py`: `!ask`, `!sandbox`, sessions, life item commands, `!daily`, `!weekly`
+- `bot/cogs/reminders.py`: prayer/Quran/habit commands, reminder dispatch, workout and spouse note shortcuts
+- `bot/cogs/automation.py`: `!schedule`, `!spawnagent`, `!reply`, job inspection commands
+- `bot/cogs/approvals.py`: pending queue and owner-only approve/reject paths
+- `bot/cogs/voice.py`: Discord voice join, speak, interrupt, leave
+- `bot/nl.py`: lightweight parser for natural-language job and agent prompts
+
+The bot is currently the fastest way to:
+
+- talk to agents
+- handle approvals
+- create simple jobs from natural language
+- log prayer and Quran activity
+- use voice playback
+
+## Important Data Flows
+
+### 1. Agent Chat With Session Memory
+
+1. Discord or WebUI sends `/api/agents/chat`.
+2. The backend resolves the active chat session.
+3. The orchestrator builds context from recent session memory and OpenViking.
+4. The provider router calls the primary provider, then fallback/sweep providers if needed.
+5. Risk and approval logic decide whether the result is returned directly or queued as a pending action.
+6. Session messages are persisted and available through session APIs.
+
+### 2. Persistent Jobs
+
+1. Jobs are stored in SQLite.
+2. APScheduler mirrors those jobs in memory.
+3. Each run writes a `JobRunLog`.
+4. Job and run updates publish realtime events for Mission Control.
+5. Jobs can be created directly through API/WebUI or proposed through Discord natural-language flows.
+
+### 3. Workspace Retrieval And Safe Mutation
+
+1. Agents can be granted workspace access with explicit path scopes.
+2. The backend syncs those paths into OpenViking for retrieval.
+3. File mutations are expressed as structured workspace actions.
+4. Previous file versions are archived before mutations.
+5. Delete operations require approval.
+6. Archives can be restored from the WebUI.
+
+### 4. Voice
+
+1. Discord bot joins a voice channel and asks the backend to start a voice session.
+2. The backend routes text through the TTS manager.
+3. The TTS manager calls `tts-worker`.
+4. The bot plays returned WAV audio in Discord and can interrupt playback.
+
+### 5. Realtime UI Updates
+
+1. WebUI exchanges the API token for an SSE cookie.
+2. `GET /api/events` streams system, job, approval, prayer, and session updates.
+3. Mission Control and related pages merge those updates into React Query caches.
+
+## Storage Layout
+
+| Path | What it stores |
+| --- | --- |
+| `storage/lifeos.db` | Main SQLite database |
+| `storage/openviking/` | OpenViking runtime data and indexed resources |
+| `storage/workspace-archive/` | Archived files created during workspace mutations |
+| `skills/` | Mounted skills available to backend tooling |
+| `.venv/.env` | Runtime environment file used by Compose and the backend/bot |
+
+## Current Operational Constraints
+
+- OpenViking must be healthy for the backend to start cleanly.
+- Most API routes are protected with `X-LifeOS-Token`.
+- The WebUI token storage model is suitable for trusted localhost use, not a public multi-user deployment.
+- Provider telemetry is intentionally in-memory, so it resets on restart.
+- `scripts/restore.sh` performs a real `git checkout`, so it should be treated as an operator recovery tool, not a casual convenience script.
+
+## Good Entry Points For Contributors
+
+- Product flow: `README.md`
+- Bot commands: `docs/DISCORD_COMMANDS.md`
+- Operations: `docs/LOCAL_PROD_RUNBOOK.md`
+- Backend startup: `backend/app/main.py`
+- Agent/chat behavior: `backend/app/services/orchestrator.py`
+- Jobs: `backend/app/routers/jobs.py` and `backend/app/services/jobs.py`
+- Workspace logic: `backend/app/services/workspace.py`
+- WebUI state flow: `webui/src/api.js`, `webui/src/hooks/useEventStream.js`, and `webui/src/components/MissionControl.jsx`

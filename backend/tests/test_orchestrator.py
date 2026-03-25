@@ -1,6 +1,80 @@
-"""Orchestrator policy tests."""
+"""Orchestrator policy and chat-flow tests."""
 
-from app.services.orchestrator import classify_risk, should_require_approval
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.models import AuditLog, PendingAction
+from app.services.openviking_client import OpenVikingUnavailableError
+from app.services.orchestrator import handle_message
+from app.services.risk_engine import (
+    classify_risk,
+    is_approval_eligible_action_type,
+    should_require_approval,
+)
+from app.services.workspace import WorkspaceExecutionResult
+
+
+class _FakeResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _FakeDbSession:
+    def __init__(self, agent):
+        self._agent = agent
+        self.added: list[object] = []
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, _query):
+        return _FakeResult(self._agent)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _obj):
+        return None
+
+
+class _FakeSessionFactory:
+    def __init__(self, agent):
+        self.session = _FakeDbSession(agent)
+
+    def __call__(self):
+        return self.session
+
+
+def _make_agent(*, workspace_enabled: bool = False):
+    return SimpleNamespace(
+        name="sandbox",
+        enabled=True,
+        system_prompt="You are the sandbox agent.",
+        provider="openrouter",
+        model="openrouter/auto",
+        fallback_provider=None,
+        fallback_model=None,
+        workspace_enabled=workspace_enabled,
+        config_json={"use_web_search": False},
+    )
+
+
+def _make_session(session_id: int, title: str):
+    return SimpleNamespace(id=session_id, title=title)
 
 
 def test_classify_risk_low():
@@ -30,3 +104,316 @@ def test_approval_never_forced_off():
     )
     assert needs is False
     assert risk == "low"
+
+
+def test_approval_auto_ignores_assistant_keyword_false_positive():
+    needs, risk, action_type = should_require_approval(
+        user_message="what is the list of md files that are in /docs folder",
+        response_text=(
+            "I can only write, replace, delete, or restore files. "
+            "I cannot list directory contents from here."
+        ),
+        approval_policy="auto",
+    )
+    assert needs is False
+    assert risk == "low"
+    assert action_type == "message"
+
+
+def test_approval_auto_ignores_schedule_keyword_from_search_results():
+    needs, risk, action_type = should_require_approval(
+        user_message="what was the subject of session #54",
+        response_text="Movie/TV Screening Season #54 - Part of a 2026 screening schedule.",
+        approval_policy="auto",
+    )
+    assert needs is False
+    assert risk == "low"
+    assert action_type == "message"
+
+
+def test_only_executable_actions_are_approval_eligible():
+    assert is_approval_eligible_action_type("create_job") is True
+    assert is_approval_eligible_action_type("create_agent") is True
+    assert is_approval_eligible_action_type("workspace_delete") is True
+    assert is_approval_eligible_action_type("message") is False
+    assert is_approval_eligible_action_type("deadline") is False
+
+
+@pytest.mark.asyncio
+async def test_handle_message_does_not_create_pending_for_informational_chat(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(
+            return_value=(
+                "I can explain your options and mention delete or schedule keywords, "
+                "but no actual task will be executed."
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what is the list of md files that are in /docs folder",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] is None
+    assert any(isinstance(row, AuditLog) for row in factory.session.added)
+    assert not any(isinstance(row, PendingAction) for row in factory.session.added)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_preserves_workspace_delete_pending(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_openviking_context", AsyncMock(return_value=""))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(return_value="Queued a delete request."),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.parse_workspace_actions",
+        lambda response_text: (response_text, SimpleNamespace(actions=[{"type": "delete_file"}])),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.apply_workspace_actions",
+        AsyncMock(
+            return_value=WorkspaceExecutionResult(
+                notes=["Queued delete approval as action #77."],
+                pending_action_id=77,
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="delete the docs folder",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] == 77
+    assert any(isinstance(row, AuditLog) for row in factory.session.added)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_uses_referenced_session_without_switching_active_session(monkeypatch):
+    agent = SimpleNamespace(**_make_agent(workspace_enabled=False).__dict__)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    active_session = _make_session(62, "Current session")
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model):
+        captured["messages"] = messages
+        return "Session #54 was about summarizing the repo."
+
+    save_message = AsyncMock()
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.ensure_session", AsyncMock(return_value=active_session))
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.orchestrator.build_session_reference_context",
+        AsyncMock(return_value="[REFERENCED SESSION CONTEXT]\nReferenced session id: 54\nReferenced session title: Summarize this repo"),
+    )
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
+    monkeypatch.setattr("app.services.orchestrator.refresh_session_metadata", AsyncMock(return_value=active_session))
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.settings.memory_summarisation_enabled", False)
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what was the subject of session #54?",
+        approval_policy="auto",
+        session_id=62,
+        session_enabled=True,
+    )
+
+    assert result["session_id"] == 62
+    assert result["session_title"] == "Current session"
+    assert get_search_context.await_count == 0
+    assert any(
+        message["role"] == "system" and "Referenced session id: 54" in message["content"]
+        for message in captured["messages"]
+    )
+    assert save_message.await_args_list[0].kwargs["session_id"] == 62
+    assert save_message.await_args_list[1].kwargs["session_id"] == 62
+
+
+@pytest.mark.asyncio
+async def test_handle_message_returns_direct_response_when_referenced_session_is_missing(monkeypatch):
+    agent = SimpleNamespace(**_make_agent(workspace_enabled=False).__dict__)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    active_session = _make_session(62, "Current session")
+    save_message = AsyncMock()
+    chat_completion = AsyncMock(return_value="should not be used")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.ensure_session", AsyncMock(return_value=active_session))
+    monkeypatch.setattr(
+        "app.services.orchestrator.build_session_reference_context",
+        AsyncMock(side_effect=ValueError("missing")),
+    )
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
+    monkeypatch.setattr("app.services.orchestrator.refresh_session_metadata", AsyncMock(return_value=active_session))
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.settings.memory_summarisation_enabled", False)
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what was the subject of session #9999?",
+        approval_policy="auto",
+        session_id=62,
+        session_enabled=True,
+    )
+
+    assert "couldn't find `sandbox` session #9999" in result["response"].lower()
+    assert result["session_id"] == 62
+    assert chat_completion.await_count == 0
+    assert save_message.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_handle_message_skips_web_search_for_follow_up_memory_prompt(monkeypatch):
+    agent = SimpleNamespace(**_make_agent(workspace_enabled=False).__dict__)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr(
+        "app.services.orchestrator.get_context",
+        AsyncMock(return_value=[{"role": "user", "content": "remember this exact phrase: blue cactus"}]),
+    )
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", AsyncMock(return_value="blue cactus"))
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what phrase did i ask you to remember?",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "blue cactus"
+    assert get_search_context.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_message_continues_when_workspace_context_is_unavailable(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr(
+        "app.services.orchestrator.get_openviking_context",
+        AsyncMock(side_effect=OpenVikingUnavailableError("Connection error")),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(return_value="I can help once you share the filenames."),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what is the list of md files that are in /docs folder",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result.get("error_code") is None
+    assert result["pending_action_id"] is None
+    assert result["response"] == "I can help once you share the filenames."
+
+
+@pytest.mark.asyncio
+async def test_handle_message_rewrites_false_workspace_success_claims(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr("app.services.orchestrator.get_openviking_context", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(
+            return_value=(
+                "File deletion request submitted! The file /workspace/tmp/discord-sandbox-delete-test.md "
+                "has been queued for deletion."
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="can you take care of /workspace/tmp/discord-sandbox-delete-test.md for me?",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] is None
+    assert "did not include a valid [WORKSPACE_ACTIONS] block" in result["response"]
+    assert "queued for deletion" not in result["response"].lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_inferrs_direct_delete_into_real_workspace_approval(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr("app.services.orchestrator.get_openviking_context", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(return_value="I can help with that."),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.apply_workspace_actions",
+        AsyncMock(
+            return_value=WorkspaceExecutionResult(
+                notes=["Queued delete approval as action #88."],
+                pending_action_id=88,
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="delete /workspace/tmp/discord-sandbox-delete-test.md",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] == 88
+    assert "queue the requested delete for approval" in result["response"].lower()

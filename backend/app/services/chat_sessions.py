@@ -16,6 +16,8 @@ DEFAULT_SESSION_TITLE = "New chat"
 MAX_TITLE_LENGTH = 160
 MAX_TITLE_WORDS = 12
 MAX_SEED_PROMPTS = 3
+MAX_REFERENCE_MESSAGES = 8
+MAX_REFERENCE_MESSAGE_CHARS = 240
 
 _STOPWORDS = {
     "a",
@@ -72,6 +74,13 @@ def _normalize_prompt(text: str) -> str:
     cleaned = re.sub(r"https?://\S+", "", text or "")
     cleaned = re.sub(r"[`*_>#-]+", " ", cleaned)
     return _collapse_spaces(cleaned)
+
+
+def _clip_reference_text(text: str, *, limit: int = MAX_REFERENCE_MESSAGE_CHARS) -> str:
+    normalized = _normalize_prompt(text)
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
 
 
 def generate_title_from_prompts(prompts: list[str]) -> str:
@@ -206,6 +215,49 @@ async def get_session_messages(agent_name: str, session_id: int, limit: int = 20
         if not session:
             raise ValueError(f"Chat session '{session_id}' not found for agent '{agent_name}'")
     return await list_session_messages(agent_name=agent_name, session_id=session_id, limit=limit)
+
+
+async def build_session_reference_context(agent_name: str, session_id: int) -> str:
+    session = await get_session(agent_name=agent_name, session_id=session_id)
+    if not session:
+        raise ValueError(f"Chat session '{session_id}' not found for agent '{agent_name}'")
+
+    messages = await list_session_messages(agent_name=agent_name, session_id=session_id, limit=200)
+    prompts: list[str] = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = _clip_reference_text(str(message.get("content") or ""))
+        if content:
+            prompts.append(content)
+        if len(prompts) >= MAX_SEED_PROMPTS:
+            break
+
+    lines = [
+        "[REFERENCED SESSION CONTEXT]",
+        f"Agent: {agent_name}",
+        f"Referenced session id: {session.id}",
+        f"Referenced session title: {_sanitize_title(session.title)}",
+        "This session is read-only reference context. Do not switch the active session unless the user explicitly asks.",
+    ]
+
+    if prompts:
+        lines.append("First user prompts:")
+        for prompt in prompts:
+            lines.append(f"- {prompt}")
+
+    if messages:
+        lines.append("Recent messages:")
+        for message in messages[-MAX_REFERENCE_MESSAGES:]:
+            role = str(message.get("role") or "assistant").upper()
+            content = _clip_reference_text(str(message.get("content") or ""))
+            if content:
+                lines.append(f"{role}: {content}")
+    else:
+        lines.append("This referenced session has no messages yet.")
+
+    lines.append("[END REFERENCED SESSION CONTEXT]")
+    return "\n".join(lines)
 
 
 async def refresh_session_metadata(agent_name: str, session_id: int) -> ChatSession:

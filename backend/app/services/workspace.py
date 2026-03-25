@@ -40,6 +40,11 @@ WORKSPACE_EXTERNAL_RESOURCE_URI = f"{WORKSPACE_ROOT_RESOURCE_URI}/external"
 WORKSPACE_ACTIONS_START = "[WORKSPACE_ACTIONS]"
 WORKSPACE_ACTIONS_END = "[/WORKSPACE_ACTIONS]"
 WORKSPACE_SUMMARY_QUERY_PATTERN = re.compile(r"\b(repo|repository|workspace|project|codebase)\b", re.IGNORECASE)
+_DIRECT_DELETE_PATH_PATTERN = re.compile(
+    r"^\s*(?:please\s+)?(?:delete|remove)\s+(?:the\s+file\s+)?(?:at\s+)?"
+    r"(?:`([^`]+)`|\"([^\"]+)\"|'([^']+)'|(\S+))\s*$",
+    re.IGNORECASE,
+)
 OPENVIKING_IGNORE_DIRS = ",".join(
     [
         ".git",
@@ -212,6 +217,23 @@ def parse_workspace_actions(response_text: str) -> tuple[str, WorkspaceActionEnv
         logger.warning("Invalid workspace action block: %s", exc)
         return cleaned or response_text, None
     return cleaned, envelope
+
+
+def infer_workspace_actions_from_user_message(user_message: str) -> WorkspaceActionEnvelope | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+
+    delete_match = _DIRECT_DELETE_PATH_PATTERN.match(text)
+    if delete_match:
+        raw_path = next((group for group in delete_match.groups() if group), "").strip()
+        if raw_path:
+            return WorkspaceActionEnvelope(
+                summary=f"Delete `{raw_path}`",
+                actions=[WorkspaceAction(type="delete_file", path=raw_path)],
+            )
+
+    return None
 
 
 def _now_utc() -> datetime:

@@ -56,7 +56,7 @@ HELP_TOPICS = {
     "approvals": "Owner-only action queue.\n`!pending` `!approve <id>` `!reject <id> [reason]`",
     "jobs": (
         "Automation and scheduled jobs.\n"
-        "`!schedule <prompt>` `!spawnagent <prompt>` `!reply <answer>`\n"
+        "`!schedule <prompt>` `!spawnagent <prompt>` `!reply <answer>` `!cancel`\n"
         "`!jobs [agent]` `!job <id>` `!pausejob <id>` `!resumejob <id>` `!jobruns <id> [limit]`"
     ),
     "voice": (
@@ -134,7 +134,7 @@ async def custom_help(ctx, *, topic: str = ""):
     embed.add_field(name="Life", value="`!today` `!focus` `!profile` `!add` `!items` `!done` `!miss` `!reopen` `!goal` `!goalprogress`", inline=False)
     embed.add_field(name="Deen", value="`!prayer` `!prayertoday` `!prayerlog` `!quran` `!quranprogress` `!tahajjud` `!adhkar`", inline=False)
     embed.add_field(name="Approvals", value="`!pending` `!approve` `!reject`", inline=False)
-    embed.add_field(name="Jobs", value="`!schedule` `!spawnagent` `!reply` `!jobs` `!job` `!pausejob` `!resumejob` `!jobruns`", inline=False)
+    embed.add_field(name="Jobs", value="`!schedule` `!spawnagent` `!reply` `!cancel` `!jobs` `!job` `!pausejob` `!resumejob` `!jobruns`", inline=False)
     embed.add_field(name="Voice", value="`!joinvoice` `!speak` `!interrupt` `!leavevoice`", inline=False)
     embed.add_field(name="System", value="`!status` `!providers`", inline=False)
     await ctx.send(embed=embed)

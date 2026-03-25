@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.database import async_session
 from app.models import ActionStatus, Agent, AuditLog, LifeItemCreate, PendingAction
 from app.redaction import redact_sensitive
-from app.services.chat_sessions import ensure_session, refresh_session_metadata
+from app.services.chat_sessions import build_session_reference_context, ensure_session, refresh_session_metadata
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message
 from app.services.action_executor import execute_pending_action
@@ -18,11 +18,12 @@ from app.services.events import publish_event
 from app.services.memory import get_context, save_message, summarise_session
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
-from app.services.risk_engine import should_require_approval
+from app.services.risk_engine import is_approval_eligible_action_type, should_require_approval
 from app.services.workspace import (
     apply_workspace_actions,
     get_agent_workspace_paths,
     get_openviking_context,
+    infer_workspace_actions_from_user_message,
     parse_workspace_actions,
     reject_workspace_delete_action,
     workspace_action_instructions,
@@ -45,7 +46,33 @@ _WORKSPACE_REQUEST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _WORKSPACE_SUCCESS_CLAIM_PATTERN = re.compile(
-    r"\b(done|created|wrote|saved|updated|deleted|removed|restored)\b",
+    r"\b(done|created|wrote|saved|updated|deleted|removed|restored|queued|submitted)\b",
+    re.IGNORECASE,
+)
+_SESSION_REFERENCE_PATTERN = re.compile(r"\bsession\s*#?\s*(\d+)\b", re.IGNORECASE)
+_LOCAL_CONTEXT_PATTERN = re.compile(
+    r"\b("
+    r"this session|current session|previous session|"
+    r"previous message|last message|follow[- ]?up|"
+    r"what did i just ask|what did i ask you to do|"
+    r"what phrase did i ask you to remember|remember this exact phrase|"
+    r"earlier in this session|just ask(?:ed)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_CONTEXT_PATTERN = re.compile(
+    r"(/[\w./-]+)|"
+    r"\b(repo|repository|workspace|project|codebase|source code|code|file|files|folder|directory|docs|"
+    r"document|module|class|function|readme|dockerfile|test|tests)\b|"
+    r"(\.[A-Za-z0-9]{1,8}\b)",
+    re.IGNORECASE,
+)
+_EXTERNAL_INFO_PATTERN = re.compile(
+    r"\b("
+    r"latest|current|today|news|weather|forecast|score|scores|stock|stocks|price|prices|market|"
+    r"recent|up[- ]to[- ]date|breaking|headline|headlines|search the web|search web|look up|lookup|"
+    r"google|internet|online"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -57,7 +84,45 @@ def _today_utc() -> str:
 def _should_use_web_search(agent: Agent) -> bool:
     if agent.config_json and "use_web_search" in agent.config_json:
         return bool(agent.config_json["use_web_search"])
-    return True
+    return str(getattr(agent, "name", "") or "").strip().lower() != "sandbox"
+
+
+def _extract_session_reference_id(text: str) -> int | None:
+    match = _SESSION_REFERENCE_PATTERN.search(text or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_local_context_query(text: str) -> bool:
+    return bool(_LOCAL_CONTEXT_PATTERN.search(text or ""))
+
+
+def _should_fetch_workspace_context(user_message: str, referenced_session_id: int | None) -> bool:
+    if referenced_session_id is not None or _is_local_context_query(user_message):
+        return False
+    return bool(_WORKSPACE_CONTEXT_PATTERN.search(user_message or ""))
+
+
+def _should_search_web(agent: Agent, user_message: str, referenced_session_id: int | None) -> bool:
+    if not _should_use_web_search(agent):
+        return False
+    if referenced_session_id is not None or _is_local_context_query(user_message):
+        return False
+    if _WORKSPACE_CONTEXT_PATTERN.search(user_message or ""):
+        return False
+    return bool(_EXTERNAL_INFO_PATTERN.search(user_message or ""))
+
+
+def _build_workspace_noop_response() -> str:
+    return (
+        "I haven't executed any workspace action yet. "
+        "No files were created, updated, deleted, or restored because the reply did not include a valid "
+        "[WORKSPACE_ACTIONS] block."
+    )
 
 
 def _append_response_notes(base_text: str, notes: list[str]) -> str:
@@ -182,6 +247,28 @@ async def handle_message(
                     "error_code": "session_not_found",
                 }
 
+        referenced_session_id = _extract_session_reference_id(user_message)
+        referenced_session_context = ""
+        response_text: str | None = None
+        if referenced_session_id is not None and (active_session is None or referenced_session_id != active_session.id):
+            try:
+                referenced_session_context = await build_session_reference_context(
+                    agent_name=agent_name,
+                    session_id=referenced_session_id,
+                )
+            except ValueError:
+                response_text = (
+                    f"I couldn't find `{agent_name}` session #{referenced_session_id}. "
+                    f"Use `!sessions {agent_name}` to list available session ids."
+                )
+            except OpenVikingUnavailableError as exc:
+                logger.error(
+                    "Referenced session lookup unavailable for agent '%s': %s",
+                    agent_name,
+                    redact_sensitive(str(exc)),
+                )
+                return _memory_unavailable_result(active_session, exc)
+
         system_prompt = (
             f"{agent.system_prompt}\n\n"
             "--- SYSTEM INSTRUCTIONS ---\n"
@@ -196,89 +283,111 @@ async def handle_message(
                 f"{workspace_action_instructions(agent_name, workspace_paths)}\n"
             )
 
-        reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
-        try:
-            context = await get_context(
-                agent_name,
-                limit=20,
-                session_id=active_session.id if active_session else None,
-                apply_data_start_filter=reporting_mode,
-            )
-        except OpenVikingUnavailableError as exc:
-            logger.error("Memory context unavailable for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
-            return _memory_unavailable_result(active_session, exc)
-        messages = [{"role": "system", "content": system_prompt}, *context]
-
-        final_user_content = user_message
-        if agent_name == "prayer-deen":
+        if response_text is None:
+            reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
             try:
-                prayer_context = await build_prayer_agent_context()
-                final_user_content = f"{prayer_context}\n\nUser Query: {user_message}"
-            except Exception as exc:
-                logger.warning("Failed building prayer context: %s", exc)
-        elif agent_name == "weekly-review":
-            try:
-                deen_context = await build_weekly_deen_context()
-                final_user_content = (
-                    f"{deen_context}\n\n"
-                    "Include a dedicated Deen section with prayer accuracy, retroactive logs, Quran, tahajjud, and adhkar.\n\n"
-                    f"User Query: {user_message}"
-                )
-            except Exception as exc:
-                logger.warning("Failed building weekly deen context: %s", exc)
-        if agent.workspace_enabled:
-            try:
-                openviking_context = await get_openviking_context(
-                    agent_name=agent_name,
-                    query=user_message,
+                context = await get_context(
+                    agent_name,
+                    limit=20,
                     session_id=active_session.id if active_session else None,
-                    workspace_paths=workspace_paths,
+                    apply_data_start_filter=reporting_mode,
                 )
             except OpenVikingUnavailableError as exc:
-                logger.error("Workspace retrieval unavailable for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
+                logger.error("Memory context unavailable for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
                 return _memory_unavailable_result(active_session, exc)
-            if openviking_context:
-                final_user_content = f"{openviking_context}\n\n{final_user_content}"
-        if _should_use_web_search(agent):
-            search_context = await _get_search_context(user_message)
-            if search_context:
-                final_user_content = (
-                    f"{final_user_content}\n\n"
-                    f"{search_context}\n"
-                    "Answer using provided real-time data where relevant."
-                )
-        messages.append({"role": "user", "content": final_user_content})
+            messages = [{"role": "system", "content": system_prompt}, *context]
+            if referenced_session_context:
+                messages.append({"role": "system", "content": referenced_session_context})
 
-        try:
-            response_text = await chat_completion(
-                messages=messages,
-                provider=agent.provider,
-                model=agent.model,
-                fallback_provider=agent.fallback_provider,
-                fallback_model=agent.fallback_model,
-            )
-        except LLMProvidersExhaustedError as exc:
-            logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
-            return {
-                "response": LLM_UNAVAILABLE_MESSAGE,
-                "pending_action_id": None,
-                "risk_level": "high",
-                "error_code": "llm_unavailable",
-                "session_id": active_session.id if active_session else None,
-                "session_title": active_session.title if active_session else None,
-            }
-        except Exception as exc:
-            safe_error = redact_sensitive(str(exc))
-            logger.error("LLM call failed for agent '%s': %s", agent_name, safe_error)
-            return {
-                "response": f"LLM error: {safe_error}",
-                "pending_action_id": None,
-                "risk_level": "high",
-                "session_id": active_session.id if active_session else None,
-                "session_title": active_session.title if active_session else None,
-            }
+            final_user_content = user_message
+            if agent_name == "prayer-deen":
+                try:
+                    prayer_context = await build_prayer_agent_context()
+                    final_user_content = f"{prayer_context}\n\nUser Query: {user_message}"
+                except Exception as exc:
+                    logger.warning("Failed building prayer context: %s", exc)
+            elif agent_name == "weekly-review":
+                try:
+                    deen_context = await build_weekly_deen_context()
+                    final_user_content = (
+                        f"{deen_context}\n\n"
+                        "Include a dedicated Deen section with prayer accuracy, retroactive logs, Quran, tahajjud, and adhkar.\n\n"
+                        f"User Query: {user_message}"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed building weekly deen context: %s", exc)
+            if agent.workspace_enabled and _should_fetch_workspace_context(user_message, referenced_session_id):
+                try:
+                    openviking_context = await get_openviking_context(
+                        agent_name=agent_name,
+                        query=user_message,
+                        session_id=active_session.id if active_session else None,
+                        workspace_paths=workspace_paths,
+                    )
+                except OpenVikingUnavailableError as exc:
+                    logger.warning(
+                        "Workspace retrieval unavailable for agent '%s'; continuing without optional context: %s",
+                        agent_name,
+                        redact_sensitive(str(exc)),
+                    )
+                    openviking_context = ""
+                if openviking_context:
+                    final_user_content = f"{openviking_context}\n\n{final_user_content}"
+            if _should_search_web(agent, user_message, referenced_session_id):
+                search_context = await _get_search_context(user_message)
+                if search_context:
+                    final_user_content = (
+                        f"{final_user_content}\n\n"
+                        f"{search_context}\n"
+                        "Answer using provided real-time data where relevant."
+                    )
+            messages.append({"role": "user", "content": final_user_content})
+
+            try:
+                response_text = await chat_completion(
+                    messages=messages,
+                    provider=agent.provider,
+                    model=agent.model,
+                    fallback_provider=agent.fallback_provider,
+                    fallback_model=agent.fallback_model,
+                )
+            except LLMProvidersExhaustedError as exc:
+                logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
+                return {
+                    "response": LLM_UNAVAILABLE_MESSAGE,
+                    "pending_action_id": None,
+                    "risk_level": "high",
+                    "error_code": "llm_unavailable",
+                    "session_id": active_session.id if active_session else None,
+                    "session_title": active_session.title if active_session else None,
+                }
+            except Exception as exc:
+                safe_error = redact_sensitive(str(exc))
+                logger.error("LLM call failed for agent '%s': %s", agent_name, safe_error)
+                return {
+                    "response": f"LLM error: {safe_error}",
+                    "pending_action_id": None,
+                    "risk_level": "high",
+                    "session_id": active_session.id if active_session else None,
+                    "session_title": active_session.title if active_session else None,
+                }
 
         cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
+        inferred_workspace_action = False
+        if (
+            agent.workspace_enabled
+            and (workspace_envelope is None or not workspace_envelope.actions)
+        ):
+            inferred_envelope = infer_workspace_actions_from_user_message(user_message)
+            if inferred_envelope and inferred_envelope.actions:
+                workspace_envelope = inferred_envelope
+                inferred_workspace_action = True
+                first_action = inferred_envelope.actions[0]
+                if first_action.type == "delete_file":
+                    cleaned_response = (
+                        f"I'll queue the requested delete for approval: `{first_action.path}`."
+                    )
+
         workspace_notes: list[str] = []
         pending_id = None
         workspace_action_type = None
@@ -308,12 +417,11 @@ async def handle_message(
                 workspace_risk_level = "medium"
         elif (
             agent.workspace_enabled
+            and not inferred_workspace_action
             and _WORKSPACE_REQUEST_PATTERN.search(user_message)
             and _WORKSPACE_SUCCESS_CLAIM_PATTERN.search(cleaned_response)
         ):
-            workspace_notes.append(
-                "No workspace action was executed, so no files were actually created or changed."
-            )
+            cleaned_response = _build_workspace_noop_response()
 
         final_response_text = _append_response_notes(cleaned_response, workspace_notes)
 
@@ -390,7 +498,7 @@ async def handle_message(
                 approval_policy=effective_approval_policy,
                 require_approval=require_approval,
             )
-            if needs_approval:
+            if needs_approval and is_approval_eligible_action_type(action_type):
                 pending = PendingAction(
                     agent_name=agent_name,
                     action_type=action_type,
@@ -537,6 +645,8 @@ async def run_scheduled_agent(
     agent_name: str,
     prompt_override: str | None = None,
     target_channel_override: str | None = None,
+    target_channel_id_override: str | None = None,
+    notification_mode_override: str | None = None,
 ) -> dict:
     """Execute a scheduled nudge and send it to the mapped Discord channel."""
     async with async_session() as db:
@@ -559,8 +669,16 @@ async def run_scheduled_agent(
         return {"status": "skipped", "reason": run_result.get("error_code")}
     if run_result.get("pending_action_id"):
         return {"status": "pending_approval", "pending_action_id": run_result["pending_action_id"]}
+    notification_mode = str(notification_mode_override or "channel").strip().lower()
+    if notification_mode == "silent":
+        return {"status": "completed", "delivered": False}
     delivered = False
     target_channel = target_channel_override or (agent.discord_channel if agent else None)
-    if target_channel:
-        delivered = await send_channel_message(target_channel, run_result.get("response", ""))
+    target_channel_id = target_channel_id_override
+    if target_channel_id or target_channel:
+        delivered = await send_channel_message(
+            target_channel,
+            run_result.get("response", ""),
+            channel_id=target_channel_id,
+        )
     return {"status": "delivered" if delivered else "completed", "delivered": delivered}

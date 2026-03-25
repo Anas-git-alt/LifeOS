@@ -1,7 +1,7 @@
 """Lightweight Discord REST sender for scheduler nudges."""
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 import httpx
 
@@ -29,24 +29,26 @@ async def _load_channel_cache() -> None:
             _channel_cache[channel["name"]] = channel["id"]
 
 
-async def send_channel_message(channel_name: str, content: str) -> bool:
-    """Send a text message to a Discord channel by name."""
-    if not channel_name:
+async def send_channel_message(channel_name: str | None, content: str, channel_id: str | None = None) -> bool:
+    """Send a text message to a Discord channel by id when available, else by name."""
+    if not channel_id and not channel_name:
         return False
     if not settings.discord_bot_token or not settings.discord_guild_id:
         return False
-    await _load_channel_cache()
-    channel_id = _channel_cache.get(channel_name)
-    if not channel_id:
-        logger.warning("Discord channel '%s' not found for scheduler nudge", channel_name)
-        return False
+    resolved_channel_id = str(channel_id or "").strip()
+    if not resolved_channel_id:
+        await _load_channel_cache()
+        resolved_channel_id = _channel_cache.get(channel_name or "", "")
+        if not resolved_channel_id:
+            logger.warning("Discord channel '%s' not found for scheduler nudge", channel_name)
+            return False
 
     headers = {
         "Authorization": f"Bot {settings.discord_bot_token}",
         "Content-Type": "application/json",
     }
     payload = {"content": content[:1900]}
-    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    url = f"https://discord.com/api/v10/channels/{resolved_channel_id}/messages"
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(url, headers=headers, json=payload)
         if resp.is_success:

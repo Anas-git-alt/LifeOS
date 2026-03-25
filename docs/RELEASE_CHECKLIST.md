@@ -1,44 +1,54 @@
 # LifeOS Release Checklist
 
 ## Security
-- [ ] `API_SECRET_KEY` is non-default.
-- [ ] `DISCORD_OWNER_IDS` is configured.
-- [ ] Backend and WebUI are bound to localhost (`127.0.0.1` port mappings).
-- [ ] CORS origins limited to localhost.
 
-## Reliability
-- [ ] Scheduler bootstraps agent cadence jobs at startup.
-- [ ] Retention prune job exists (`maintenance_prune`).
-- [ ] Health and readiness endpoints return healthy/ready.
+- [ ] `API_SECRET_KEY` is non-default and not checked into git.
+- [ ] `DISCORD_OWNER_IDS` is configured with real owner IDs.
+- [ ] Backend and WebUI remain bound to `127.0.0.1` unless a deliberate reverse proxy setup is in place.
+- [ ] Browser token usage is acceptable for the target deployment model.
+- [ ] Workspace-enabled agents are scoped to the minimum required paths.
 
-## Functional
-- [ ] `!today`, `!add`, `!done`, `!miss`, `!focus`, `!profile` commands work.
-- [ ] Session commands work: `!sessions`, `!newsession`, `!usesession`, `!renamesession`, `!clearsession`, `!history`.
-- [ ] `!ask` and `!sandbox` keep context in the active session per user/channel/agent.
-- [ ] `!prayertoday`, `!prayerlog`, `!quran`, `!tahajjud`, `!adhkar` commands work.
-- [ ] Approvals are owner-only in command and reaction paths.
-- [ ] Prayer reaction check-ins (`✅/🕒/❌`) log correctly for reminder messages.
-- [ ] WebUI Today/Life Items/Profile pages load and mutate data with token.
-- [ ] WebUI agent Chat tab supports create/switch/rename/clear session and message history restore.
-- [ ] `/api/agents/{agent}/sessions*` endpoints work end-to-end.
-- [ ] `/api/prayer/weekly-summary` includes prayer accuracy, retroactive count, Quran, tahajjud, and adhkar metrics.
-- [ ] `data_start_date` can be updated via `/api/settings/` and WebUI Settings page.
-- [ ] Reports/analytics ignore records older than `data_start_date` without deleting raw rows.
-- [ ] Jobs UI + API support list/create/edit/pause/resume/delete and run logs.
-- [ ] Jobs support `description` field and existing jobs have meaningful descriptions.
-- [ ] Discord NL flows (`!schedule`, `!spawnagent`) ask follow-ups when required fields are missing.
-- [ ] Approving NL-created actions executes create-job/create-agent and records audit trail.
-- [ ] Mission Control page loads with widget data (System, Approvals, Jobs, Today, Agents).
-- [ ] `NEW /api/events` SSE stream connects from WebUI after token entry (no manual refresh required).
-- [ ] Start a job run and confirm Mission Control Jobs widget updates live.
-- [ ] Make an approval decision and confirm Mission Control Approvals widget updates live.
+## Stack Readiness
+
+- [ ] `docker compose ps` shows `backend`, `discord-bot`, `webui`, `openviking`, and `tts-worker` up.
+- [ ] `GET /api/health` returns backend status plus OpenViking health details.
+- [ ] `GET /api/readiness` returns `ready`.
+- [ ] OpenViking legacy memory import and workspace sync complete without startup errors.
+- [ ] `GET /api/tts/health` succeeds with a valid API token.
+
+## Core Product Flows
+
+- [ ] `!status`, `!agents`, `!today`, and `!prayertoday` work in Discord.
+- [ ] Agent chat works through Discord and WebUI.
+- [ ] Session flows work end to end: create, switch, rename, clear, and history restore.
+- [ ] Approvals work through both commands and emoji reactions for owner users only.
+- [ ] WebUI token banner accepts the API token and protected pages load correctly.
+- [ ] Mission Control shows health, approvals, jobs, today agenda, and recent agent activity.
+- [ ] SSE updates reach the WebUI after token exchange without manual refresh.
+- [ ] Jobs can be created, edited, paused, resumed, deleted, and inspected for run logs.
+- [ ] Discord natural-language job creation works with follow-up prompts when fields are missing.
+- [ ] Discord one-time jobs work with `tomorrow at 9am`, `on YYYY-MM-DD at HH:MM`, and `in 10 min`.
+- [ ] Discord job targeting works with both `<#channel_id>` and manual `#channel-slug` references.
+- [ ] Discord natural-language agent creation queues a pending approval correctly.
+- [ ] Prayer dashboard loads and prayer check-ins can be edited from WebUI.
+- [ ] Quran logging and progress tracking work.
+- [ ] Provider telemetry and experiment history load in WebUI.
+- [ ] Voice preview works in WebUI for a speech-enabled agent.
+- [ ] Discord voice join, speak, interrupt, and leave flows work if voice is part of the release scope.
 
 ## Data Safety
+
+- [ ] Workspace archive entries are created before file mutations.
+- [ ] Workspace archive restore works from WebUI or API.
 - [ ] Backup completed with `./scripts/backup.sh`.
 - [ ] Backup verified with `./scripts/verify_backup.sh`.
-- [ ] Restore dry-run tested with `./scripts/restore.sh <tag> --dry-run`.
+- [ ] Restore dry-run tested with `./scripts/restore.sh <tag-or-commit> --dry-run`.
 
 ## Quality
-- [ ] Backend unit tests pass in your environment.
+
+- [ ] Backend tests pass in the target environment.
+- [ ] WebUI tests pass in the target environment.
 - [ ] Docker images build successfully.
-- [ ] Manual smoke test completed on Discord and WebUI.
+- [ ] Manual Discord smoke test completed.
+- [ ] Manual WebUI smoke test completed.
+- [ ] Docs reviewed for the current stack and operator workflow.

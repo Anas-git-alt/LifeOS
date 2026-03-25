@@ -1,10 +1,11 @@
 """Scheduler service for periodic agent runs and maintenance tasks."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
@@ -25,6 +26,7 @@ from app.services.orchestrator import run_scheduled_agent
 from app.services.prayer_service import auto_mark_unknown_expired, refresh_today_and_tomorrow_windows
 
 logger = logging.getLogger(__name__)
+ONCE_JOB_MISFIRE_GRACE_SECONDS = 600
 
 
 def _new_scheduler() -> AsyncIOScheduler:
@@ -82,6 +84,14 @@ def _to_db_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _to_scheduler_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def _update_job_next_run(job_id: int, next_run: datetime | None) -> None:
     async with async_session() as db:
         result = await db.execute(
@@ -109,7 +119,40 @@ async def sync_persistent_job(job_id: int) -> None:
         await _update_job_next_run(job_id, None)
         return
 
-    trigger = CronTrigger.from_crontab(row.cron_expression, timezone=ZoneInfo(row.timezone))
+    trigger = None
+    now_utc = datetime.now(timezone.utc)
+    if row.schedule_type == "once":
+        run_at = _to_scheduler_datetime(row.run_at)
+        if not run_at:
+            if existing:
+                scheduler.remove_job(scheduler_id)
+            await _update_job_next_run(job_id, None)
+            return
+        if row.completed_at:
+            if existing:
+                scheduler.remove_job(scheduler_id)
+            await _update_job_next_run(job_id, None)
+            return
+        if now_utc > run_at + timedelta(seconds=ONCE_JOB_MISFIRE_GRACE_SECONDS):
+            if existing:
+                scheduler.remove_job(scheduler_id)
+            await record_job_run(
+                job_id=job_id,
+                started_at=_to_db_datetime(now_utc) or datetime.now(timezone.utc).replace(tzinfo=None),
+                finished_at=_to_db_datetime(now_utc) or datetime.now(timezone.utc).replace(tzinfo=None),
+                status="missed",
+                message="job_missed_startup_window",
+                error=None,
+                last_run_at=_to_db_datetime(now_utc),
+                next_run_at=None,
+                completed_at=_to_db_datetime(now_utc),
+                enabled=False,
+            )
+            return
+        trigger = DateTrigger(run_date=run_at, timezone=timezone.utc)
+    else:
+        trigger = CronTrigger.from_crontab(row.cron_expression, timezone=ZoneInfo(row.timezone))
+
     scheduler.add_job(
         run_persistent_job,
         trigger=trigger,
@@ -118,15 +161,16 @@ async def sync_persistent_job(job_id: int) -> None:
         replace_existing=True,
         coalesce=True,
         max_instances=1,
-        misfire_grace_time=600,
+        misfire_grace_time=ONCE_JOB_MISFIRE_GRACE_SECONDS,
     )
     scheduled = scheduler.get_job(scheduler_id)
     await _update_job_next_run(job_id, scheduled.next_run_time if scheduled else None)
     logger.info(
-        "Scheduled persistent job id=%s name=%s cron=%s tz=%s",
+        "Scheduled persistent job id=%s name=%s type=%s schedule=%s tz=%s",
         row.id,
         row.name,
-        row.cron_expression,
+        row.schedule_type,
+        row.cron_expression if row.schedule_type == "cron" else row.run_at,
         row.timezone,
     )
 
@@ -136,6 +180,7 @@ async def run_persistent_job(job_id: int) -> None:
     status = "completed"
     message: str | None = None
     error: str | None = None
+    row = None
 
     try:
         row = await get_job(job_id)
@@ -154,6 +199,8 @@ async def run_persistent_job(job_id: int) -> None:
                     agent_name=row.agent_name,
                     prompt_override=row.prompt_template,
                     target_channel_override=row.target_channel,
+                    target_channel_id_override=row.target_channel_id,
+                    notification_mode_override=row.notification_mode,
                 )
                 status = str(result.get("status", "completed"))
                 message = str(result)
@@ -168,6 +215,8 @@ async def run_persistent_job(job_id: int) -> None:
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         scheduled = scheduler.get_job(_scheduler_job_id(job_id))
         next_run = scheduled.next_run_time if scheduled else None
+        once_completed_at = finished_at if row and row.schedule_type == "once" else None
+        once_enabled = False if row and row.schedule_type == "once" else None
         await record_job_run(
             job_id=job_id,
             started_at=started_at,
@@ -177,6 +226,8 @@ async def run_persistent_job(job_id: int) -> None:
             error=error,
             last_run_at=finished_at,
             next_run_at=_to_db_datetime(next_run),
+            completed_at=once_completed_at,
+            enabled=once_enabled,
         )
 
 

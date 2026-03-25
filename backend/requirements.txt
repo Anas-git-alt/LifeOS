@@ -9,3 +9,5 @@ apscheduler==3.10.4
 python-dotenv==1.0.1
 duckduckgo-search==6.3.0
 freezegun==1.5.1
+pytest==8.4.2
+pytest-asyncio==1.1.0
