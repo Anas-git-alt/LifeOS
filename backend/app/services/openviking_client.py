@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 import re
@@ -15,6 +16,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _AGENT_SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
+_MAX_SESSION_ARCHIVE_SCAN = 512
 
 
 def _agent_slug(agent_name: str | None) -> str:
@@ -36,6 +38,44 @@ def build_session_messages_uri(agent_name: str, session_id: int | str) -> str:
 
 def build_session_summary_uri(agent_name: str, session_id: int | str) -> str:
     return f"{build_session_root_uri(agent_name, session_id)}/.lifeos-session-summary.md"
+
+
+def build_session_archive_messages_uri(agent_name: str, session_id: int | str, archive_index: int) -> str:
+    return f"{build_session_root_uri(agent_name, session_id)}/history/archive_{archive_index:03d}/messages.jsonl"
+
+
+def _is_not_found_error(exc: OpenVikingApiError) -> bool:
+    return exc.status_code == 404 or (exc.code or "").upper() == "NOT_FOUND"
+
+
+def _parse_session_message_lines(content: str, agent_name: str, session_id: int | str) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for line in str(content).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed OpenViking session line for %s/%s", agent_name, session_id)
+            continue
+        if isinstance(payload, dict):
+            messages.append(payload)
+    return messages
+
+
+def _message_sort_key(payload: dict[str, Any], ordinal: int) -> tuple[datetime, int]:
+    raw_timestamp = str(payload.get("created_at") or "").strip()
+    if raw_timestamp:
+        normalized = raw_timestamp.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed, ordinal
+        except Exception:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc), ordinal
 
 
 @dataclass(slots=True)
@@ -220,29 +260,50 @@ class OpenVikingClient:
         agent_name: str,
         session_id: int | str,
     ) -> list[dict[str, Any]]:
+        payloads_with_order: list[tuple[dict[str, Any], int]] = []
+        seen_ids: set[str] = set()
+        ordinal = 0
+
+        for archive_index in range(1, _MAX_SESSION_ARCHIVE_SCAN + 1):
+            try:
+                content = await self.read_content(
+                    build_session_archive_messages_uri(agent_name, session_id, archive_index),
+                    agent_name=agent_name,
+                )
+            except OpenVikingApiError as exc:
+                if _is_not_found_error(exc):
+                    break
+                raise
+            for payload in _parse_session_message_lines(content, agent_name, session_id):
+                message_id = str(payload.get("id") or "").strip()
+                if message_id and message_id in seen_ids:
+                    continue
+                if message_id:
+                    seen_ids.add(message_id)
+                payloads_with_order.append((payload, ordinal))
+                ordinal += 1
+
         try:
-            content = await self.read_content(
+            active_content = await self.read_content(
                 build_session_messages_uri(agent_name, session_id),
                 agent_name=agent_name,
             )
         except OpenVikingApiError as exc:
-            if exc.status_code == 404 or (exc.code or "").upper() == "NOT_FOUND":
-                return []
-            raise
-        if not content:
-            return []
-        messages: list[dict[str, Any]] = []
-        for line in str(content).splitlines():
-            line = line.strip()
-            if not line:
+            if not _is_not_found_error(exc):
+                raise
+            active_content = ""
+
+        for payload in _parse_session_message_lines(active_content, agent_name, session_id):
+            message_id = str(payload.get("id") or "").strip()
+            if message_id and message_id in seen_ids:
                 continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("Skipping malformed OpenViking session line for %s/%s", agent_name, session_id)
-                continue
-            messages.append(payload)
-        return messages
+            if message_id:
+                seen_ids.add(message_id)
+            payloads_with_order.append((payload, ordinal))
+            ordinal += 1
+
+        payloads_with_order.sort(key=lambda item: _message_sort_key(item[0], item[1]))
+        return [payload for payload, _ in payloads_with_order]
 
     async def read_session_summary(self, agent_name: str, session_id: int | str) -> str:
         try:
@@ -251,7 +312,7 @@ class OpenVikingClient:
                 agent_name=agent_name,
             )
         except OpenVikingApiError as exc:
-            if exc.status_code == 404 or (exc.code or "").upper() == "NOT_FOUND":
+            if _is_not_found_error(exc):
                 return ""
             raise
 

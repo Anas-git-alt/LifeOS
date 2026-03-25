@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from freezegun import freeze_time
 
-from app.services.jobs import compute_next_run, normalize_cron_expression
+from app.services.jobs import compute_next_run, normalize_cron_expression, prepare_job_payload
 
 
 def test_normalize_cron_expression_legacy_three_field():
@@ -22,6 +22,22 @@ def test_normalize_cron_expression_invalid():
         assert "Cron must have either 3 fields" in str(exc)
     else:
         raise AssertionError("Expected ValueError for invalid cron")
+
+
+def test_prepare_job_payload_preserves_discord_once_run_at_as_utc():
+    payload = prepare_job_payload(
+        {
+            "name": "Discord once job",
+            "agent_name": "sandbox",
+            "schedule_type": "once",
+            "run_at": datetime(2026, 3, 25, 7, 16, 57, 381182),
+            "timezone": "Africa/Casablanca",
+            "notification_mode": "channel",
+            "target_channel": "test",
+            "source": "discord_nl",
+        }
+    )
+    assert payload["run_at"] == datetime(2026, 3, 25, 7, 16, 57, 381182)
 
 
 @freeze_time("2026-03-02 06:15:00")

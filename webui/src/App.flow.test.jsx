@@ -11,7 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   getPendingActions: vi.fn(async () => [{ id: 10, agent_name: "planner", summary: "Review daily plan", status: "pending", created_at: "2026-03-03T08:00:00Z" }]),
   getAllActions: vi.fn(async () => [{ id: 10, agent_name: "planner", summary: "Review daily plan", status: "approved", created_at: "2026-03-03T08:00:00Z" }]),
   decideAction: vi.fn(async () => ({})),
-  getJobs: vi.fn(async () => [{ id: 11, name: "Morning stretch", agent_name: "planner", cron_expression: "30 7 * * mon-fri", timezone: "Africa/Casablanca", enabled: true, paused: false, next_run_at: "2026-03-04T07:30:00Z", last_run_at: null, last_error: null }]),
+  getJobs: vi.fn(async () => [{ id: 11, name: "Morning stretch", agent_name: "planner", schedule_type: "cron", cron_expression: "30 7 * * mon-fri", run_at: null, timezone: "Africa/Casablanca", notification_mode: "channel", target_channel: "planning", target_channel_id: "123456789012345678", enabled: true, paused: false, next_run_at: "2026-03-04T07:30:00Z", last_run_at: null, completed_at: null, last_error: null }]),
   getJobRuns: vi.fn(async () => [{ id: 1, status: "success", created_at: "2026-03-03T07:30:00Z", error: null }]),
   createJob: vi.fn(async () => ({ id: 12 })),
   updateJob: vi.fn(async () => ({})),
@@ -106,7 +106,7 @@ describe("App flow smoke", () => {
   test("submits the jobs form", async () => {
     renderApp();
     fireEvent.click(screen.getAllByRole("button", { name: /^Jobs$/i })[0]);
-    await screen.findByRole("heading", { name: "Cron Jobs" });
+    await screen.findByRole("heading", { name: "Scheduled Jobs" });
 
     fireEvent.change(screen.getByLabelText("Job Name"), { target: { value: "Night summary" } });
     fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "planner" } });

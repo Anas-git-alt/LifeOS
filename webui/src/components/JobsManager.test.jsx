@@ -13,9 +13,13 @@ vi.mock("../api", () => ({
       id: 11,
       name: "Morning stretch",
       agent_name: "sandbox",
+      schedule_type: "cron",
       cron_expression: "30 7 * * mon-fri",
+      run_at: null,
       timezone: "Africa/Casablanca",
+      notification_mode: "channel",
       target_channel: "fitness-log",
+      target_channel_id: "123456789012345678",
       prompt_template: "Stretch now",
       enabled: true,
       paused: false,
@@ -45,5 +49,30 @@ describe("JobsManager", () => {
     fireEvent.click(screen.getByRole("button", { name: /^pause$/i }));
 
     await waitFor(() => expect(pauseJob).toHaveBeenCalledWith(11));
+  });
+
+  test("submits a one-time silent job", async () => {
+    const { createJob } = await import("../api");
+    render(<JobsManager />);
+
+    await screen.findByRole("heading", { name: /scheduled jobs/i });
+    fireEvent.change(screen.getByLabelText("Job Name"), { target: { value: "Quick review" } });
+    fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "sandbox" } });
+    fireEvent.change(screen.getByLabelText("Schedule Type"), { target: { value: "once" } });
+    fireEvent.change(screen.getByLabelText("Run At"), { target: { value: "2026-03-25T09:00" } });
+    fireEvent.change(screen.getByLabelText("Notification Mode"), { target: { value: "silent" } });
+    fireEvent.click(screen.getByRole("button", { name: /create job/i }));
+
+    await waitFor(() =>
+      expect(createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          schedule_type: "once",
+          run_at: "2026-03-25T09:00:00",
+          notification_mode: "silent",
+          target_channel: null,
+          target_channel_id: null,
+        }),
+      ),
+    );
   });
 });

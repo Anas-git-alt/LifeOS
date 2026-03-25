@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
@@ -22,6 +24,7 @@ from app.services.system_settings import get_data_start_date
 logger = logging.getLogger(__name__)
 
 _SUMMARY_PREFIX = "[SUMMARY]\n"
+_COMMIT_IN_PROGRESS_PATTERN = re.compile(r"commit in progress", re.IGNORECASE)
 
 
 def _use_openviking() -> bool:
@@ -65,6 +68,34 @@ def _wrap_openviking_error(operation: str, agent_name: str, session_id: int | No
     return OpenVikingUnavailableError(
         f"OpenViking {operation} failed for agent '{agent_name}' session '{_session_scope(session_id)}': {exc}"
     )
+
+
+def _is_commit_in_progress_error(exc: Exception) -> bool:
+    return bool(_COMMIT_IN_PROGRESS_PATTERN.search(str(exc)))
+
+
+async def _commit_openviking_session(agent_name: str, session_id: int | str) -> None:
+    for attempt in range(2):
+        try:
+            await openviking_client.commit_session(agent_name, session_id, wait=False)
+            return
+        except Exception as exc:
+            if not _is_commit_in_progress_error(exc):
+                raise
+            if attempt == 0:
+                logger.warning(
+                    "OpenViking commit already in progress for %s/%s; retrying once",
+                    agent_name,
+                    session_id,
+                )
+                await asyncio.sleep(0.25)
+                continue
+            logger.warning(
+                "OpenViking commit still in progress for %s/%s after retry; leaving appended message as-is",
+                agent_name,
+                session_id,
+            )
+            return
 
 
 async def _openviking_summary_message(
@@ -267,9 +298,10 @@ async def save_message(agent_name: str, role: str, content: str, session_id: int
 
     if _use_openviking():
         try:
-            await openviking_client.add_message(agent_name, _session_scope(session_id), role, content)
+            session_scope = _session_scope(session_id)
+            await openviking_client.add_message(agent_name, session_scope, role, content)
             if role == "assistant":
-                await openviking_client.commit_session(agent_name, _session_scope(session_id), wait=False)
+                await _commit_openviking_session(agent_name, session_scope)
         except Exception as exc:
             raise _wrap_openviking_error("save_message", agent_name, session_id, exc) from exc
         if session_id is not None:

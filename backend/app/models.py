@@ -4,7 +4,7 @@ import enum
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -139,9 +139,13 @@ class ScheduledJob(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     job_type: Mapped[str] = mapped_column(String(40), nullable=False, default="agent_nudge")
-    cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
+    schedule_type: Mapped[str] = mapped_column(String(20), nullable=False, default="cron")
+    cron_expression: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Africa/Casablanca")
+    notification_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="channel")
     target_channel: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    target_channel_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     prompt_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -151,6 +155,7 @@ class ScheduledJob(Base):
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -705,9 +710,13 @@ class ScheduledJobCreate(BaseModel):
     description: Optional[str] = None
     agent_name: Optional[str] = None
     job_type: str = "agent_nudge"
-    cron_expression: str
+    schedule_type: Optional[Literal["cron", "once"]] = None
+    cron_expression: Optional[str] = None
+    run_at: Optional[datetime] = None
     timezone: str = "Africa/Casablanca"
+    notification_mode: Literal["channel", "silent"] = "channel"
     target_channel: Optional[str] = None
+    target_channel_id: Optional[str] = None
     prompt_template: Optional[str] = None
     enabled: bool = True
     paused: bool = False
@@ -716,15 +725,33 @@ class ScheduledJobCreate(BaseModel):
     created_by: Optional[str] = None
     config_json: Optional[dict] = None
 
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "ScheduledJobCreate":
+        if self.schedule_type is None:
+            self.schedule_type = "once" if self.run_at and not self.cron_expression else "cron"
+        if self.schedule_type == "cron":
+            if not (self.cron_expression or "").strip():
+                raise ValueError("cron_expression is required for cron jobs")
+            self.run_at = None
+        else:
+            if self.run_at is None:
+                raise ValueError("run_at is required for one-time jobs")
+            self.cron_expression = None
+        return self
+
 
 class ScheduledJobUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     agent_name: Optional[str] = None
     job_type: Optional[str] = None
+    schedule_type: Optional[Literal["cron", "once"]] = None
     cron_expression: Optional[str] = None
+    run_at: Optional[datetime] = None
     timezone: Optional[str] = None
+    notification_mode: Optional[Literal["channel", "silent"]] = None
     target_channel: Optional[str] = None
+    target_channel_id: Optional[str] = None
     prompt_template: Optional[str] = None
     enabled: Optional[bool] = None
     paused: Optional[bool] = None
@@ -740,9 +767,13 @@ class ScheduledJobResponse(BaseModel):
     description: Optional[str]
     agent_name: Optional[str]
     job_type: str
-    cron_expression: str
+    schedule_type: str
+    cron_expression: Optional[str]
+    run_at: Optional[datetime]
     timezone: str
+    notification_mode: str
     target_channel: Optional[str]
+    target_channel_id: Optional[str]
     prompt_template: Optional[str]
     enabled: bool
     paused: bool
@@ -752,6 +783,7 @@ class ScheduledJobResponse(BaseModel):
     config_json: Optional[dict]
     last_run_at: Optional[datetime]
     next_run_at: Optional[datetime]
+    completed_at: Optional[datetime]
     last_status: Optional[str]
     last_error: Optional[str]
     created_at: datetime

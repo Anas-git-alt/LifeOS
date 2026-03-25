@@ -117,6 +117,13 @@ def run_migrations() -> None:
             version = file_path.stem
             if version in applied:
                 continue
+            # Fresh databases rely on ORM create_all() later in init_db(), so
+            # table-rebuild migrations should be skipped when the legacy table
+            # does not exist yet.
+            if version == "202603250001_job_schedule_modes" and "scheduled_jobs" not in existing_tables:
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                applied.add(version)
+                continue
             sql = file_path.read_text(encoding="utf-8")
             cur.executescript(sql)
             cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))

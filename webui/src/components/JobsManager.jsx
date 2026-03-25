@@ -14,13 +14,102 @@ const DEFAULT_JOB = {
   name: "",
   description: "",
   agent_name: "",
+  schedule_type: "cron",
   cron_expression: "30 7 mon-fri",
+  run_at: "",
   timezone: "Africa/Casablanca",
-  target_channel: "",
+  notification_mode: "channel",
+  target_channel_ref: "",
   prompt_template: "",
   enabled: true,
   approval_required: true,
 };
+
+function parseApiDate(value) {
+  if (!value) return null;
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatInTimezone(value, timezone, fallback = "n/a") {
+  const parsed = parseApiDate(value);
+  if (!parsed) return value || fallback;
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: timezone || "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(parsed);
+}
+
+function toDateTimeLocalValue(value, timezone) {
+  const parsed = parseApiDate(value);
+  if (!parsed) return "";
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: timezone || "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(parsed);
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}T${byType.hour}:${byType.minute}`;
+}
+
+function parseChannelRef(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return { target_channel: null, target_channel_id: null };
+  const mentionMatch = raw.match(/^<#(\d+)>$/);
+  if (mentionMatch) {
+    return { target_channel: null, target_channel_id: mentionMatch[1] };
+  }
+  const digitsMatch = raw.match(/^(\d{6,})$/);
+  if (digitsMatch) {
+    return { target_channel: null, target_channel_id: digitsMatch[1] };
+  }
+  return { target_channel: raw.replace(/^#/, ""), target_channel_id: null };
+}
+
+function jobChannelRef(job) {
+  if (job?.target_channel_id) return `<#${job.target_channel_id}>`;
+  return job?.target_channel || "";
+}
+
+function jobStatusMeta(job) {
+  if (job.schedule_type === "once" && job.completed_at) {
+    if (job.last_status === "missed") return { label: "missed", badge: "badge-rejected" };
+    return { label: "completed", badge: "badge-approved" };
+  }
+  if (job.paused) return { label: "paused", badge: "badge-pending" };
+  if (job.enabled) return { label: "active", badge: "badge-active" };
+  return { label: "disabled", badge: "badge-rejected" };
+}
+
+function jobScheduleText(job) {
+  if (job.schedule_type === "once") {
+    return `Once at ${formatInTimezone(job.run_at, job.timezone)}`;
+  }
+  return `Cron ${job.cron_expression}`;
+}
+
+function jobNotifyText(job) {
+  if (job.notification_mode === "silent") return "silent/background";
+  if (job.target_channel_id) return `<#${job.target_channel_id}>`;
+  if (job.target_channel) return `#${job.target_channel}`;
+  return "mapped channel";
+}
+
+function runStatusBadge(status) {
+  if (["completed", "delivered"].includes(status)) return "badge-approved";
+  if (["running", "pending_approval"].includes(status)) return "badge-pending";
+  return "badge-rejected";
+}
 
 export default function JobsManager() {
   const [jobs, setJobs] = useState([]);
@@ -60,9 +149,13 @@ export default function JobsManager() {
       name: selectedJob.name || "",
       description: selectedJob.description || "",
       agent_name: selectedJob.agent_name || "",
+      schedule_type: selectedJob.schedule_type || "cron",
       cron_expression: selectedJob.cron_expression || "",
+      run_at: toDateTimeLocalValue(selectedJob.run_at, selectedJob.timezone || "Africa/Casablanca"),
       timezone: selectedJob.timezone || "Africa/Casablanca",
-      target_channel: selectedJob.target_channel || "",
+      notification_mode:
+        selectedJob.notification_mode || (selectedJob.target_channel || selectedJob.target_channel_id ? "channel" : "silent"),
+      target_channel_ref: jobChannelRef(selectedJob),
       prompt_template: selectedJob.prompt_template || "",
       enabled: Boolean(selectedJob.enabled),
       approval_required: Boolean(selectedJob.approval_required),
@@ -79,11 +172,23 @@ export default function JobsManager() {
     setSaving(true);
     setError("");
     try {
+      const channelData =
+        form.notification_mode === "channel"
+          ? parseChannelRef(form.target_channel_ref)
+          : { target_channel: null, target_channel_id: null };
       const payload = {
-        ...form,
+        name: form.name,
+        description: form.description || null,
         agent_name: form.agent_name || null,
-        target_channel: form.target_channel || null,
+        schedule_type: form.schedule_type,
+        cron_expression: form.schedule_type === "cron" ? form.cron_expression || null : null,
+        run_at: form.schedule_type === "once" && form.run_at ? `${form.run_at}:00` : null,
+        timezone: form.timezone,
+        notification_mode: form.notification_mode,
+        ...channelData,
         prompt_template: form.prompt_template || null,
+        enabled: form.enabled,
+        approval_required: form.approval_required,
         source: editingJobId ? "webui_edit" : "webui_create",
         created_by: "webui",
       };
@@ -130,17 +235,11 @@ export default function JobsManager() {
     }
   };
 
-  const getJobStatusMeta = (job) => {
-    if (job.paused) return { label: "paused", badge: "badge-pending" };
-    if (job.enabled) return { label: "active", badge: "badge-active" };
-    return { label: "disabled", badge: "badge-rejected" };
-  };
-
   return (
     <section className="glass-card">
       <div className="page-header">
-        <h2>Cron Jobs</h2>
-        <p>Create, edit, pause, resume, and delete timezone-aware jobs globally or per agent.</p>
+        <h2>Scheduled Jobs</h2>
+        <p>Create, edit, pause, resume, and inspect recurring or one-time jobs.</p>
       </div>
 
       <div className="form-group">
@@ -195,15 +294,46 @@ export default function JobsManager() {
             </select>
           </div>
           <div className="form-group">
-            <label htmlFor="job-cron">Cron</label>
-            <input
-              id="job-cron"
-              value={form.cron_expression}
-              onChange={(e) => setForm((prev) => ({ ...prev, cron_expression: e.target.value }))}
-              placeholder="30 7 mon-fri or 30 7 * * mon-fri"
-              required
-            />
+            <label htmlFor="job-schedule-type">Schedule Type</label>
+            <select
+              id="job-schedule-type"
+              value={form.schedule_type}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  schedule_type: e.target.value,
+                  cron_expression: e.target.value === "cron" ? prev.cron_expression || "30 7 mon-fri" : "",
+                  run_at: e.target.value === "once" ? prev.run_at : "",
+                }))
+              }
+            >
+              <option value="cron">Recurring</option>
+              <option value="once">One-time</option>
+            </select>
           </div>
+          {form.schedule_type === "cron" ? (
+            <div className="form-group">
+              <label htmlFor="job-cron">Cron</label>
+              <input
+                id="job-cron"
+                value={form.cron_expression}
+                onChange={(e) => setForm((prev) => ({ ...prev, cron_expression: e.target.value }))}
+                placeholder="30 7 mon-fri or 30 7 * * mon-fri"
+                required
+              />
+            </div>
+          ) : (
+            <div className="form-group">
+              <label htmlFor="job-run-at">Run At</label>
+              <input
+                id="job-run-at"
+                type="datetime-local"
+                value={form.run_at}
+                onChange={(e) => setForm((prev) => ({ ...prev, run_at: e.target.value }))}
+                required
+              />
+            </div>
+          )}
           <div className="form-group">
             <label htmlFor="job-timezone">Timezone</label>
             <input
@@ -214,14 +344,27 @@ export default function JobsManager() {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="job-target-channel">Target Channel</label>
-            <input
-              id="job-target-channel"
-              value={form.target_channel}
-              onChange={(e) => setForm((prev) => ({ ...prev, target_channel: e.target.value.replace(/^#/, "") }))}
-              placeholder="fitness-log"
-            />
+            <label htmlFor="job-notification-mode">Notification Mode</label>
+            <select
+              id="job-notification-mode"
+              value={form.notification_mode}
+              onChange={(e) => setForm((prev) => ({ ...prev, notification_mode: e.target.value }))}
+            >
+              <option value="channel">Post to Discord</option>
+              <option value="silent">Silent background</option>
+            </select>
           </div>
+          {form.notification_mode === "channel" && (
+            <div className="form-group">
+              <label htmlFor="job-target-channel">Target Channel</label>
+              <input
+                id="job-target-channel"
+                value={form.target_channel_ref}
+                onChange={(e) => setForm((prev) => ({ ...prev, target_channel_ref: e.target.value }))}
+                placeholder="#fitness-log or <#123456789012345678>"
+              />
+            </div>
+          )}
           <div className="form-group">
             <label htmlFor="job-prompt-template">Prompt Template</label>
             <input
@@ -272,54 +415,60 @@ export default function JobsManager() {
           ) : (
             <div className="grid">
               {jobs.map((job) => {
-                const status = getJobStatusMeta(job);
+                const status = jobStatusMeta(job);
                 return (
-                <article key={job.id} className="glass-card job-card">
-                  <div className="job-card-head">
-                    <div className="job-card-summary">
-                      <h3>
-                        #{job.id} {job.name}
-                      </h3>
-                      <p className="job-card-meta">
-                        Agent: <strong>{job.agent_name || "n/a"}</strong> · Cron: <code>{job.cron_expression}</code> · TZ:{" "}
-                        <strong>{job.timezone}</strong>
-                      </p>
-                      {job.description && <p className="job-card-meta">Description: {job.description}</p>}
-                      <p className="job-card-meta">
-                        Last run: {job.last_run_at || "never"} · Next run: {job.next_run_at || "n/a"} · Status:{" "}
-                        <span className={`badge ${status.badge}`}>{status.label}</span>
-                      </p>
-                      {job.last_error && <p className="error-text job-card-meta">Last error: {job.last_error}</p>}
+                  <article key={job.id} className="glass-card job-card">
+                    <div className="job-card-head">
+                      <div className="job-card-summary">
+                        <h3>
+                          #{job.id} {job.name}
+                        </h3>
+                        <p className="job-card-meta">
+                          Agent: <strong>{job.agent_name || "n/a"}</strong> · Schedule: <strong>{jobScheduleText(job)}</strong> · TZ:{" "}
+                          <strong>{job.timezone}</strong>
+                        </p>
+                        <p className="job-card-meta">Notify: {jobNotifyText(job)}</p>
+                        {job.description && <p className="job-card-meta">Description: {job.description}</p>}
+                        <p className="job-card-meta">
+                          Last run: {job.last_run_at ? formatInTimezone(job.last_run_at, job.timezone) : "never"} · Next run:{" "}
+                          {job.next_run_at ? formatInTimezone(job.next_run_at, job.timezone) : "n/a"} · Status:{" "}
+                          <span className={`badge ${status.badge}`}>{status.label}</span>
+                        </p>
+                        {job.completed_at && (
+                          <p className="job-card-meta">Completed: {formatInTimezone(job.completed_at, job.timezone)}</p>
+                        )}
+                        {job.last_error && <p className="error-text job-card-meta">Last error: {job.last_error}</p>}
+                      </div>
+                      <div className="job-card-actions">
+                        <button className="btn btn-ghost" onClick={() => setEditingJobId(job.id)}>
+                          Edit
+                        </button>
+                        <button className="btn btn-ghost" onClick={() => togglePaused(job)}>
+                          {job.paused ? "Resume" : "Pause"}
+                        </button>
+                        <button className="btn btn-danger" onClick={() => removeJob(job)}>
+                          Delete
+                        </button>
+                        <button className="btn btn-ghost" onClick={() => loadRuns(job.id)}>
+                          Logs
+                        </button>
+                      </div>
                     </div>
-                    <div className="job-card-actions">
-                      <button className="btn btn-ghost" onClick={() => setEditingJobId(job.id)}>
-                        Edit
-                      </button>
-                      <button className="btn btn-ghost" onClick={() => togglePaused(job)}>
-                        {job.paused ? "Resume" : "Pause"}
-                      </button>
-                      <button className="btn btn-danger" onClick={() => removeJob(job)}>
-                        Delete
-                      </button>
-                      <button className="btn btn-ghost" onClick={() => loadRuns(job.id)}>
-                        Logs
-                      </button>
-                    </div>
-                  </div>
-                  {runsByJob[job.id] && (
-                    <div style={{ marginTop: 10 }}>
-                      <strong>Recent Runs</strong>
-                      <ul className="run-log-list">
-                        {runsByJob[job.id].map((run) => (
-                          <li key={run.id}>
-                            {run.created_at} · <span className={`badge ${run.status === "success" ? "badge-approved" : run.status === "running" ? "badge-pending" : "badge-rejected"}`}>{run.status}</span>
-                            {run.error ? ` · ${run.error}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </article>
+                    {runsByJob[job.id] && (
+                      <div style={{ marginTop: 10 }}>
+                        <strong>Recent Runs</strong>
+                        <ul className="run-log-list">
+                          {runsByJob[job.id].map((run) => (
+                            <li key={run.id}>
+                              {formatInTimezone(run.created_at, job.timezone, run.created_at)} ·{" "}
+                              <span className={`badge ${runStatusBadge(run.status)}`}>{run.status}</span>
+                              {run.error ? ` · ${run.error}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </article>
                 );
               })}
             </div>
