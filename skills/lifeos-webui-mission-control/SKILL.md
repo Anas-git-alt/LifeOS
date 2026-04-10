@@ -15,6 +15,8 @@ Before changing code, verify these docs and align names/headings used in impleme
 - `LOCAL_PROD_RUNBOOK.md` (local production run + troubleshooting)
 - `RELEASE_CHECKLIST.md` (pre-release checks and smoke tests)
 
+If any of these files do not exist yet, create a minimal stub for each before proceeding to implementation — never skip verification steps silently.
+
 If headings differ, update references in planning notes/PR text to match actual headings.
 
 ## 2) Choose execution mode

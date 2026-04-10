@@ -187,7 +187,13 @@ class OpenVikingClient:
         health = await self.health()
         if not health.get("healthy", False):
             raise OpenVikingUnavailableError(f"OpenViking reported unhealthy status: {health}")
-        await self.wait_processed(timeout=0)
+        try:
+            # OpenViking can report healthy before its background processing
+            # queue is fully ready. Treat a wait timeout as transient so the
+            # backend can finish booting and retry later during normal usage.
+            await self.wait_processed(timeout=0)
+        except OpenVikingUnavailableError as exc:
+            logger.warning("OpenViking wait_processed timed out during startup; continuing: %s", exc)
         return health
 
     async def add_message(self, agent_name: str, session_id: int | str, role: str, content: str) -> dict[str, Any]:

@@ -138,3 +138,18 @@ async def get_progress() -> dict:
         "completion_pct": completion_pct,
         "recent_readings": recent_list,
     }
+
+
+async def reset_progress() -> dict:
+    """Reset page progress back to the opening bookmark and clear logged readings."""
+    async with async_session() as db:
+        await db.execute(QuranReading.__table__.delete())
+        result = await db.execute(select(QuranBookmark).where(QuranBookmark.id == 1))
+        bookmark = result.scalar_one_or_none()
+        if bookmark:
+            bookmark.current_page = 1
+            bookmark.updated_at = datetime.now(timezone.utc)
+        else:
+            db.add(QuranBookmark(id=1, current_page=1))
+        await db.commit()
+    return await get_progress()

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getQuranProgress, logQuranReading } from "../api";
+import { getQuranProgress, logQuranReading, resetQuranProgress } from "../api";
 
 export default function QuranLog() {
     const [progress, setProgress] = useState(null);
@@ -28,6 +28,7 @@ export default function QuranLog() {
         if (!endPage) return;
         setLoading(true);
         setSuccess("");
+        setError("");
         try {
             const result = await logQuranReading(
                 parseInt(endPage),
@@ -39,6 +40,25 @@ export default function QuranLog() {
             setStartPage("");
             setNote("");
             await load();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleReset() {
+        if (!window.confirm("Reset Quran reading progress and move the bookmark back to page 1?")) return;
+        setLoading(true);
+        setSuccess("");
+        setError("");
+        try {
+            const result = await resetQuranProgress();
+            setProgress(result);
+            setEndPage("");
+            setStartPage("");
+            setNote("");
+            setSuccess("Quran progress reset. The bookmark is back on page 1.");
         } catch (err) {
             setError(err.message);
         } finally {
@@ -135,6 +155,20 @@ export default function QuranLog() {
                 </div>
                 <button className="btn btn-primary" onClick={handleLog} disabled={loading || !endPage}>
                     {loading ? "Logging..." : "Log Reading"}
+                </button>
+            </div>
+
+            <div className="glass-card" style={{ marginBottom: 20 }}>
+                <div className="agent-card-header" style={{ marginBottom: 12 }}>
+                    <div>
+                        <h3 style={{ margin: 0 }}>Start Over</h3>
+                        <p style={{ marginTop: 6, color: "var(--text-secondary)", fontSize: 13 }}>
+                            Clear the reading log and reset the bookmark back to page 1.
+                        </p>
+                    </div>
+                </div>
+                <button className="btn btn-danger" onClick={handleReset} disabled={loading}>
+                    {loading ? "Resetting..." : "Reset Progress"}
                 </button>
             </div>
 

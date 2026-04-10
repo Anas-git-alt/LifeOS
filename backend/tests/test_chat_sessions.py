@@ -8,11 +8,18 @@ import pytest
 
 from app.services.chat_sessions import (
     DEFAULT_SESSION_TITLE,
+    archive_all_sessions,
+    archive_session,
     build_session_reference_context,
     create_session,
     generate_title_from_prompts,
+    get_session_messages,
+    list_session_archives,
+    list_sessions,
     refresh_session_metadata,
+    restore_session_archive,
 )
+from app.services.memory import save_message
 from app.services.openviking_client import (
     OpenVikingApiError,
     build_session_archive_messages_uri,
@@ -30,6 +37,11 @@ def _message_line(message_id: str, role: str, text: str, created_at: str) -> str
             "parts": [{"type": "text", "text": text}],
         }
     )
+
+
+def _force_sqlite(monkeypatch):
+    monkeypatch.setattr("app.services.memory.settings.openviking_enabled", False)
+    monkeypatch.setattr("app.services.memory.settings.memory_backend", "sqlite")
 
 
 def test_generate_title_uses_prompt_context():
@@ -126,3 +138,49 @@ async def test_build_session_reference_context_includes_title_prompts_and_recent
     assert "- Summarize this repo" in context
     assert "Recent messages:" in context
     assert "ASSISTANT: This repo has a backend and Discord bot." in context
+
+
+@pytest.mark.asyncio
+async def test_archive_and_restore_session_round_trip(monkeypatch):
+    _force_sqlite(monkeypatch)
+
+    agent_name = f"sandbox-archive-{uuid4().hex[:8]}"
+    session = await create_session(agent_name=agent_name, title="Keep this context")
+    await save_message(agent_name, "user", "Remember the migration plan.", session_id=session.id)
+    await save_message(agent_name, "assistant", "I will keep the migration plan handy.", session_id=session.id)
+
+    archive = await archive_session(agent_name=agent_name, session_id=session.id, source="pytest")
+
+    assert archive.status == "archived"
+    assert archive.message_count == 2
+    assert await list_sessions(agent_name) == []
+    active_archives = await list_session_archives(agent_name)
+    assert [row.id for row in active_archives] == [archive.id]
+
+    restored = await restore_session_archive(agent_name=agent_name, archive_id=archive.id, source="pytest")
+    restored_messages = await get_session_messages(agent_name=agent_name, session_id=restored.id, limit=0)
+
+    assert restored.id == session.id
+    assert restored.deleted_at is None
+    assert [row.id for row in await list_session_archives(agent_name)] == []
+    assert [message["content"] for message in restored_messages] == [
+        "Remember the migration plan.",
+        "I will keep the migration plan handy.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_archive_all_sessions_hides_every_active_session(monkeypatch):
+    _force_sqlite(monkeypatch)
+
+    agent_name = f"sandbox-archive-all-{uuid4().hex[:8]}"
+    first = await create_session(agent_name=agent_name, title="First")
+    second = await create_session(agent_name=agent_name, title="Second")
+    await save_message(agent_name, "user", "One", session_id=first.id)
+    await save_message(agent_name, "user", "Two", session_id=second.id)
+
+    archives = await archive_all_sessions(agent_name=agent_name, source="pytest")
+
+    assert len(archives) == 2
+    assert await list_sessions(agent_name) == []
+    assert len(await list_session_archives(agent_name)) == 2

@@ -170,3 +170,21 @@ def test_quran_progress_endpoint_returns_payload():
         assert isinstance(payload["pages_read_total"], int)
         assert isinstance(payload["completion_pct"], float)
         assert isinstance(payload["recent_readings"], list)
+
+
+def test_quran_reset_endpoint_clears_progress():
+    with TestClient(app) as client:
+        log_resp = client.post(
+            "/api/prayer/habits/quran/log",
+            headers=_headers(),
+            json={"end_page": 9, "source": "integration_test"},
+        )
+        assert log_resp.status_code == 200
+
+        reset_resp = client.post("/api/prayer/habits/quran/reset", headers=_headers(), json={})
+        assert reset_resp.status_code == 200
+        payload = reset_resp.json()
+        assert payload["current_page"] == 1
+        assert payload["pages_read_total"] == 0
+        assert payload["completion_pct"] == 0.0
+        assert payload["recent_readings"] == []

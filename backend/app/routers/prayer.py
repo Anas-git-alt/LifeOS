@@ -34,7 +34,7 @@ from app.services.prayer_service import (
     mark_prayer_nudge_sent,
     mark_prayer_reminder_sent,
 )
-from app.services.quran_service import get_or_create_bookmark, get_progress, log_reading
+from app.services.quran_service import get_or_create_bookmark, get_progress, log_reading, reset_progress
 from app.services.events import publish_event
 from app.database import async_session
 
@@ -115,6 +115,17 @@ async def quran_progress():
 async def quran_bookmark():
     bm = await get_or_create_bookmark()
     return QuranBookmarkResponse(current_page=bm.current_page)
+
+
+@router.post("/habits/quran/reset", response_model=QuranProgressResponse, dependencies=[Depends(require_api_token)])
+async def reset_quran_progress():
+    result = await reset_progress()
+    await publish_event(
+        "prayer.weekly_summary.updated",
+        {"kind": "quran_reading", "id": "reset"},
+        {"habit": "quran", "event": "reset"},
+    )
+    return QuranProgressResponse.model_validate(result)
 
 
 @router.post("/habits/quran", response_model=HabitLogResponse, dependencies=[Depends(require_api_token)])

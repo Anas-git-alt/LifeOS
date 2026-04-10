@@ -29,6 +29,7 @@ from app.services.workspace import (
     workspace_action_instructions,
 )
 from app.config import settings
+from app.services.seed import SCHEDULED_PROMPTS
 from app.services.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
@@ -655,7 +656,8 @@ async def run_scheduled_agent(
         if not agent or not agent.enabled:
             return {"status": "skipped", "reason": "agent_disabled_or_missing"}
         profile_prompt = prompt_override or (
-            "Run your scheduled status check-in now. Keep it concise, supportive, and actionable. "
+            SCHEDULED_PROMPTS.get(agent_name)
+            or "Run your scheduled status check-in now. Keep it concise, supportive, and actionable. "
             "Do not execute external actions."
         )
     run_result = await handle_message(

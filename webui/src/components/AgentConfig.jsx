@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  archiveAgentSession,
+  archiveAllAgentSessions,
   chatWithAgent,
   clearAgentSession,
   createAgentSession,
@@ -8,9 +10,11 @@ import {
   getProviders,
   getWorkspaceArchives,
   getTtsModels,
+  listArchivedAgentSessions,
   listAgentSessions,
   previewAgentVoice,
   renameAgentSession,
+  restoreAgentSessionArchive,
   restoreWorkspaceArchive,
   syncWorkspaceResources,
   updateAgent,
@@ -58,6 +62,8 @@ export default function AgentConfig({ agentName, onBack }) {
   const [syncingWorkspace, setSyncingWorkspace] = useState(false);
 
   const [sessions, setSessions] = useState([]);
+  const [sessionArchives, setSessionArchives] = useState([]);
+  const [sessionArchiveLoading, setSessionArchiveLoading] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -76,6 +82,7 @@ export default function AgentConfig({ agentName, onBack }) {
     setSettingsMessage("");
     setChatError("");
     setSessions([]);
+    setSessionArchives([]);
     setSelectedSessionId(null);
     setMessages([]);
     setChatInput("");
@@ -85,6 +92,7 @@ export default function AgentConfig({ agentName, onBack }) {
     loadProviders();
     loadTtsModels();
     loadSessions(null);
+    loadSessionArchives();
     loadArchives();
   }, [agentName]);
 
@@ -202,6 +210,18 @@ export default function AgentConfig({ agentName, onBack }) {
     }
   }
 
+  async function loadSessionArchives() {
+    setSessionArchiveLoading(true);
+    try {
+      const rows = await listArchivedAgentSessions(agentName, 100);
+      setSessionArchives(rows || []);
+    } catch (error) {
+      setChatError(`Failed loading deleted sessions: ${error.message}`);
+    } finally {
+      setSessionArchiveLoading(false);
+    }
+  }
+
   async function handleSaveSettings() {
     setSaving(true);
     setSettingsMessage("");
@@ -307,6 +327,55 @@ export default function AgentConfig({ agentName, onBack }) {
     }
   }
 
+  async function handleDeleteSession() {
+    if (!selectedSession) return;
+    if (!window.confirm("Delete this session? It will stay in the archive for 30 days and can be restored.")) return;
+    setChatError("");
+    try {
+      await archiveAgentSession(agentName, selectedSession.id);
+      await loadSessionArchives();
+      const nextSessionId = await loadSessions(null);
+      if (nextSessionId) {
+        await loadSessionMessages(nextSessionId);
+      } else {
+        setMessages([]);
+      }
+    } catch (error) {
+      setChatError(`Failed deleting session: ${error.message}`);
+    }
+  }
+
+  async function handleDeleteAllSessions() {
+    if (!sessions.length) return;
+    if (!window.confirm("Delete all sessions for this agent? They will stay in the archive for 30 days and can be restored.")) return;
+    setChatError("");
+    try {
+      await archiveAllAgentSessions(agentName);
+      await loadSessionArchives();
+      const nextSessionId = await loadSessions(null);
+      if (nextSessionId) {
+        await loadSessionMessages(nextSessionId);
+      } else {
+        setMessages([]);
+      }
+    } catch (error) {
+      setChatError(`Failed deleting sessions: ${error.message}`);
+    }
+  }
+
+  async function handleRestoreSession(archive) {
+    if (!archive?.id) return;
+    setChatError("");
+    try {
+      const restored = await restoreAgentSessionArchive(agentName, archive.id);
+      await loadSessionArchives();
+      await loadSessions(restored.id);
+      await loadSessionMessages(restored.id);
+    } catch (error) {
+      setChatError(`Failed restoring session: ${error.message}`);
+    }
+  }
+
   async function handleSendMessage(event) {
     event.preventDefault();
     const trimmed = chatInput.trim();
@@ -351,7 +420,7 @@ export default function AgentConfig({ agentName, onBack }) {
           Back to Agents
         </button>
         <h1>{agentName}</h1>
-        <p>Use chat sessions to preserve context per thread, or clear context without losing the session.</p>
+        <p>Use chat sessions to preserve context per thread, clear context when you want a clean slate, or restore deleted sessions from the 30-day archive.</p>
       </header>
 
       <div className="agent-config-tabs">
@@ -399,6 +468,54 @@ export default function AgentConfig({ agentName, onBack }) {
               <button className="btn btn-danger" onClick={handleClearSession} disabled={!selectedSession}>
                 Clear context
               </button>
+              <button className="btn btn-danger" onClick={handleDeleteSession} disabled={!selectedSession}>
+                Delete session
+              </button>
+              <button className="btn btn-danger" onClick={handleDeleteAllSessions} disabled={!sessions.length}>
+                Delete all
+              </button>
+            </div>
+            <div style={{ marginTop: 18, display: "grid", gap: 10 }}>
+              <div className="agent-card-header" style={{ marginBottom: 0 }}>
+                <h3 style={{ margin: 0 }}>Deleted Sessions</h3>
+                <span className="meta-tag">{sessionArchives.length} kept for 30 days</span>
+              </div>
+              {sessionArchiveLoading ? (
+                <p style={{ color: "var(--text-secondary)", margin: 0 }}>Loading deleted sessions...</p>
+              ) : sessionArchives.length === 0 ? (
+                <p style={{ color: "var(--text-secondary)", margin: 0 }}>
+                  Deleted sessions will appear here for 30 days so you can restore them if needed.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {sessionArchives.map((archive) => (
+                    <div
+                      key={archive.id}
+                      style={{
+                        border: "1px solid var(--card-border)",
+                        borderRadius: "var(--radius-md)",
+                        padding: 10,
+                        display: "grid",
+                        gap: 6,
+                        background: "rgba(255,255,255,0.02)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                        <strong>{archive.title || "New chat"}</strong>
+                        <span className="meta-tag">{archive.message_count} messages</span>
+                      </div>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                        Deleted {formatArchiveTime(archive.created_at)}. Restore until {formatArchiveTime(archive.expires_at)}.
+                      </span>
+                      <div className="action-row" style={{ marginTop: 0 }}>
+                        <button className="btn btn-ghost" type="button" onClick={() => handleRestoreSession(archive)}>
+                          Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 

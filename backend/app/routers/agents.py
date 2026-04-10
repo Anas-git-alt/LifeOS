@@ -15,6 +15,8 @@ from app.models import (
     ChatMessageResponse,
     ChatRequest,
     ChatResponse,
+    ChatSessionArchiveActionRequest,
+    ChatSessionArchiveResponse,
     ChatSessionCreate,
     ChatSessionResponse,
     ChatSessionUpdate,
@@ -25,11 +27,15 @@ from app.security import require_api_token
 from app.services.events import publish_event
 from app.services.agent_payloads import apply_agent_update, build_agent_row
 from app.services.chat_sessions import (
+    archive_all_sessions,
+    archive_session,
     clear_session_context,
     create_session,
     get_session_messages,
     list_sessions,
+    list_session_archives,
     rename_session,
+    restore_session_archive,
 )
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.orchestrator import handle_message, run_scheduled_agent
@@ -192,6 +198,71 @@ async def clear_agent_session(agent_name: str, session_id: int):
     await _ensure_agent_exists(agent_name)
     try:
         session = await clear_session_context(agent_name=agent_name, session_id=session_id)
+    except OpenVikingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ChatSessionResponse.model_validate(session)
+
+
+@router.get(
+    "/{agent_name}/session-archives",
+    response_model=list[ChatSessionArchiveResponse],
+    dependencies=[Depends(require_api_token)],
+)
+async def list_agent_session_archives(agent_name: str, limit: int = 100):
+    await _ensure_agent_exists(agent_name)
+    archives = await list_session_archives(agent_name=agent_name, limit=limit)
+    return [ChatSessionArchiveResponse.model_validate(row) for row in archives]
+
+
+@router.post(
+    "/{agent_name}/sessions/{session_id}/archive",
+    response_model=ChatSessionArchiveResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def archive_agent_session(agent_name: str, session_id: int, data: ChatSessionArchiveActionRequest):
+    await _ensure_agent_exists(agent_name)
+    try:
+        archive = await archive_session(
+            agent_name=agent_name,
+            session_id=session_id,
+            source=data.source or "api",
+            reason="manual_delete",
+        )
+    except OpenVikingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ChatSessionArchiveResponse.model_validate(archive)
+
+
+@router.post(
+    "/{agent_name}/sessions/archive-all",
+    dependencies=[Depends(require_api_token)],
+)
+async def archive_agent_sessions(agent_name: str, data: ChatSessionArchiveActionRequest):
+    await _ensure_agent_exists(agent_name)
+    try:
+        archives = await archive_all_sessions(agent_name=agent_name, source=data.source or "api")
+    except OpenVikingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"archived_count": len(archives)}
+
+
+@router.post(
+    "/{agent_name}/session-archives/{archive_id}/restore",
+    response_model=ChatSessionResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def restore_agent_session_archive(agent_name: str, archive_id: int, data: ChatSessionArchiveActionRequest):
+    await _ensure_agent_exists(agent_name)
+    try:
+        session = await restore_session_archive(
+            agent_name=agent_name,
+            archive_id=archive_id,
+            source=data.source or "api",
+        )
     except OpenVikingUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
