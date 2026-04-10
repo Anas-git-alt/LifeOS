@@ -1,4 +1,4 @@
 interface:
   display_name: "LifeOS Maintenance"
   short_description: "Clean test data and document cron jobs"
-  default_prompt: "Use $lifeos-maintenance to clean LifeOS test artifacts and improve cron-job descriptions."
+  default_prompt: "Use $lifeos-maintenance to inspect, clean test artifacts, and improve cron-job descriptions in storage/lifeos.db. Always dry-run first before applying any changes."

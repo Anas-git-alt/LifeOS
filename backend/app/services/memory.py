@@ -15,6 +15,7 @@ from app.database import async_session
 from app.models import AuditLog, MemoryEntry
 from app.services.events import publish_event
 from app.services.openviking_client import (
+    OpenVikingApiError,
     OpenVikingUnavailableError,
     build_session_root_uri,
     openviking_client,
@@ -135,7 +136,9 @@ async def _openviking_messages(
                 "timestamp": timestamp,
             }
         )
-    return normalized[-max(1, limit):]
+    if limit and limit > 0:
+        return normalized[-max(1, limit):]
+    return normalized
 
 
 async def _sqlite_get_context(
@@ -203,12 +206,14 @@ async def _sqlite_list_session_messages(
             conditions.append(MemoryEntry.session_id.is_(None))
         else:
             conditions.append(MemoryEntry.session_id == session_id)
-        result = await db.execute(
+        query = (
             select(MemoryEntry)
             .where(*conditions)
             .order_by(MemoryEntry.timestamp.asc(), MemoryEntry.id.asc())
-            .limit(max(1, min(limit, 500)))
         )
+        if limit and limit > 0:
+            query = query.limit(max(1, min(limit, 2000)))
+        result = await db.execute(query)
         rows = list(result.scalars().all())
     return [
         {
@@ -323,9 +328,79 @@ async def clear_memory(agent_name: str, session_id: int | None = None) -> None:
                 recursive=True,
             )
             return
+        except OpenVikingApiError as exc:
+            if exc.status_code == 404 or (exc.code or "").upper() == "NOT_FOUND":
+                return
+            raise _wrap_openviking_error("clear_memory", agent_name, session_id, exc) from exc
         except Exception as exc:
             raise _wrap_openviking_error("clear_memory", agent_name, session_id, exc) from exc
     await _sqlite_clear_memory(agent_name, session_id=session_id)
+
+
+async def restore_session_messages(
+    agent_name: str,
+    session_id: int | None,
+    messages: list[dict[str, Any]],
+) -> None:
+    """Restore a previously archived session transcript into the active backend."""
+    summary_content = ""
+    transcript_rows: list[dict[str, Any]] = []
+
+    for message in messages or []:
+        role = str(message.get("role") or "assistant")
+        content = str(message.get("content") or "")
+        if not content:
+            continue
+        if role == "summary":
+            summary_content = content
+            continue
+        transcript_rows.append(
+            {
+                "role": role,
+                "content": content,
+                "timestamp": _parse_openviking_timestamp(str(message.get("timestamp") or "")),
+            }
+        )
+
+    if _use_openviking():
+        try:
+            session_scope = _session_scope(session_id)
+            for row in transcript_rows:
+                await openviking_client.add_message(agent_name, session_scope, row["role"], row["content"])
+            if transcript_rows:
+                await _commit_openviking_session(agent_name, session_scope)
+            if summary_content:
+                await openviking_client.write_session_summary(
+                    agent_name,
+                    session_scope,
+                    _normalize_summary_content(summary_content),
+                )
+            return
+        except Exception as exc:
+            raise _wrap_openviking_error("restore_session_messages", agent_name, session_id, exc) from exc
+
+    async with async_session() as db:
+        for row in transcript_rows:
+            db.add(
+                MemoryEntry(
+                    agent_name=agent_name,
+                    session_id=session_id,
+                    role=row["role"],
+                    content=row["content"],
+                    timestamp=row["timestamp"],
+                )
+            )
+        if summary_content:
+            db.add(
+                MemoryEntry(
+                    agent_name=agent_name,
+                    session_id=session_id,
+                    role="summary",
+                    content=_normalize_summary_content(summary_content),
+                    timestamp=datetime.now(timezone.utc),
+                )
+            )
+        await db.commit()
 
 
 async def prune_old_data(memory_days: int, audit_days: int) -> dict[str, int]:

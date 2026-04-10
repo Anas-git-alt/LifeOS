@@ -21,6 +21,7 @@ from app.services.jobs import (
     seed_jobs_from_agent_cadence,
     upsert_agent_cadence_job,
 )
+from app.services.chat_sessions import prune_expired_session_archives
 from app.services.memory import prune_old_data
 from app.services.orchestrator import run_scheduled_agent
 from app.services.prayer_service import auto_mark_unknown_expired, refresh_today_and_tomorrow_windows
@@ -272,11 +273,12 @@ def ensure_prayer_jobs():
 
 
 async def run_retention_prune_job():
-    result = await prune_old_data(
+    memory_result = await prune_old_data(
         memory_days=settings.memory_retention_days,
         audit_days=settings.audit_retention_days,
     )
-    logger.info("Retention prune complete: %s", result)
+    session_result = await prune_expired_session_archives()
+    logger.info("Retention prune complete: %s", {**memory_result, **session_result})
 
 
 async def bootstrap_agent_jobs():

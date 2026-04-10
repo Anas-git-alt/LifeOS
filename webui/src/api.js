@@ -148,6 +148,23 @@ export const clearAgentSession = (agentName, sessionId) =>
     method: "POST",
     body: JSON.stringify({}),
   });
+export const archiveAgentSession = (agentName, sessionId, source = "webui") =>
+  request(`/agents/${agentName}/sessions/${sessionId}/archive`, {
+    method: "POST",
+    body: JSON.stringify({ source }),
+  });
+export const archiveAllAgentSessions = (agentName, source = "webui") =>
+  request(`/agents/${agentName}/sessions/archive-all`, {
+    method: "POST",
+    body: JSON.stringify({ source }),
+  });
+export const listArchivedAgentSessions = (agentName, limit = 100) =>
+  request(`/agents/${agentName}/session-archives?limit=${limit}`);
+export const restoreAgentSessionArchive = (agentName, archiveId, source = "webui") =>
+  request(`/agents/${agentName}/session-archives/${archiveId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ source }),
+  });
 export const getAgentSessionMessages = (agentName, sessionId, limit = 200) =>
   request(`/agents/${agentName}/sessions/${sessionId}/messages?limit=${limit}`);
 
@@ -288,6 +305,7 @@ export const logQuranReading = (endPage, startPage = null, note = null) =>
   });
 export const getQuranProgress = () => request("/prayer/habits/quran/progress");
 export const getQuranBookmark = () => request("/prayer/habits/quran/bookmark");
+export const resetQuranProgress = () => request("/prayer/habits/quran/reset", { method: "POST", body: JSON.stringify({}) });
 
 export async function getAgentSessionsSummary(limitAgents = 5) {
   const agents = await getAgents();

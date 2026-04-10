@@ -78,6 +78,10 @@ def run_migrations() -> None:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+        if "chat_sessions" in existing_tables:
+            chat_session_cols = {row[1] for row in cur.execute("PRAGMA table_info(chat_sessions)").fetchall()}
+            if "deleted_at" not in chat_session_cols:
+                cur.execute("ALTER TABLE chat_sessions ADD COLUMN deleted_at DATETIME")
         if "agents" in existing_tables:
             agent_cols = {row[1] for row in cur.execute("PRAGMA table_info(agents)").fetchall()}
             if "speech_enabled" not in agent_cols:
@@ -141,6 +145,7 @@ async def init_db():
         Agent,
         AuditLog,
         ChatSession,
+        ChatSessionArchive,
         DeenHabit,
         LifeCheckin,
         LifeItem,

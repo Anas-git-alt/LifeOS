@@ -199,6 +199,26 @@ class ChatSession(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class ChatSessionArchive(Base):
+    __tablename__ = "chat_session_archives"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False, default="New chat")
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    reason: Mapped[str] = mapped_column(String(40), nullable=False, default="manual_delete")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    snapshot_json: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    restored_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class PendingAction(Base):
@@ -637,6 +657,27 @@ class ChatSessionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class ChatSessionArchiveActionRequest(BaseModel):
+    source: str = "api"
+
+
+class ChatSessionArchiveResponse(BaseModel):
+    id: int
+    session_id: int
+    agent_name: str
+    title: str
+    source: str
+    reason: str
+    status: str
+    message_count: int
+    created_at: datetime
+    expires_at: datetime
+    restored_at: Optional[datetime]
 
     class Config:
         from_attributes = True
