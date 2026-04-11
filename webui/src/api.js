@@ -282,6 +282,26 @@ export const checkinLifeItem = (id, result, note = "") =>
   request(`/life/items/${id}/checkin`, { method: "POST", body: JSON.stringify({ result, note }) });
 export const getTodayAgenda = () => request("/life/today");
 export const getGoalProgress = (itemId) => request(`/life/items/${itemId}/progress`);
+export const getIntakeInbox = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/life/inbox${query ? `?${query}` : ""}`);
+};
+export const getIntakeEntry = (entryId) => request(`/life/inbox/${entryId}`);
+export const updateIntakeEntry = (entryId, data) =>
+  request(`/life/inbox/${entryId}`, { method: "PUT", body: JSON.stringify(data) });
+export const captureIntake = (message, sessionId = null, newSession = false, source = "webui") =>
+  request("/life/inbox/capture", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      new_session: newSession,
+      source,
+    }),
+    timeoutMs: 30000,
+  });
+export const promoteIntakeEntry = (entryId, data = {}) =>
+  request(`/life/inbox/${entryId}/promote`, { method: "POST", body: JSON.stringify(data) });
 
 // Prayer dashboard
 export const getPrayerDashboard = (endDate = null) => {

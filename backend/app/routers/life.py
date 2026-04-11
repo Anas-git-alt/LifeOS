@@ -4,6 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models import (
     GoalProgressResponse,
+    IntakeCaptureRequest,
+    IntakeCaptureResponse,
+    IntakeEntryResponse,
+    IntakeEntryUpdate,
+    IntakePromoteRequest,
+    IntakePromoteResponse,
     LifeCheckinCreate,
     LifeCheckinResponse,
     LifeItemCreate,
@@ -12,7 +18,16 @@ from app.models import (
     TodayAgendaResponse,
 )
 from app.security import require_api_token
+from app.services.chat_sessions import create_session, generate_title_from_prompts
+from app.services.intake import (
+    get_intake_entry,
+    get_latest_intake_entry_for_session,
+    list_intake_entries,
+    promote_intake_entry,
+    update_intake_entry,
+)
 from app.services.life import add_checkin, create_life_item, get_goal_progress, get_today_agenda, list_life_items, update_life_item
+from app.services.orchestrator import handle_message
 
 router = APIRouter()
 
@@ -62,6 +77,8 @@ async def get_today():
         due_today=[LifeItemResponse.model_validate(item) for item in agenda["due_today"]],
         overdue=[LifeItemResponse.model_validate(item) for item in agenda["overdue"]],
         domain_summary=agenda["domain_summary"],
+        intake_summary=agenda.get("intake_summary") or {},
+        ready_intake=[IntakeEntryResponse.model_validate(item) for item in agenda.get("ready_intake") or []],
     )
 
 
@@ -75,3 +92,84 @@ async def get_item_progress(item_id: int):
     if not result:
         raise HTTPException(status_code=404, detail="Life item not found")
     return GoalProgressResponse.model_validate(result)
+
+
+@router.get("/inbox", response_model=list[IntakeEntryResponse], dependencies=[Depends(require_api_token)])
+async def get_inbox(
+    status: str | None = Query(default=None),
+    session_id: int | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    rows = await list_intake_entries(status=status, session_id=session_id, limit=limit)
+    return [IntakeEntryResponse.model_validate(row) for row in rows]
+
+
+@router.post("/inbox/capture", response_model=IntakeCaptureResponse, dependencies=[Depends(require_api_token)])
+async def capture_inbox(data: IntakeCaptureRequest):
+    message = (data.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    session_id = data.session_id
+    if data.new_session:
+        title = generate_title_from_prompts([message])
+        session = await create_session(agent_name="intake-inbox", title=title)
+        session_id = session.id
+
+    result = await handle_message(
+        agent_name="intake-inbox",
+        user_message=message,
+        approval_policy="never",
+        source=data.source or "api",
+        session_id=session_id,
+        session_enabled=True,
+    )
+    if result.get("error_code") == "session_not_found":
+        raise HTTPException(status_code=404, detail=result["response"])
+    if result.get("error_code") == "memory_unavailable":
+        raise HTTPException(status_code=503, detail=result["response"])
+
+    entry = None
+    if result.get("session_id"):
+        entry = await get_latest_intake_entry_for_session(
+            result["session_id"],
+            source_agent="intake-inbox",
+        )
+
+    return IntakeCaptureResponse(
+        response=result["response"],
+        session_id=result.get("session_id"),
+        session_title=result.get("session_title"),
+        entry=IntakeEntryResponse.model_validate(entry) if entry else None,
+    )
+
+
+@router.get("/inbox/{entry_id}", response_model=IntakeEntryResponse, dependencies=[Depends(require_api_token)])
+async def get_inbox_entry(entry_id: int):
+    entry = await get_intake_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Inbox entry not found")
+    return IntakeEntryResponse.model_validate(entry)
+
+
+@router.put("/inbox/{entry_id}", response_model=IntakeEntryResponse, dependencies=[Depends(require_api_token)])
+async def put_inbox_entry(entry_id: int, data: IntakeEntryUpdate):
+    entry = await update_intake_entry(entry_id, data)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Inbox entry not found")
+    return IntakeEntryResponse.model_validate(entry)
+
+
+@router.post(
+    "/inbox/{entry_id}/promote",
+    response_model=IntakePromoteResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def promote_inbox_entry(entry_id: int, data: IntakePromoteRequest):
+    entry, item = await promote_intake_entry(entry_id, overrides=data.model_dump(exclude_unset=True))
+    if not entry or not item:
+        raise HTTPException(status_code=404, detail="Inbox entry not found")
+    return IntakePromoteResponse(
+        entry=IntakeEntryResponse.model_validate(entry),
+        life_item=LifeItemResponse.model_validate(item),
+    )

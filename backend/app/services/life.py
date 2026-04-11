@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.database import async_session
-from app.models import LifeCheckin, LifeCheckinCreate, LifeItem, LifeItemCreate, LifeItemUpdate, UserProfile
+from app.models import IntakeEntry, LifeCheckin, LifeCheckinCreate, LifeItem, LifeItemCreate, LifeItemUpdate, UserProfile
 from app.services.system_settings import get_data_start_date
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -126,6 +126,20 @@ async def get_today_agenda() -> dict:
         )
         domain_summary = {domain: count for domain, count in domain_counts_result.all()}
 
+        intake_counts_result = await db.execute(
+            select(IntakeEntry.status, func.count(IntakeEntry.id))
+            .group_by(IntakeEntry.status)
+        )
+        intake_summary = {status: count for status, count in intake_counts_result.all()}
+
+        ready_intake_result = await db.execute(
+            select(IntakeEntry)
+            .where(IntakeEntry.status.in_(["ready", "clarifying"]))
+            .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+            .limit(3)
+        )
+        ready_intake = list(ready_intake_result.scalars().all())
+
         return {
             "timezone": timezone_name,
             "now": now_local,
@@ -133,6 +147,8 @@ async def get_today_agenda() -> dict:
             "due_today": due_today,
             "overdue": overdue,
             "domain_summary": domain_summary,
+            "intake_summary": intake_summary,
+            "ready_intake": ready_intake,
         }
 
 

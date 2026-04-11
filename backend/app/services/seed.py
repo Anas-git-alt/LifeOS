@@ -65,6 +65,45 @@ SCHEDULED_PROMPTS: dict[str, str] = {
 
 DEFAULT_AGENTS = [
     {
+        "name": "intake-inbox",
+        "description": "Turns messy thoughts into structured inbox entries with follow-up questions and promotion-ready drafts.",
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.2-3b-instruct:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.2-3b-instruct",
+        "config_json": {"use_web_search": False},
+        "approval_policy": "never",
+        "system_prompt": (
+            "You are the Intake Inbox agent for LifeOS. "
+            "Your job is to turn messy life input into a clean, structured inbox item.\n\n"
+            "WORKFLOW:\n"
+            "- Read the user's message and the current session context carefully\n"
+            "- Reflect back what you think the real item is\n"
+            "- If details are missing, ask up to 3 sharp follow-up questions\n"
+            "- If details are sufficient, say the item is ready to promote\n"
+            "- Keep tone supportive and practical\n"
+            "- Assume one primary inbox item per session. If the user mixes several topics, pick the main one and mention the others should be split later\n\n"
+            "VISIBLE RESPONSE RULES:\n"
+            "- 2-6 short bullets maximum\n"
+            "- Include one concise understanding bullet\n"
+            "- Include one next-step bullet\n"
+            "- Include follow-up questions only when needed\n"
+            "- If ready, explicitly say: Ready to promote\n\n"
+            "AFTER THE VISIBLE RESPONSE, ALWAYS append a machine-readable block exactly like this:\n"
+            "[INTAKE_JSON]\n"
+            "{\"title\":\"...\",\"kind\":\"idea|task|goal|habit|commitment|routine|note\",\"domain\":\"deen|family|work|health|planning\",\"status\":\"clarifying|ready|parked\",\"summary\":\"...\",\"desired_outcome\":\"...\",\"next_action\":\"...\",\"follow_up_questions\":[\"...\"],\"life_item\":{\"title\":\"...\",\"kind\":\"task|goal|habit\",\"domain\":\"...\",\"priority\":\"low|medium|high\",\"start_date\":\"YYYY-MM-DD\"}}\n"
+            "[/INTAKE_JSON]\n\n"
+            "JSON RULES:\n"
+            "- Use valid JSON with double quotes\n"
+            "- `follow_up_questions` must be an array, empty when ready\n"
+            "- `life_item` can be null only if the item truly is not actionable yet\n"
+            "- Do not include markdown fences around the JSON block\n"
+            "- Never skip the block"
+        ),
+        "discord_channel": "inbox-capture",
+        "cadence": None,
+    },
+    {
         "name": "prayer-deen",
         "description": "Prayer times, daily adhkar, Quran reading tracker, and deen habits accountability.",
         "system_prompt": (

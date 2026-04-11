@@ -1,5 +1,6 @@
 """Agent orchestrator - routing, approval policy, and scheduled nudges."""
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from app.services.deen_metrics import build_prayer_agent_context, build_weekly_d
 from app.services.discord_notify import send_channel_message
 from app.services.action_executor import execute_pending_action
 from app.services.events import publish_event
+from app.services.intake import upsert_intake_entry_from_agent
 from app.services.memory import get_context, save_message, summarise_session
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
@@ -177,6 +179,11 @@ _GOAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_INTAKE_JSON_PATTERN = re.compile(
+    r"\[INTAKE_JSON\]\s*(\{.*?\})\s*\[/INTAKE_JSON\]",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 async def _extract_and_create_goals(response_text: str, agent_name: str) -> list[dict]:
     """Parse [GOAL] blocks from agent response and create LifeItems."""
@@ -203,6 +210,45 @@ async def _extract_and_create_goals(response_text: str, agent_name: str) -> list
         except Exception:
             logger.exception("Failed to create goal from agent response (title=%r)", title)
     return created
+
+
+def _extract_intake_payload(response_text: str) -> tuple[str, dict | None]:
+    match = _INTAKE_JSON_PATTERN.search(response_text or "")
+    if not match:
+        return (response_text or "").strip(), None
+
+    payload = None
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        logger.warning("Invalid INTAKE_JSON block; leaving response unstructured")
+
+    cleaned = _INTAKE_JSON_PATTERN.sub("", response_text or "").strip()
+    return cleaned, payload
+
+
+async def _extract_and_upsert_intake_entry(
+    *,
+    agent_name: str,
+    response_text: str,
+    user_message: str,
+    session_id: int | None,
+) -> dict | None:
+    if agent_name != "intake-inbox":
+        return None
+
+    cleaned_text, payload = _extract_intake_payload(response_text)
+    if not payload:
+        return None
+
+    entry = await upsert_intake_entry_from_agent(
+        payload=payload,
+        user_message=user_message,
+        response_text=cleaned_text,
+        agent_name=agent_name,
+        session_id=session_id,
+    )
+    return {"cleaned_text": cleaned_text, "entry_id": entry.id}
 
 
 async def handle_message(
@@ -374,6 +420,14 @@ async def handle_message(
                 }
 
         cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
+        intake_result = await _extract_and_upsert_intake_entry(
+            agent_name=agent_name,
+            response_text=cleaned_response,
+            user_message=user_message,
+            session_id=active_session.id if active_session else None,
+        )
+        if intake_result:
+            cleaned_response = intake_result["cleaned_text"]
         inferred_workspace_action = False
         if (
             agent.workspace_enabled

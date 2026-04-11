@@ -8,6 +8,7 @@ from bot.utils import api_get, api_post, api_put
 VALID_DOMAINS = {"deen", "family", "work", "health", "planning"}
 VALID_ITEM_STATUSES = {"open", "done", "missed"}
 NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
+INTAKE_AGENT_NAME = "intake-inbox"
 
 
 class AgentsCog(commands.Cog, name="Agents"):
@@ -39,6 +40,30 @@ class AgentsCog(commands.Cog, name="Agents"):
         if session_id:
             payload["session_id"] = session_id
         return await api_post("/agents/chat", payload)
+
+    async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
+        entry = result.get("entry") or {}
+        description = result.get("response", "Captured.")
+        embed = discord.Embed(title=heading, description=description[:4000], color=0x7C3AED)
+        if entry.get("id"):
+            embed.add_field(
+                name="Inbox Item",
+                value=(
+                    f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
+                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}"
+                ),
+                inline=False,
+            )
+        followups = entry.get("follow_up_questions") or []
+        if followups:
+            embed.add_field(
+                name="Follow-up",
+                value="\n".join([f"• {question}" for question in followups[:3]]),
+                inline=False,
+            )
+        if result.get("session_id"):
+            embed.set_footer(text=f"Session #{result['session_id']} · continue with !capturefollow")
+        await ctx.send(embed=embed)
 
     @commands.command(name="ask")
     async def ask_agent(self, ctx, agent_name: str, *, message: str):
@@ -196,6 +221,79 @@ class AgentsCog(commands.Cog, name="Agents"):
             agent_name="weekly-review",
             message="Generate a weekly review covering deen, family, work, health, and planning.",
         )
+
+    @commands.command(name="capture")
+    async def capture(self, ctx, *, message: str):
+        async with ctx.typing():
+            try:
+                result = await api_post(
+                    "/life/inbox/capture",
+                    {
+                        "message": message,
+                        "new_session": True,
+                        "source": "discord_capture",
+                    },
+                )
+                if result.get("session_id"):
+                    self._set_active_session_id(ctx, INTAKE_AGENT_NAME, int(result["session_id"]))
+                await self._send_capture_embed(ctx, result, heading="Inbox Capture")
+            except Exception as exc:
+                await ctx.send(f"Failed to capture inbox item: {self._trim_error(exc)}")
+
+    @commands.command(name="capturefollow")
+    async def capture_follow(self, ctx, *, message: str):
+        session_id = self._get_active_session_id(ctx, INTAKE_AGENT_NAME)
+        if not session_id:
+            await ctx.send("No active capture session. Start with `!capture ...`.")
+            return
+        async with ctx.typing():
+            try:
+                result = await api_post(
+                    "/life/inbox/capture",
+                    {
+                        "message": message,
+                        "session_id": session_id,
+                        "new_session": False,
+                        "source": "discord_capture_followup",
+                    },
+                )
+                await self._send_capture_embed(ctx, result, heading="Inbox Follow-up")
+            except Exception as exc:
+                await ctx.send(f"Failed to continue capture: {self._trim_error(exc)}")
+
+    @commands.command(name="inbox")
+    async def inbox(self, ctx, status: str = "", limit: int = 10):
+        try:
+            safe_limit = max(1, min(limit, 20))
+            query = [f"limit={safe_limit}"]
+            if status:
+                query.append(f"status={status}")
+            rows = await api_get(f"/life/inbox?{'&'.join(query)}")
+            if not rows:
+                await ctx.send("Inbox empty.")
+                return
+            lines = []
+            for row in rows:
+                lines.append(
+                    f"#{row['id']} [{row.get('status')}] "
+                    f"{row.get('title') or row.get('raw_text', '')[:40]} "
+                    f"· {row.get('domain')}/{row.get('kind')}"
+                )
+            await ctx.send("Inbox:\n" + "\n".join(lines[:safe_limit]))
+        except Exception as exc:
+            await ctx.send(f"Failed to load inbox: {self._trim_error(exc)}")
+
+    @commands.command(name="promotecapture")
+    async def promote_capture(self, ctx, entry_id: int):
+        try:
+            result = await api_post(f"/life/inbox/{entry_id}/promote", {})
+            life_item = result.get("life_item") or {}
+            await ctx.send(
+                f"Promoted inbox #{entry_id} -> life item #{life_item.get('id')}: "
+                f"{life_item.get('title', 'Untitled')}"
+            )
+        except Exception as exc:
+            await ctx.send(f"Failed to promote capture: {self._trim_error(exc)}")
 
     @commands.command(name="today")
     async def today(self, ctx):
