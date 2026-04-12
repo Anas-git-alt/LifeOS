@@ -145,6 +145,12 @@ def _choose_scored_status(status: str, is_retroactive: bool) -> str:
     return status
 
 
+def _resolve_retro_reason(source: str) -> str:
+    if source == "webui_dashboard":
+        return "webui_state_change"
+    return "manual_retroactive"
+
+
 async def _get_window_or_raise(prayer_date: date, prayer_name: str, prayer_window_id: int | None = None) -> PrayerWindow:
     if prayer_window_id:
         async with async_session() as db:
@@ -308,7 +314,7 @@ async def log_prayer_checkin_retroactive(data: PrayerRetroactiveCheckinRequest) 
         discord_user_id=data.discord_user_id,
         note=data.note,
         is_retroactive=True,
-        retro_reason="manual_retroactive",
+        retro_reason=_resolve_retro_reason(data.source),
     )
     result = {
         "prayer_date": _format_date(prayer_date),
@@ -373,8 +379,8 @@ async def auto_mark_unknown_expired() -> int:
             db.add(
                 PrayerCheckin(
                     prayer_window_id=window.id,
-                    status_raw="unknown",
-                    status_scored="unknown",
+                    status_raw="missed",
+                    status_scored="missed",
                     reported_at_utc=window.ends_at_utc,
                     source="system_autoclose",
                     is_retroactive=False,
@@ -382,6 +388,19 @@ async def auto_mark_unknown_expired() -> int:
             )
         if missing:
             await db.commit()
+            for window in missing:
+                await publish_event(
+                    "prayer.weekly_summary.updated",
+                    {"kind": "prayer_checkin", "id": f"{_format_date(window.local_date)}:{window.prayer_name}"},
+                    {
+                        "prayer_date": _format_date(window.local_date),
+                        "prayer_name": window.prayer_name,
+                        "status_raw": "missed",
+                        "status_scored": "missed",
+                        "is_retroactive": False,
+                        "reported_at_utc": window.ends_at_utc.replace(tzinfo=timezone.utc),
+                    },
+                )
         return len(missing)
 
 

@@ -128,6 +128,13 @@ def run_migrations() -> None:
                 cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
                 applied.add(version)
                 continue
+            # Fresh databases also rely on ORM create_all() for the latest
+            # agents table shape. Skip ALTER-based workspace migrations when
+            # the base agents table does not exist yet.
+            if version == "202603220001_openviking_workspace" and "agents" not in existing_tables:
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                applied.add(version)
+                continue
             sql = file_path.read_text(encoding="utf-8")
             cur.executescript(sql)
             cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
@@ -147,6 +154,7 @@ async def init_db():
         ChatSession,
         ChatSessionArchive,
         DeenHabit,
+        IntakeEntry,
         LifeCheckin,
         LifeItem,
         JobRunLog,

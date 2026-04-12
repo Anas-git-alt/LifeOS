@@ -400,6 +400,42 @@ class LifeCheckin(Base):
     )
 
 
+class IntakeEntry(Base):
+    __tablename__ = "intake_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("chat_sessions.id"),
+        nullable=True,
+    )
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domain: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, default="idea")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="raw")
+    desired_outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    follow_up_questions_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    structured_data_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    promotion_payload_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    linked_life_item_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("life_items.id"),
+        nullable=True,
+    )
+    last_agent_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class PrayerWindow(Base):
     __tablename__ = "prayer_windows"
 
@@ -920,6 +956,110 @@ class LifeItemResponse(BaseModel):
         from_attributes = True
 
 
+class IntakeEntryUpdate(BaseModel):
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    domain: Optional[str] = None
+    kind: Optional[str] = None
+    status: Optional[str] = None
+    desired_outcome: Optional[str] = None
+    next_action: Optional[str] = None
+    follow_up_questions: Optional[list[str]] = None
+    promotion_payload: Optional[dict[str, Any]] = None
+
+
+class IntakeEntryResponse(BaseModel):
+    id: int
+    source: str
+    source_agent: Optional[str]
+    source_session_id: Optional[int]
+    raw_text: str
+    title: Optional[str]
+    summary: Optional[str]
+    domain: str
+    kind: str
+    status: str
+    desired_outcome: Optional[str]
+    next_action: Optional[str]
+    follow_up_questions: list[str] = Field(default_factory=list)
+    structured_data: Optional[dict[str, Any]] = None
+    promotion_payload: Optional[dict[str, Any]] = None
+    linked_life_item_id: Optional[int]
+    last_agent_response: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_intake_fields(cls, value: Any):
+        if isinstance(value, dict):
+            data = dict(value)
+            if "follow_up_questions" not in data:
+                data["follow_up_questions"] = data.get("follow_up_questions_json") or []
+            if "structured_data" not in data:
+                data["structured_data"] = data.get("structured_data_json")
+            if "promotion_payload" not in data:
+                data["promotion_payload"] = data.get("promotion_payload_json")
+            return data
+
+        followups = list(getattr(value, "follow_up_questions_json", None) or [])
+        structured = getattr(value, "structured_data_json", None)
+        promotion = getattr(value, "promotion_payload_json", None)
+        return {
+            "id": value.id,
+            "source": value.source,
+            "source_agent": value.source_agent,
+            "source_session_id": value.source_session_id,
+            "raw_text": value.raw_text,
+            "title": value.title,
+            "summary": value.summary,
+            "domain": value.domain,
+            "kind": value.kind,
+            "status": value.status,
+            "desired_outcome": value.desired_outcome,
+            "next_action": value.next_action,
+            "follow_up_questions": followups,
+            "structured_data": structured,
+            "promotion_payload": promotion,
+            "linked_life_item_id": value.linked_life_item_id,
+            "last_agent_response": value.last_agent_response,
+            "created_at": value.created_at,
+            "updated_at": value.updated_at,
+        }
+
+    class Config:
+        from_attributes = True
+
+
+class IntakeCaptureRequest(BaseModel):
+    message: str
+    session_id: Optional[int] = None
+    new_session: bool = False
+    source: str = "api"
+
+
+class IntakeCaptureResponse(BaseModel):
+    response: str
+    session_id: Optional[int] = None
+    session_title: Optional[str] = None
+    entry: Optional[IntakeEntryResponse] = None
+
+
+class IntakePromoteRequest(BaseModel):
+    title: Optional[str] = None
+    kind: Optional[str] = None
+    domain: Optional[str] = None
+    priority: Optional[str] = None
+    due_at: Optional[datetime] = None
+    start_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class IntakePromoteResponse(BaseModel):
+    entry: IntakeEntryResponse
+    life_item: LifeItemResponse
+
+
 class LifeCheckinCreate(BaseModel):
     result: str = Field(description="done | partial | missed")
     note: Optional[str] = None
@@ -943,6 +1083,8 @@ class TodayAgendaResponse(BaseModel):
     due_today: list[LifeItemResponse]
     overdue: list[LifeItemResponse]
     domain_summary: dict[str, int]
+    intake_summary: dict[str, int] = Field(default_factory=dict)
+    ready_intake: list[IntakeEntryResponse] = Field(default_factory=list)
 
 
 class PrayerWindowResponse(BaseModel):

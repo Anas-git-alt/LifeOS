@@ -9,7 +9,7 @@ import pytest
 
 from app.models import AuditLog, PendingAction
 from app.services.openviking_client import OpenVikingUnavailableError
-from app.services.orchestrator import handle_message
+from app.services.orchestrator import _extract_intake_payload, handle_message
 from app.services.risk_engine import (
     classify_risk,
     is_approval_eligible_action_type,
@@ -139,6 +139,19 @@ def test_only_executable_actions_are_approval_eligible():
     assert is_approval_eligible_action_type("deadline") is False
 
 
+def test_extract_intake_payload_strips_machine_block():
+    cleaned, payload = _extract_intake_payload(
+        "Need 2 answers before this is ready.\n\n"
+        "[INTAKE_JSON]\n"
+        '{"title":"Fix sleep","kind":"goal","domain":"health","status":"clarifying","summary":"Sleep routine needs work","desired_outcome":"7.5h sleep","next_action":"Pick a bedtime","follow_up_questions":["What bedtime is realistic?"],"life_item":{"title":"Fix sleep routine","kind":"goal","domain":"health","priority":"high","start_date":"2026-04-11"}}\n'
+        "[/INTAKE_JSON]"
+    )
+
+    assert cleaned == "Need 2 answers before this is ready."
+    assert payload["title"] == "Fix sleep"
+    assert payload["follow_up_questions"] == ["What bedtime is realistic?"]
+
+
 @pytest.mark.asyncio
 async def test_handle_message_does_not_create_pending_for_informational_chat(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
@@ -167,6 +180,34 @@ async def test_handle_message_does_not_create_pending_for_informational_chat(mon
     assert result["pending_action_id"] is None
     assert any(isinstance(row, AuditLog) for row in factory.session.added)
     assert not any(isinstance(row, PendingAction) for row in factory.session.added)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_saves_cleaned_intake_response(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.name = "intake-inbox"
+    factory = _FakeSessionFactory(agent)
+    save_message = AsyncMock()
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", AsyncMock(return_value="Visible reply"))
+    monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
+    monkeypatch.setattr(
+        "app.services.orchestrator._extract_and_upsert_intake_entry",
+        AsyncMock(return_value={"cleaned_text": "Visible reply", "entry_id": 17}),
+    )
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="intake-inbox",
+        user_message="I need to fix sleep and training",
+        approval_policy="never",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] is None
+    assert save_message.await_args_list[1].args[2] == "Visible reply"
 
 
 @pytest.mark.asyncio

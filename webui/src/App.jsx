@@ -7,6 +7,7 @@ import ApprovalQueue from "./components/ApprovalQueue";
 import ExperimentDashboard from "./components/ExperimentDashboard";
 import GlobalSettings from "./components/GlobalSettings";
 import GoalProgress from "./components/GoalProgress";
+import InboxView from "./components/InboxView";
 import LifeItems from "./components/LifeItems";
 import JobsManager from "./components/JobsManager";
 import MissionControl from "./components/MissionControl";
@@ -23,6 +24,7 @@ const NAV_GROUPS = [
     items: [
       { id: "dashboard", icon: "⊞", label: "Mission Control" },
       { id: "today", icon: "◈", label: "Today" },
+      { id: "inbox", icon: "✦", label: "Inbox" },
       { id: "prayer-dashboard", icon: "☽", label: "Prayer" },
       { id: "quran", icon: "◎", label: "Quran" },
       { id: "life", icon: "⋮", label: "Life Items" },
@@ -56,6 +58,10 @@ const PAGE_META = {
   today: {
     title: "Today Focus",
     subtitle: "Plan the day with priorities, due items, and current context.",
+  },
+  inbox: {
+    title: "Inbox",
+    subtitle: "Capture ideas, promises, and life improvements before they get lost.",
   },
   "prayer-dashboard": {
     title: "Prayer Dashboard",
@@ -199,6 +205,8 @@ export default function App() {
           return <MissionControl hasToken={hasToken} onNavigate={setPage} onChangeToken={() => setShowTokenEditor(true)} />;
         case "today":
           return <TodayView />;
+        case "inbox":
+          return <InboxView />;
         case "prayer-dashboard":
           return <PrayerDashboard />;
         case "quran":
