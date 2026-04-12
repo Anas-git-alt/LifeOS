@@ -35,6 +35,15 @@ def _normalize_questions(value: Any) -> list[str]:
     return []
 
 
+def _extract_questions_from_response(value: Any) -> list[str]:
+    questions: list[str] = []
+    for line in str(value or "").splitlines():
+        text = line.strip().lstrip("-*• ").strip()
+        if text.endswith("?"):
+            questions.append(text)
+    return questions[:3]
+
+
 def _safe_domain(value: Any) -> str:
     candidate = str(value or "planning").strip().lower()
     if candidate in {"deen", "family", "work", "health", "planning"}:
@@ -198,6 +207,58 @@ async def upsert_intake_entry_from_agent(
         entry.last_agent_response = _clean_text(response_text)
         if not entry.raw_text:
             entry.raw_text = _clean_text(user_message) or "Captured idea"
+
+        await db.commit()
+        await db.refresh(entry)
+        return entry
+
+
+async def upsert_fallback_intake_entry(
+    *,
+    user_message: str,
+    response_text: str,
+    agent_name: str,
+    session_id: int | None,
+    reason: str = "missing_intake_json",
+) -> IntakeEntry:
+    async with async_session() as db:
+        entry = None
+        if session_id is not None:
+            result = await db.execute(
+                select(IntakeEntry)
+                .where(
+                    IntakeEntry.source_session_id == session_id,
+                    IntakeEntry.source_agent == agent_name,
+                    ~IntakeEntry.status.in_(FINAL_INTAKE_STATUSES),
+                )
+                .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+                .limit(1)
+            )
+            entry = result.scalar_one_or_none()
+
+        if not entry:
+            entry = IntakeEntry(
+                source="agent_capture",
+                source_agent=agent_name,
+                source_session_id=session_id,
+                raw_text=_clean_text(user_message) or "Captured idea",
+            )
+            db.add(entry)
+
+        cleaned_response = _clean_text(response_text)
+        if not entry.raw_text:
+            entry.raw_text = _clean_text(user_message) or "Captured idea"
+        entry.title = (entry.title or _clean_text(user_message) or "Captured idea")[:300]
+        if cleaned_response and not entry.summary:
+            entry.summary = cleaned_response[:500]
+        entry.domain = entry.domain or "planning"
+        entry.kind = entry.kind or "idea"
+        entry.status = "clarifying"
+        entry.follow_up_questions_json = _extract_questions_from_response(cleaned_response)
+        entry.last_agent_response = cleaned_response
+        entry.structured_data_json = {"fallback_reason": reason}
+        if not entry.promotion_payload_json:
+            entry.promotion_payload_json = None
 
         await db.commit()
         await db.refresh(entry)

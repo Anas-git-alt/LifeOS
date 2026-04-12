@@ -140,7 +140,7 @@ def test_only_executable_actions_are_approval_eligible():
 
 
 def test_extract_intake_payload_strips_machine_block():
-    cleaned, payload = _extract_intake_payload(
+    cleaned, payload, saw_machine_block = _extract_intake_payload(
         "Need 2 answers before this is ready.\n\n"
         "[INTAKE_JSON]\n"
         '{"title":"Fix sleep","kind":"goal","domain":"health","status":"clarifying","summary":"Sleep routine needs work","desired_outcome":"7.5h sleep","next_action":"Pick a bedtime","follow_up_questions":["What bedtime is realistic?"],"life_item":{"title":"Fix sleep routine","kind":"goal","domain":"health","priority":"high","start_date":"2026-04-11"}}\n'
@@ -150,6 +150,19 @@ def test_extract_intake_payload_strips_machine_block():
     assert cleaned == "Need 2 answers before this is ready."
     assert payload["title"] == "Fix sleep"
     assert payload["follow_up_questions"] == ["What bedtime is realistic?"]
+    assert saw_machine_block is True
+
+
+def test_extract_intake_payload_strips_partial_machine_block():
+    cleaned, payload, saw_machine_block = _extract_intake_payload(
+        "Need 2 answers before this is ready.\n\n"
+        "[INTAKE_JSON]\n"
+        '{"title":"Fix sleep","summary"'
+    )
+
+    assert cleaned == "Need 2 answers before this is ready."
+    assert payload is None
+    assert saw_machine_block is True
 
 
 @pytest.mark.asyncio
@@ -257,7 +270,7 @@ async def test_handle_message_uses_referenced_session_without_switching_active_s
     active_session = _make_session(62, "Current session")
     captured: dict[str, object] = {}
 
-    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model):
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
         captured["messages"] = messages
         return "Session #54 was about summarizing the repo."
 

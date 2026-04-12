@@ -71,7 +71,11 @@ DEFAULT_AGENTS = [
         "model": "meta-llama/llama-3.2-3b-instruct:free",
         "fallback_provider": "nvidia",
         "fallback_model": "meta/llama-3.2-3b-instruct",
-        "config_json": {"use_web_search": False},
+        "config_json": {
+            "use_web_search": False,
+            "temperature": 0.2,
+            "max_tokens": 1400,
+        },
         "approval_policy": "never",
         "system_prompt": (
             "You are the Intake Inbox agent for LifeOS. "
@@ -395,10 +399,35 @@ async def seed_default_agents():
                     config_json = dict(existing.config_json or {})
                     if "use_web_search" not in config_json:
                         config_json["use_web_search"] = False
-                        existing.config_json = config_json
+                    existing.config_json = config_json
                     existing.workspace_enabled = True
                     existing.workspace_paths_json = default_workspace_paths
                     existing.workspace_delete_requires_approval = True
+                if existing.name == "intake-inbox":
+                    desired_provider = agent_data.get("provider")
+                    desired_model = agent_data.get("model")
+                    if (
+                        desired_provider
+                        and desired_model
+                        and existing.provider == settings.default_provider
+                        and existing.model == default_model
+                    ):
+                        existing.provider = desired_provider
+                        existing.model = desired_model
+                    if not existing.fallback_provider and agent_data.get("fallback_provider"):
+                        existing.fallback_provider = agent_data["fallback_provider"]
+                    if not existing.fallback_model and agent_data.get("fallback_model"):
+                        existing.fallback_model = agent_data["fallback_model"]
+                    if "[INTAKE_JSON]" not in (existing.system_prompt or ""):
+                        existing.system_prompt = agent_data["system_prompt"]
+                    if not existing.discord_channel:
+                        existing.discord_channel = agent_data.get("discord_channel")
+                    config_json = dict(existing.config_json or {})
+                    for key, value in (agent_data.get("config_json") or {}).items():
+                        config_json[key] = value
+                    if agent_data.get("approval_policy") is not None:
+                        config_json["approval_policy"] = agent_data["approval_policy"]
+                    existing.config_json = config_json or None
                 continue
 
             if not existing:
@@ -406,12 +435,12 @@ async def seed_default_agents():
                     provider = "openai"
                     model = settings.openai_default_model
                 else:
-                    provider = settings.default_provider
-                    model = default_model
+                    provider = agent_data.get("provider") or settings.default_provider
+                    model = agent_data.get("model") or default_model
 
-                config_json: dict[str, object] = {
-                    "use_web_search": agent_data.get("use_web_search", True),
-                }
+                config_json: dict[str, object] = dict(agent_data.get("config_json") or {})
+                if "use_web_search" not in config_json:
+                    config_json["use_web_search"] = agent_data.get("use_web_search", True)
                 if agent_data.get("approval_policy") is not None:
                     config_json["approval_policy"] = agent_data["approval_policy"]
 
@@ -421,6 +450,8 @@ async def seed_default_agents():
                     system_prompt=agent_data["system_prompt"],
                     provider=provider,
                     model=model,
+                    fallback_provider=agent_data.get("fallback_provider"),
+                    fallback_model=agent_data.get("fallback_model"),
                     discord_channel=agent_data.get("discord_channel"),
                     cadence=agent_data.get("cadence"),
                     enabled=True,

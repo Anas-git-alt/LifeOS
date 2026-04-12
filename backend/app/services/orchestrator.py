@@ -16,7 +16,7 @@ from app.services.deen_metrics import build_prayer_agent_context, build_weekly_d
 from app.services.discord_notify import send_channel_message
 from app.services.action_executor import execute_pending_action
 from app.services.events import publish_event
-from app.services.intake import upsert_intake_entry_from_agent
+from app.services.intake import upsert_fallback_intake_entry, upsert_intake_entry_from_agent
 from app.services.memory import get_context, save_message, summarise_session
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
@@ -212,10 +212,15 @@ async def _extract_and_create_goals(response_text: str, agent_name: str) -> list
     return created
 
 
-def _extract_intake_payload(response_text: str) -> tuple[str, dict | None]:
-    match = _INTAKE_JSON_PATTERN.search(response_text or "")
+def _extract_intake_payload(response_text: str) -> tuple[str, dict | None, bool]:
+    text = response_text or ""
+    if "[INTAKE_JSON]" not in text:
+        return text.strip(), None, False
+
+    match = _INTAKE_JSON_PATTERN.search(text)
     if not match:
-        return (response_text or "").strip(), None
+        cleaned = text.split("[INTAKE_JSON]", 1)[0].strip()
+        return cleaned, None, True
 
     payload = None
     try:
@@ -223,8 +228,8 @@ def _extract_intake_payload(response_text: str) -> tuple[str, dict | None]:
     except json.JSONDecodeError:
         logger.warning("Invalid INTAKE_JSON block; leaving response unstructured")
 
-    cleaned = _INTAKE_JSON_PATTERN.sub("", response_text or "").strip()
-    return cleaned, payload
+    cleaned = _INTAKE_JSON_PATTERN.sub("", text).strip()
+    return cleaned, payload, True
 
 
 async def _extract_and_upsert_intake_entry(
@@ -237,18 +242,40 @@ async def _extract_and_upsert_intake_entry(
     if agent_name != "intake-inbox":
         return None
 
-    cleaned_text, payload = _extract_intake_payload(response_text)
-    if not payload:
-        return None
-
-    entry = await upsert_intake_entry_from_agent(
-        payload=payload,
-        user_message=user_message,
-        response_text=cleaned_text,
-        agent_name=agent_name,
-        session_id=session_id,
-    )
+    cleaned_text, payload, saw_machine_block = _extract_intake_payload(response_text)
+    if payload:
+        entry = await upsert_intake_entry_from_agent(
+            payload=payload,
+            user_message=user_message,
+            response_text=cleaned_text,
+            agent_name=agent_name,
+            session_id=session_id,
+        )
+    else:
+        entry = await upsert_fallback_intake_entry(
+            user_message=user_message,
+            response_text=cleaned_text,
+            agent_name=agent_name,
+            session_id=session_id,
+            reason="invalid_or_partial_intake_json" if saw_machine_block else "missing_intake_json",
+        )
     return {"cleaned_text": cleaned_text, "entry_id": entry.id}
+
+
+def _agent_temperature(agent: Agent) -> float:
+    raw = (agent.config_json or {}).get("temperature", 0.7)
+    try:
+        return max(0.0, min(float(raw), 1.5))
+    except (TypeError, ValueError):
+        return 0.7
+
+
+def _agent_max_tokens(agent: Agent) -> int:
+    raw = (agent.config_json or {}).get("max_tokens", 1024)
+    try:
+        return max(256, min(int(raw), 4096))
+    except (TypeError, ValueError):
+        return 1024
 
 
 async def handle_message(
@@ -397,6 +424,8 @@ async def handle_message(
                     model=agent.model,
                     fallback_provider=agent.fallback_provider,
                     fallback_model=agent.fallback_model,
+                    temperature=_agent_temperature(agent),
+                    max_tokens=_agent_max_tokens(agent),
                 )
             except LLMProvidersExhaustedError as exc:
                 logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
@@ -524,6 +553,8 @@ async def handle_message(
                         model=agent.model,
                         fallback_provider=agent.fallback_provider,
                         fallback_model=agent.fallback_model,
+                        temperature=_agent_temperature(agent),
+                        max_tokens=_agent_max_tokens(agent),
                     )
                 try:
                     await summarise_session(
