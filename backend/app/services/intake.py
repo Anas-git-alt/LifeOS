@@ -46,6 +46,8 @@ def _extract_questions_from_response(value: Any) -> list[str]:
 
 def _safe_domain(value: Any) -> str:
     candidate = str(value or "planning").strip().lower()
+    if "|" in candidate:
+        return "planning"
     if candidate in {"deen", "family", "work", "health", "planning"}:
         return candidate
     return "planning"
@@ -53,6 +55,8 @@ def _safe_domain(value: Any) -> str:
 
 def _safe_status(value: Any) -> str:
     candidate = str(value or "raw").strip().lower()
+    if "|" in candidate:
+        return "clarifying"
     if candidate in {"raw", "clarifying", "ready", "processed", "parked", "archived"}:
         return candidate
     return "raw"
@@ -60,6 +64,8 @@ def _safe_status(value: Any) -> str:
 
 def _safe_kind(value: Any) -> str:
     candidate = str(value or "idea").strip().lower()
+    if "|" in candidate:
+        return "idea"
     if candidate in {"idea", "task", "goal", "habit", "commitment", "routine", "note"}:
         return candidate
     return "idea"

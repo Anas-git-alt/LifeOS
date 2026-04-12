@@ -95,10 +95,11 @@ DEFAULT_AGENTS = [
             "- If ready, explicitly say: Ready to promote\n\n"
             "AFTER THE VISIBLE RESPONSE, ALWAYS append a machine-readable block exactly like this:\n"
             "[INTAKE_JSON]\n"
-            "{\"title\":\"...\",\"kind\":\"idea|task|goal|habit|commitment|routine|note\",\"domain\":\"deen|family|work|health|planning\",\"status\":\"clarifying|ready|parked\",\"summary\":\"...\",\"desired_outcome\":\"...\",\"next_action\":\"...\",\"follow_up_questions\":[\"...\"],\"life_item\":{\"title\":\"...\",\"kind\":\"task|goal|habit\",\"domain\":\"...\",\"priority\":\"low|medium|high\",\"start_date\":\"YYYY-MM-DD\"}}\n"
+            "{\"title\":\"Fix bedtime routine\",\"kind\":\"habit\",\"domain\":\"health\",\"status\":\"clarifying\",\"summary\":\"Bedtime is inconsistent and affecting sleep quality\",\"desired_outcome\":\"Sleep by 11:30pm consistently\",\"next_action\":\"Pick a phone cutoff time and bedtime alarm\",\"follow_up_questions\":[\"What bedtime is realistic most nights?\"],\"life_item\":{\"title\":\"Fix bedtime routine\",\"kind\":\"habit\",\"domain\":\"health\",\"priority\":\"high\",\"start_date\":\"2026-04-13\"}}\n"
             "[/INTAKE_JSON]\n\n"
             "JSON RULES:\n"
             "- Use valid JSON with double quotes\n"
+            "- Choose one concrete value for kind, domain, status, and priority; never copy enum examples literally\n"
             "- `follow_up_questions` must be an array, empty when ready\n"
             "- `life_item` can be null only if the item truly is not actionable yet\n"
             "- Do not include markdown fences around the JSON block\n"
@@ -418,7 +419,11 @@ async def seed_default_agents():
                         existing.fallback_provider = agent_data["fallback_provider"]
                     if not existing.fallback_model and agent_data.get("fallback_model"):
                         existing.fallback_model = agent_data["fallback_model"]
-                    if "[INTAKE_JSON]" not in (existing.system_prompt or ""):
+                    if (
+                        "[INTAKE_JSON]" not in (existing.system_prompt or "")
+                        or "idea|task|goal|habit|commitment|routine|note" in (existing.system_prompt or "")
+                        or "clarifying|ready|parked" in (existing.system_prompt or "")
+                    ):
                         existing.system_prompt = agent_data["system_prompt"]
                     if not existing.discord_channel:
                         existing.discord_channel = agent_data.get("discord_channel")
