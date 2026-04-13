@@ -34,6 +34,13 @@ if [[ ! -f "$ssh_key" ]]; then
   exit 1
 fi
 
+ssh_cmd=(ssh)
+ssh_key_arg="$ssh_key"
+if [[ "$ssh_key" == /mnt/c/* ]] && command -v ssh.exe >/dev/null 2>&1; then
+  ssh_cmd=(ssh.exe)
+  ssh_key_arg="$(wslpath -w "$ssh_key")"
+fi
+
 git_push_cmd=(git push origin "$branch")
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
@@ -45,7 +52,7 @@ echo "Pushing $branch to origin..."
 
 remote_services="${services[*]}"
 echo "Deploying $branch to $ssh_target:$vps_repo ..."
-ssh -i "$ssh_key" "$ssh_target" \
+"${ssh_cmd[@]}" -i "$ssh_key_arg" "$ssh_target" \
   "set -euo pipefail
    cd '$vps_repo'
    git config core.autocrlf false
