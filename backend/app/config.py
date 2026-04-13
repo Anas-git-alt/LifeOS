@@ -1,11 +1,15 @@
-"""LifeOS configuration - loads secrets from .venv/.env."""
+"""LifeOS configuration and runtime path contract."""
 
 from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings
-# Note: the explicit load_dotenv call was removed — BaseSettings reads
-# .venv/.env automatically via the env_file Config attribute below.
+
+
+DEFAULT_WORKSPACE_REPO_ROOT = "/workspace"
+DEFAULT_DATA_ROOT = "/app/data"
+DEFAULT_LEGACY_STORAGE_ROOT = "/app/storage"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -41,7 +45,7 @@ class Settings(BaseSettings):
     )
     backend_host: str = "127.0.0.1"
     backend_port: int = 8000
-    database_url: str = "sqlite+aiosqlite:///storage/lifeos.db"
+    database_url: str = ""
     api_secret_key: str = "change_me"
     memory_retention_days: int = 60
     audit_retention_days: int = 90
@@ -49,8 +53,10 @@ class Settings(BaseSettings):
     quiet_hours_start: str = "23:00"
     quiet_hours_end: str = "06:00"
     nudge_mode: str = "moderate"
-    workspace_repo_root: str = "/workspace"
-    workspace_archive_root: str = "/app/storage/workspace-archive"
+    workspace_repo_root: str = DEFAULT_WORKSPACE_REPO_ROOT
+    workspace_archive_root: str = ""
+    data_root: str = DEFAULT_DATA_ROOT
+    legacy_storage_root: str = DEFAULT_LEGACY_STORAGE_ROOT
     discord_audit_channel: str = ""
     tts_worker_url: str = "http://tts-worker:8010"
     tts_request_timeout_seconds: float = 45.0
@@ -102,13 +108,130 @@ class Settings(BaseSettings):
         backend = (self.memory_backend or "sqlite").strip().lower()
         return backend if backend in {"sqlite", "openviking"} else "sqlite"
 
+    @staticmethod
+    def _resolve_path(raw: str, *, fallback: Path | None = None) -> Path:
+        value = str(raw or "").strip()
+        candidate = Path(value) if value else fallback
+        if candidate is None:
+            raise ValueError("Path fallback is required when no explicit value is set")
+        return candidate.resolve(strict=False)
+
+    @staticmethod
+    def _default_path(raw: str, *, container_path: str, repo_relative: str) -> Path:
+        value = str(raw or "").strip()
+        if value and value != container_path:
+            return Path(value).resolve(strict=False)
+        container_candidate = Path(container_path)
+        if container_candidate.parent.exists():
+            return container_candidate.resolve(strict=False)
+        return (REPO_ROOT / repo_relative).resolve(strict=False)
+
+    @staticmethod
+    def _path_has_entries(path: Path) -> bool:
+        try:
+            return any(path.iterdir())
+        except FileNotFoundError:
+            return False
+
+    @staticmethod
+    def _sqlite_path_from_url(url: str) -> str:
+        if url.startswith("sqlite+aiosqlite:///"):
+            return url.replace("sqlite+aiosqlite:///", "", 1)
+        if url.startswith("sqlite:///"):
+            return url.replace("sqlite:///", "", 1)
+        return ""
+
+    @staticmethod
+    def _sqlite_url_from_path(path: Path) -> str:
+        return f"sqlite+aiosqlite:///{path.as_posix()}"
+
     @property
     def workspace_repo_root_path(self) -> Path:
-        return Path(self.workspace_repo_root).resolve()
+        return self._default_path(
+            self.workspace_repo_root,
+            container_path=DEFAULT_WORKSPACE_REPO_ROOT,
+            repo_relative="",
+        )
+
+    @property
+    def data_root_path(self) -> Path:
+        return self._default_path(
+            self.data_root,
+            container_path=DEFAULT_DATA_ROOT,
+            repo_relative="data",
+        )
+
+    @property
+    def legacy_storage_root_path(self) -> Path:
+        return self._default_path(
+            self.legacy_storage_root,
+            container_path=DEFAULT_LEGACY_STORAGE_ROOT,
+            repo_relative="storage",
+        )
+
+    @property
+    def canonical_database_path(self) -> Path:
+        return self.data_root_path / "sqlite" / "lifeos.db"
+
+    @property
+    def legacy_database_path(self) -> Path:
+        return self.legacy_storage_root_path / "lifeos.db"
+
+    @property
+    def database_path(self) -> Path:
+        explicit = (self.database_url or "").strip()
+        if explicit:
+            sqlite_path = self._sqlite_path_from_url(explicit)
+            if sqlite_path:
+                return Path(sqlite_path).resolve(strict=False)
+        legacy = self.legacy_database_path
+        canonical = self.canonical_database_path
+        if legacy.exists() and not canonical.exists():
+            return legacy
+        return canonical
+
+    @property
+    def resolved_database_url(self) -> str:
+        explicit = (self.database_url or "").strip()
+        if explicit:
+            return explicit
+        return self._sqlite_url_from_path(self.database_path)
+
+    @property
+    def canonical_workspace_archive_root_path(self) -> Path:
+        return self.data_root_path / "workspace" / "archives"
+
+    @property
+    def legacy_workspace_archive_root_path(self) -> Path:
+        return self.legacy_storage_root_path / "workspace-archive"
 
     @property
     def workspace_archive_root_path(self) -> Path:
-        return Path(self.workspace_archive_root).resolve()
+        explicit = (self.workspace_archive_root or "").strip()
+        if explicit:
+            return self._resolve_path(explicit)
+        legacy = self.legacy_workspace_archive_root_path
+        canonical = self.canonical_workspace_archive_root_path
+        if legacy.exists() and not self._path_has_entries(canonical):
+            return legacy
+        return canonical
+
+    @property
+    def data_manifest_path(self) -> Path:
+        return self.data_root_path / "manifest.json"
+
+    @property
+    def data_layout_paths(self) -> list[Path]:
+        return [
+            self.data_root_path,
+            self.data_root_path / "sqlite",
+            self.data_root_path / "workspace",
+            self.canonical_workspace_archive_root_path,
+            self.data_root_path / "exports",
+            self.data_root_path / "tmp",
+            self.data_root_path / "shared",
+            self.data_root_path / "voices",
+        ]
 
     @property
     def effective_openviking_api_key(self) -> str:

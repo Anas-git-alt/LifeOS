@@ -13,6 +13,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./storage/tts-models:/model-cache
+      - ./data:/app/data
     healthcheck:
       test:
         [
@@ -75,6 +76,7 @@ services:
     ports:
       - "127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}:8000"
     volumes:
+      - ./data:/app/data
       - ./storage:/app/storage
       - ./skills:/app/skills
       - ./:/workspace

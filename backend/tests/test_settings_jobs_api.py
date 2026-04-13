@@ -1,5 +1,6 @@
 """Minimal API integration tests for settings + jobs."""
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -82,6 +83,7 @@ def test_settings_and_jobs_api_flow():
 def test_one_time_job_api_flow():
     with TestClient(app) as client:
         job_name = f"test-once-{uuid4().hex[:8]}"
+        run_at = (datetime.now(timezone.utc) + timedelta(hours=2)).replace(microsecond=0)
         create_resp = client.post(
             "/api/jobs/",
             headers=_headers(),
@@ -90,7 +92,7 @@ def test_one_time_job_api_flow():
                 "description": "Integration test one-time job",
                 "agent_name": "sandbox",
                 "schedule_type": "once",
-                "run_at": "2026-03-26T09:00:00",
+                "run_at": run_at.isoformat(),
                 "timezone": "Africa/Casablanca",
                 "notification_mode": "silent",
                 "target_channel": None,

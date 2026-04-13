@@ -27,6 +27,7 @@ from app.routers import (
     workspace,
 )
 from app.services.memory import get_legacy_memory_max_entry_id, import_legacy_memory_to_openviking
+from app.services.data_layout import ensure_data_layout
 from app.services.openviking_client import close_openviking_client, openviking_client
 from app.services.provider_router import close_all_clients
 from app.services.runtime_state import (
@@ -77,7 +78,13 @@ def _startup_self_check() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _startup_self_check()
-    settings.workspace_archive_root_path.mkdir(parents=True, exist_ok=True)
+    layout_manifest = ensure_data_layout()
+    logger.info(
+        "data_layout_ready database=%s archive=%s manifest=%s",
+        layout_manifest["active"]["database_path"],
+        layout_manifest["active"]["workspace_archive_root"],
+        settings.data_manifest_path,
+    )
     await init_db()
     await seed_default_agents()
     await sync_tts_registry()

@@ -860,7 +860,7 @@ export default function AgentConfig({ agentName, onBack }) {
                   <input
                     value={form.reference_audio_path || ""}
                     onChange={(event) => setForm({ ...form, reference_audio_path: event.target.value })}
-                    placeholder="/app/storage/voices/ref.wav"
+                    placeholder="/app/data/voices/ref.wav"
                   />
                 </div>
                 <div className="form-group">

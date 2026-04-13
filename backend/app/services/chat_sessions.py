@@ -88,6 +88,12 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _serialize_messages(messages: list[dict]) -> list[dict]:
     serialized: list[dict] = []
     for message in messages or []:
@@ -451,7 +457,7 @@ async def restore_session_archive(
         archive = result.scalar_one_or_none()
         if not archive or archive.status != "archived" or archive.restored_at is not None:
             raise ValueError(f"Chat session archive '{archive_id}' not found for agent '{agent_name}'")
-        if archive.expires_at <= _utcnow():
+        if _ensure_utc(archive.expires_at) <= _utcnow():
             raise ValueError(f"Chat session archive '{archive_id}' has expired for agent '{agent_name}'")
         session = await db.get(ChatSession, archive.session_id)
         if not session or session.agent_name != agent_name:

@@ -1,7 +1,15 @@
 import asyncio
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 from app.database import async_session
-from app.models import Agent
 from sqlalchemy import select
+from app.models import Agent
 
 async def main():
     async with async_session() as db:

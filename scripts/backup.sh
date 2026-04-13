@@ -9,16 +9,42 @@ BRANCH="main"
 
 echo "LifeOS Backup - $TIMESTAMP"
 
-if [ -f "storage/lifeos.db" ]; then
-  python3 - <<'PY'
+DB_PATH=$(python3 - <<'PY'
+from pathlib import Path
+import json
+
+candidates = []
+manifest_path = Path("data/manifest.json")
+if manifest_path.exists():
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        candidates.append(payload.get("active", {}).get("database_path", ""))
+        candidates.append(payload.get("legacy", {}).get("database_path", ""))
+    except Exception:
+        pass
+candidates.extend(["data/sqlite/lifeos.db", "storage/lifeos.db"])
+for raw in candidates:
+    value = str(raw or "").strip()
+    if value and Path(value).exists():
+        print(value)
+        break
+PY
+)
+
+if [ -n "$DB_PATH" ] && [ -f "$DB_PATH" ]; then
+  DB_PATH="$DB_PATH" python3 - <<'PY'
+import os
 import sqlite3
-conn = sqlite3.connect("storage/lifeos.db")
+from pathlib import Path
+
+db_path = Path(os.environ["DB_PATH"])
+conn = sqlite3.connect(str(db_path))
 cur = conn.cursor()
 result = cur.execute("PRAGMA integrity_check").fetchone()[0]
 conn.close()
 if result != "ok":
     raise SystemExit(f"Database integrity check failed: {result}")
-print("Database integrity check: ok")
+print(f"Database integrity check: ok ({db_path})")
 PY
 fi
 

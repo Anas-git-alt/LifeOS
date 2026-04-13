@@ -106,6 +106,7 @@ OPENVIKING_IGNORE_DIRS = ",".join(
         "build",
         "output",
         "tmp",
+        "data",
         "coverage",
         "playwright-report",
         "test-results",
@@ -580,10 +581,14 @@ def _resolve_target_path(raw_path: str, allowed_roots: list[Path]) -> tuple[Path
     resolved = candidate.resolve(strict=False)
     forbidden_roots = [
         settings.workspace_archive_root_path.resolve(),
+        settings.data_root_path.resolve(),
+        settings.legacy_storage_root_path.resolve(),
+        (settings.workspace_repo_root_path / "data").resolve(strict=False),
+        (settings.workspace_repo_root_path / "storage").resolve(strict=False),
         (settings.workspace_repo_root_path / "storage" / "workspace-archive").resolve(strict=False),
     ]
     if any(resolved == root or resolved.is_relative_to(root) for root in forbidden_roots):
-        raise PermissionError("Workspace archive cannot be modified directly")
+        raise PermissionError("Runtime data directories cannot be modified through workspace actions")
     for root in allowed_roots:
         if resolved == root or resolved.is_relative_to(root):
             return root, resolved

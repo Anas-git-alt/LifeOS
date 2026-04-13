@@ -93,6 +93,10 @@ def _to_scheduler_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _next_run_time(scheduled_job) -> datetime | None:
+    return getattr(scheduled_job, "next_run_time", None) if scheduled_job else None
+
+
 async def _update_job_next_run(job_id: int, next_run: datetime | None) -> None:
     async with async_session() as db:
         result = await db.execute(
@@ -165,7 +169,7 @@ async def sync_persistent_job(job_id: int) -> None:
         misfire_grace_time=ONCE_JOB_MISFIRE_GRACE_SECONDS,
     )
     scheduled = scheduler.get_job(scheduler_id)
-    await _update_job_next_run(job_id, scheduled.next_run_time if scheduled else None)
+    await _update_job_next_run(job_id, _next_run_time(scheduled))
     logger.info(
         "Scheduled persistent job id=%s name=%s type=%s schedule=%s tz=%s",
         row.id,
@@ -215,7 +219,7 @@ async def run_persistent_job(job_id: int) -> None:
     finally:
         finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
         scheduled = scheduler.get_job(_scheduler_job_id(job_id))
-        next_run = scheduled.next_run_time if scheduled else None
+        next_run = _next_run_time(scheduled)
         once_completed_at = finished_at if row and row.schedule_type == "once" else None
         once_enabled = False if row and row.schedule_type == "once" else None
         await record_job_run(

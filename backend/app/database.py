@@ -9,7 +9,7 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
 # Ensure database URL uses async driver.
-db_url = settings.database_url
+db_url = settings.resolved_database_url
 if db_url.startswith("sqlite:///") and "+aiosqlite" not in db_url:
     db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
 
@@ -39,6 +39,134 @@ def _sqlite_path_from_db_url(url: str) -> str:
     return ""
 
 
+def _table_columns(cur: sqlite3.Cursor, table_name: str) -> dict[str, tuple]:
+    return {row[1]: row for row in cur.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _scheduled_jobs_requires_upgrade(columns: dict[str, tuple]) -> bool:
+    required_columns = {
+        "description",
+        "schedule_type",
+        "run_at",
+        "notification_mode",
+        "target_channel_id",
+        "completed_at",
+    }
+    if any(column not in columns for column in required_columns):
+        return True
+    cron_expression = columns.get("cron_expression")
+    return bool(cron_expression and cron_expression[3])
+
+
+def _scheduled_jobs_select_expr(columns: dict[str, tuple], column: str, default_sql: str) -> str:
+    return column if column in columns else default_sql
+
+
+def _upgrade_scheduled_jobs_table(cur: sqlite3.Cursor, columns: dict[str, tuple]) -> None:
+    cur.execute("DROP TABLE IF EXISTS scheduled_jobs_legacy")
+    cur.execute("ALTER TABLE scheduled_jobs RENAME TO scheduled_jobs_legacy")
+    cur.executescript(
+        """
+        CREATE TABLE scheduled_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name VARCHAR(120) NOT NULL,
+            description TEXT,
+            agent_name VARCHAR(100),
+            job_type VARCHAR(40) NOT NULL DEFAULT 'agent_nudge',
+            schedule_type VARCHAR(20) NOT NULL DEFAULT 'cron',
+            cron_expression VARCHAR(120),
+            run_at DATETIME,
+            timezone VARCHAR(64) NOT NULL DEFAULT 'Africa/Casablanca',
+            notification_mode VARCHAR(20) NOT NULL DEFAULT 'channel',
+            target_channel VARCHAR(100),
+            target_channel_id VARCHAR(32),
+            prompt_template TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            paused BOOLEAN NOT NULL DEFAULT 0,
+            approval_required BOOLEAN NOT NULL DEFAULT 1,
+            source VARCHAR(40) NOT NULL DEFAULT 'manual',
+            created_by VARCHAR(120),
+            config_json JSON,
+            last_run_at DATETIME,
+            next_run_at DATETIME,
+            completed_at DATETIME,
+            last_status VARCHAR(30),
+            last_error TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    schedule_type_expr = (
+        "schedule_type"
+        if "schedule_type" in columns
+        else ("CASE WHEN run_at IS NOT NULL THEN 'once' ELSE 'cron' END" if "run_at" in columns else "'cron'")
+    )
+    cur.execute(
+        f"""
+        INSERT INTO scheduled_jobs (
+            id,
+            name,
+            description,
+            agent_name,
+            job_type,
+            schedule_type,
+            cron_expression,
+            run_at,
+            timezone,
+            notification_mode,
+            target_channel,
+            target_channel_id,
+            prompt_template,
+            enabled,
+            paused,
+            approval_required,
+            source,
+            created_by,
+            config_json,
+            last_run_at,
+            next_run_at,
+            completed_at,
+            last_status,
+            last_error,
+            created_at,
+            updated_at
+        )
+        SELECT
+            id,
+            name,
+            {_scheduled_jobs_select_expr(columns, "description", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "agent_name", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "job_type", "'agent_nudge'")},
+            {schedule_type_expr},
+            {_scheduled_jobs_select_expr(columns, "cron_expression", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "run_at", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "timezone", "'Africa/Casablanca'")},
+            {_scheduled_jobs_select_expr(columns, "notification_mode", "'channel'")},
+            {_scheduled_jobs_select_expr(columns, "target_channel", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "target_channel_id", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "prompt_template", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "enabled", "1")},
+            {_scheduled_jobs_select_expr(columns, "paused", "0")},
+            {_scheduled_jobs_select_expr(columns, "approval_required", "1")},
+            {_scheduled_jobs_select_expr(columns, "source", "'manual'")},
+            {_scheduled_jobs_select_expr(columns, "created_by", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "config_json", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "last_run_at", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "next_run_at", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "completed_at", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "last_status", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "last_error", "NULL")},
+            {_scheduled_jobs_select_expr(columns, "created_at", "CURRENT_TIMESTAMP")},
+            {_scheduled_jobs_select_expr(columns, "updated_at", "CURRENT_TIMESTAMP")}
+        FROM scheduled_jobs_legacy
+        """
+    )
+    cur.execute("DROP TABLE scheduled_jobs_legacy")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_agent ON scheduled_jobs(agent_name)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled, paused)")
+
+
 def run_migrations() -> None:
     """Apply SQL migrations in backend/app/migrations."""
     sqlite_path = _sqlite_path_from_db_url(db_url)
@@ -56,6 +184,15 @@ def run_migrations() -> None:
         existing_tables = {
             row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        applied = {row[0] for row in cur.execute("SELECT version FROM schema_migrations").fetchall()}
         if "pending_actions" in existing_tables:
             pending_cols = {
                 row[1] for row in cur.execute("PRAGMA table_info(pending_actions)").fetchall()
@@ -71,9 +208,12 @@ def run_migrations() -> None:
             if "session_id" not in memory_cols:
                 cur.execute("ALTER TABLE memory ADD COLUMN session_id INTEGER")
         if "scheduled_jobs" in existing_tables:
-            job_cols = {row[1] for row in cur.execute("PRAGMA table_info(scheduled_jobs)").fetchall()}
-            if "description" not in job_cols:
-                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN description TEXT")
+            job_cols = _table_columns(cur, "scheduled_jobs")
+            if _scheduled_jobs_requires_upgrade(job_cols):
+                _upgrade_scheduled_jobs_table(cur, job_cols)
+            if "202603250001_job_schedule_modes" not in applied:
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", ("202603250001_job_schedule_modes",))
+                applied.add("202603250001_job_schedule_modes")
         if "life_items" in existing_tables:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
@@ -106,16 +246,6 @@ def run_migrations() -> None:
                 cur.execute(
                     "ALTER TABLE agents ADD COLUMN voice_visible_in_runtime_picker BOOLEAN NOT NULL DEFAULT 1"
                 )
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version TEXT PRIMARY KEY,
-                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        applied = {row[0] for row in cur.execute("SELECT version FROM schema_migrations").fetchall()}
 
         for file_path in sorted(migrations_dir.glob("*.sql")):
             version = file_path.stem

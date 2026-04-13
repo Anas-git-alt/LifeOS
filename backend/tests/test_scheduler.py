@@ -52,13 +52,14 @@ def test_parse_cadence_with_list_hours():
 @pytest.mark.asyncio
 async def test_sync_persistent_job_uses_date_trigger_for_once_jobs(monkeypatch):
     fake_scheduler = _FakeScheduler()
+    future_run_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).replace(tzinfo=None)
     row = SimpleNamespace(
         id=9,
         name="One-time review",
         enabled=True,
         paused=False,
         schedule_type="once",
-        run_at=datetime(2026, 3, 26, 9, 0, 0),
+        run_at=future_run_at,
         completed_at=None,
         timezone="Africa/Casablanca",
         cron_expression=None,

@@ -4,12 +4,16 @@
 
 # ---- Secrets (NEVER commit) ----
 .venv/
+.python-venv/
 .env
 *.env
 !.env.example
 
 # ---- Runtime data (keep local only) ----
 backend/storage/
+data/*
+!data/.gitkeep
+!data/README.md
 storage/*
 !storage/.gitkeep
 !storage/README.md
@@ -22,6 +26,7 @@ storage/*
 *.sqlite3
 *.pid
 *.Zone.Identifier
+*:Zone.Identifier
 
 # ---- Python ----
 __pycache__/

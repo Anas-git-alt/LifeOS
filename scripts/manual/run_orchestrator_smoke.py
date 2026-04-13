@@ -1,6 +1,14 @@
 import asyncio
-from app.services.orchestrator import handle_message
 import logging
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = ROOT / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.services.orchestrator import handle_message
 
 logging.basicConfig(level=logging.INFO)
 

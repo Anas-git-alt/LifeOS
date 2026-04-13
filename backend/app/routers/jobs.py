@@ -36,7 +36,7 @@ router = APIRouter()
 
 def _scheduler_next_run(job_id: int):
     live = scheduler.get_job(f"scheduled_job_{job_id}")
-    return live.next_run_time if live else None
+    return getattr(live, "next_run_time", None) if live else None
 
 
 def _to_response(row) -> ScheduledJobResponse:
