@@ -260,6 +260,7 @@ The following phase-1 cleanup work has now been applied in the repo:
 
 - added a canonical `data/` runtime root with `data/README.md`
 - backend now writes `data/manifest.json` at startup as a single coordination index
+- if `data/` is not writable on a host yet, backend falls back to `storage/manifest.json` instead of failing startup
 - backend path resolution now supports safe legacy fallback to `storage/` on existing deployments
 - Docker now mounts `./data` into backend and TTS worker for the new contract
 - backup/verify scripts now detect the active database path via manifest or fallback search

@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
         "data_layout_ready database=%s archive=%s manifest=%s",
         layout_manifest["active"]["database_path"],
         layout_manifest["active"]["workspace_archive_root"],
-        settings.data_manifest_path,
+        layout_manifest["manifest_path"],
     )
     await init_db()
     await seed_default_agents()

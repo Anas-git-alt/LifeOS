@@ -12,8 +12,9 @@ from pathlib import Path
 import json
 
 candidates = []
-manifest_path = Path("data/manifest.json")
-if manifest_path.exists():
+for manifest_path in (Path("data/manifest.json"), Path("storage/manifest.json")):
+    if not manifest_path.exists():
+        continue
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         candidates.append(payload.get("active", {}).get("database_path", ""))

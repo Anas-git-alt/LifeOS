@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
 
 
-def build_data_manifest() -> dict[str, Any]:
+def build_data_manifest(*, manifest_path: str) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "read_this_first": str(settings.data_manifest_path),
+        "read_this_first": manifest_path,
         "active": {
             "data_root": str(settings.data_root_path),
             "database_path": str(settings.database_path),
@@ -39,9 +40,23 @@ def build_data_manifest() -> dict[str, Any]:
     }
 
 
+def _best_manifest_path() -> str:
+    preferred = settings.data_manifest_path
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        return str(preferred)
+    except PermissionError:
+        fallback = settings.legacy_storage_root_path / "manifest.json"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+
+
 def ensure_data_layout() -> dict[str, Any]:
     for path in settings.data_layout_paths:
-        path.mkdir(parents=True, exist_ok=True)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            break
 
     db_path = settings.database_path
     if str(db_path):
@@ -49,8 +64,11 @@ def ensure_data_layout() -> dict[str, Any]:
 
     settings.workspace_archive_root_path.mkdir(parents=True, exist_ok=True)
 
-    manifest = build_data_manifest()
-    settings.data_manifest_path.write_text(
+    manifest_path = _best_manifest_path()
+    manifest = build_data_manifest(manifest_path=manifest_path)
+    manifest["manifest_path"] = manifest_path
+    target_path = Path(manifest_path)
+    target_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
