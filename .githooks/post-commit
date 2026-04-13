@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+if [[ "${LIFEOS_SKIP_VPS_SYNC:-0}" == "1" ]]; then
+  exit 0
+fi
+
+branch="$(git branch --show-current)"
+if [[ -z "$branch" ]]; then
+  exit 0
+fi
+
+"$REPO_ROOT/scripts/deploy_vps.sh" "$branch"

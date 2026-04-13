@@ -13,6 +13,7 @@
 - [ ] `docker compose ps` shows `backend`, `discord-bot`, `webui`, `openviking`, and `tts-worker` up.
 - [ ] `GET /api/health` returns backend status plus OpenViking health details.
 - [ ] `GET /api/readiness` returns `ready`.
+- [ ] The VPS has been tested on the feature branch that is about to be promoted.
 - [ ] OpenViking legacy memory import and workspace sync complete without startup errors.
 - [ ] `GET /api/tts/health` succeeds with a valid API token.
 
@@ -51,4 +52,5 @@
 - [ ] Docker images build successfully.
 - [ ] Manual Discord smoke test completed.
 - [ ] Manual WebUI smoke test completed.
+- [ ] `./scripts/promote_to_main.sh` completed and redeployed the VPS to `main`.
 - [ ] Docs reviewed for the current stack and operator workflow.

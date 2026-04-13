@@ -1,3 +1,0 @@
-discord.py[voice]==2.7.1
-httpx==0.27.2
-python-dotenv==1.0.1

@@ -1,4 +1,0 @@
-interface:
-  display_name: "LifeOS Mission Control"
-  short_description: "Build and harden the LifeOS Mission Control dashboard."
-  default_prompt: "Use $lifeos-webui-mission-control to plan and implement calm, realtime Mission Control upgrades for this repo."
