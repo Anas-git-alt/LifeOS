@@ -10,6 +10,14 @@ if [[ -z "$branch" ]]; then
   exit 1
 fi
 
+git_env_file="${LIFEOS_GIT_ENV_FILE:-$REPO_ROOT/.venv/.env}"
+if [[ -f "$git_env_file" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$git_env_file"
+  set +a
+fi
+
 ssh_key="${LIFEOS_VPS_SSH_KEY:-/mnt/c/Users/bella/.ssh/id_ed25519}"
 ssh_target="${LIFEOS_VPS_SSH_TARGET:-ubuntu@84.8.221.51}"
 vps_repo="${LIFEOS_VPS_REPO:-/home/ubuntu/LifeOS}"
@@ -26,8 +34,14 @@ if [[ ! -f "$ssh_key" ]]; then
   exit 1
 fi
 
+git_push_cmd=(git push origin "$branch")
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+  git_push_cmd=(git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth_header" push origin "$branch")
+fi
+
 echo "Pushing $branch to origin..."
-git push origin "$branch"
+"${git_push_cmd[@]}"
 
 remote_services="${services[*]}"
 echo "Deploying $branch to $ssh_target:$vps_repo ..."
