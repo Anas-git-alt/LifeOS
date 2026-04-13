@@ -23,12 +23,14 @@ from app.services.provider_router import LLMProvidersExhaustedError, chat_comple
 from app.services.risk_engine import is_approval_eligible_action_type, should_require_approval
 from app.services.workspace import (
     apply_workspace_actions,
+    describe_workspace_listing_request,
     get_agent_workspace_paths,
     get_openviking_context,
     infer_workspace_actions_from_user_message,
     parse_workspace_actions,
     reject_workspace_delete_action,
     workspace_action_instructions,
+    workspace_read_only_instructions,
 )
 from app.config import settings
 from app.services.seed import SCHEDULED_PROMPTS
@@ -46,6 +48,10 @@ MEMORY_UNAVAILABLE_MESSAGE = (
 _NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
 _WORKSPACE_REQUEST_PATTERN = re.compile(
     r"\b(file|workspace|directory|folder|write|create|save|edit|update|delete|remove|restore|\.md|\.txt)\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_MUTATION_REQUEST_PATTERN = re.compile(
+    r"\b(write|create|save|edit|update|delete|remove|restore|rename|move|modify|patch)\b",
     re.IGNORECASE,
 )
 _WORKSPACE_SUCCESS_CLAIM_PATTERN = re.compile(
@@ -351,11 +357,20 @@ async def handle_message(
         )
         workspace_paths = get_agent_workspace_paths(agent)
         if agent.workspace_enabled:
-            system_prompt = (
-                f"{system_prompt}\n"
-                "--- WORKSPACE ACCESS ---\n"
-                f"{workspace_action_instructions(agent_name, workspace_paths)}\n"
-            )
+            if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or ""):
+                system_prompt = (
+                    f"{system_prompt}\n"
+                    "--- WORKSPACE ACCESS ---\n"
+                    f"{workspace_action_instructions(agent_name, workspace_paths)}\n"
+                )
+            else:
+                system_prompt = (
+                    f"{system_prompt}\n"
+                    "--- WORKSPACE ACCESS ---\n"
+                    f"{workspace_read_only_instructions(workspace_paths)}\n"
+                )
+            if response_text is None:
+                response_text = describe_workspace_listing_request(user_message, workspace_paths)
 
         if response_text is None:
             reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}

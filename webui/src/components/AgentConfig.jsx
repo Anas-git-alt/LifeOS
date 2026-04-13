@@ -292,6 +292,8 @@ export default function AgentConfig({ agentName, onBack }) {
     const supported = new Set(selectedTtsModel.supports_languages || []);
     return supported.has(form.default_language || "en");
   }, [selectedTtsModel, form.default_language]);
+  const showVoiceSettings = Boolean(form.speech_enabled);
+  const showWorkspaceSettings = Boolean(form.workspace_enabled);
 
   async function handleCreateSession() {
     try {
@@ -711,198 +713,202 @@ export default function AgentConfig({ agentName, onBack }) {
             </label>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div className="form-group">
-              <label>TTS Engine</label>
-              <select
-                value={form.tts_engine || "chatterbox_turbo"}
-                onChange={(event) => {
-                  const nextEngine = event.target.value;
-                  const options = ttsModels.filter((model) => model.engine === nextEngine);
-                  setForm({
-                    ...form,
-                    tts_engine: nextEngine,
-                    tts_model_id: options[0]?.model_id || "",
-                  });
-                }}
-              >
-                {Array.from(new Set(ttsModels.map((model) => model.engine))).map((engine) => (
-                  <option key={engine} value={engine}>
-                    {engine}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>TTS Model</label>
-              <select
-                value={form.tts_model_id || ""}
-                onChange={(event) => setForm({ ...form, tts_model_id: event.target.value })}
-              >
-                {ttsModels
-                  .filter((model) => model.engine === form.tts_engine)
-                  .map((model) => (
-                    <option key={`${model.engine}:${model.model_id}`} value={model.model_id}>
-                      {model.display_name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div className="form-group">
-              <label>Voice ID / Speaker</label>
-              <input
-                value={form.voice_id || ""}
-                onChange={(event) => setForm({ ...form, voice_id: event.target.value })}
-                placeholder="Optional speaker/voice key"
-              />
-            </div>
-            <div className="form-group">
-              <label>Default Language</label>
-              <select
-                value={form.default_language || "en"}
-                onChange={(event) => setForm({ ...form, default_language: event.target.value })}
-              >
-                <option value="en">English</option>
-                <option value="fr">French</option>
-                <option value="ar">Arabic</option>
-              </select>
-            </div>
-          </div>
-
-          {!languageSupported && (
-            <div className="token-banner-error" style={{ marginBottom: 12 }}>
-              Selected TTS model does not support {form.default_language?.toUpperCase()}. Choose a compatible model.
-            </div>
-          )}
-
-          <div className="form-group">
-            <label>Voice Instructions</label>
-            <textarea
-              rows={3}
-              value={form.voice_instructions || ""}
-              onChange={(event) => setForm({ ...form, voice_instructions: event.target.value })}
-              placeholder="Tone and style guidance for this agent voice"
-            />
-          </div>
-
-          <details style={{ marginBottom: 14 }}>
-            <summary style={{ cursor: "pointer" }}>Advanced voice controls</summary>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 12 }}>
+          {showVoiceSettings ? (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div className="form-group">
-                <label>Speed</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.voice_params_json?.speed ?? 1.0}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      voice_params_json: { ...(form.voice_params_json || {}), speed: Number(event.target.value) },
-                    })
-                  }
+                  <label>TTS Engine</label>
+                  <select
+                    value={form.tts_engine || "chatterbox_turbo"}
+                    onChange={(event) => {
+                      const nextEngine = event.target.value;
+                      const options = ttsModels.filter((model) => model.engine === nextEngine);
+                      setForm({
+                        ...form,
+                        tts_engine: nextEngine,
+                        tts_model_id: options[0]?.model_id || "",
+                      });
+                    }}
+                  >
+                    {Array.from(new Set(ttsModels.map((model) => model.engine))).map((engine) => (
+                      <option key={engine} value={engine}>
+                        {engine}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>TTS Model</label>
+                  <select
+                    value={form.tts_model_id || ""}
+                    onChange={(event) => setForm({ ...form, tts_model_id: event.target.value })}
+                  >
+                    {ttsModels
+                      .filter((model) => model.engine === form.tts_engine)
+                      .map((model) => (
+                        <option key={`${model.engine}:${model.model_id}`} value={model.model_id}>
+                          {model.display_name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="form-group">
+                  <label>Voice ID / Speaker</label>
+                  <input
+                    value={form.voice_id || ""}
+                    onChange={(event) => setForm({ ...form, voice_id: event.target.value })}
+                    placeholder="Optional speaker/voice key"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Default Language</label>
+                  <select
+                    value={form.default_language || "en"}
+                    onChange={(event) => setForm({ ...form, default_language: event.target.value })}
+                  >
+                    <option value="en">English</option>
+                    <option value="fr">French</option>
+                    <option value="ar">Arabic</option>
+                  </select>
+                </div>
+              </div>
+
+              {!languageSupported && (
+                <div className="token-banner-error" style={{ marginBottom: 12 }}>
+                  Selected TTS model does not support {form.default_language?.toUpperCase()}. Choose a compatible model.
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Voice Instructions</label>
+                <textarea
+                  rows={3}
+                  value={form.voice_instructions || ""}
+                  onChange={(event) => setForm({ ...form, voice_instructions: event.target.value })}
+                  placeholder="Tone and style guidance for this agent voice"
                 />
               </div>
-              <div className="form-group">
-                <label>Stability</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.voice_params_json?.stability ?? 0.7}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      voice_params_json: { ...(form.voice_params_json || {}), stability: Number(event.target.value) },
-                    })
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Temperature</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.voice_params_json?.temperature ?? 0.6}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      voice_params_json: { ...(form.voice_params_json || {}), temperature: Number(event.target.value) },
-                    })
-                  }
-                />
-              </div>
-              <div className="form-group">
-                <label>Emotion Intensity</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={form.voice_params_json?.emotion_intensity ?? 0.6}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      voice_params_json: {
-                        ...(form.voice_params_json || {}),
-                        emotion_intensity: Number(event.target.value),
-                      },
-                    })
-                  }
-                />
-              </div>
-            </div>
-            <div className="form-group">
-              <label>Reference Audio Path (Phase 2)</label>
-              <input
-                value={form.reference_audio_path || ""}
-                onChange={(event) => setForm({ ...form, reference_audio_path: event.target.value })}
-                placeholder="/app/storage/voices/ref.wav"
-              />
-            </div>
-            <div className="form-group">
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.voice_visible_in_runtime_picker)}
-                  onChange={(event) => setForm({ ...form, voice_visible_in_runtime_picker: event.target.checked })}
-                  style={{ width: "auto" }}
-                />
-                Visible in runtime voice picker
-              </label>
-            </div>
-          </details>
 
-          <div className="form-group">
-            <label>Preview text</label>
-            <textarea
-              rows={2}
-              value={form.preview_text || ""}
-              onChange={(event) => setForm({ ...form, preview_text: event.target.value })}
-            />
-          </div>
+              <details style={{ marginBottom: 14 }}>
+                <summary style={{ cursor: "pointer" }}>Advanced voice controls</summary>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginTop: 12 }}>
+                  <div className="form-group">
+                    <label>Speed</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={form.voice_params_json?.speed ?? 1.0}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          voice_params_json: { ...(form.voice_params_json || {}), speed: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Stability</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={form.voice_params_json?.stability ?? 0.7}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          voice_params_json: { ...(form.voice_params_json || {}), stability: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Temperature</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={form.voice_params_json?.temperature ?? 0.6}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          voice_params_json: { ...(form.voice_params_json || {}), temperature: Number(event.target.value) },
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Emotion Intensity</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={form.voice_params_json?.emotion_intensity ?? 0.6}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          voice_params_json: {
+                            ...(form.voice_params_json || {}),
+                            emotion_intensity: Number(event.target.value),
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Reference Audio Path (Phase 2)</label>
+                  <input
+                    value={form.reference_audio_path || ""}
+                    onChange={(event) => setForm({ ...form, reference_audio_path: event.target.value })}
+                    placeholder="/app/storage/voices/ref.wav"
+                  />
+                </div>
+                <div className="form-group">
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.voice_visible_in_runtime_picker)}
+                      onChange={(event) => setForm({ ...form, voice_visible_in_runtime_picker: event.target.checked })}
+                      style={{ width: "auto" }}
+                    />
+                    Visible in runtime voice picker
+                  </label>
+                </div>
+              </details>
 
-          <div className="action-row" style={{ marginBottom: 16 }}>
-            <button
-              className="btn btn-ghost"
-              onClick={handlePreviewVoice}
-              disabled={!form.speech_enabled || voicePreview.loading || !languageSupported}
-              type="button"
-            >
-              {voicePreview.loading ? "Generating preview..." : "Preview Voice"}
-            </button>
-          </div>
-          {voicePreview.error && (
-            <div className="token-banner-error" style={{ marginBottom: 12 }}>
-              {voicePreview.error}
-            </div>
-          )}
-          {voicePreview.audioB64 && (
-            <audio
-              controls
-              src={`data:audio/wav;base64,${voicePreview.audioB64}`}
-              style={{ width: "100%", marginBottom: 16 }}
-            />
-          )}
+              <div className="form-group">
+                <label>Preview text</label>
+                <textarea
+                  rows={2}
+                  value={form.preview_text || ""}
+                  onChange={(event) => setForm({ ...form, preview_text: event.target.value })}
+                />
+              </div>
+
+              <div className="action-row" style={{ marginBottom: 16 }}>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handlePreviewVoice}
+                  disabled={voicePreview.loading || !languageSupported}
+                  type="button"
+                >
+                  {voicePreview.loading ? "Generating preview..." : "Preview Voice"}
+                </button>
+              </div>
+              {voicePreview.error && (
+                <div className="token-banner-error" style={{ marginBottom: 12 }}>
+                  {voicePreview.error}
+                </div>
+              )}
+              {voicePreview.audioB64 && (
+                <audio
+                  controls
+                  src={`data:audio/wav;base64,${voicePreview.audioB64}`}
+                  style={{ width: "100%", marginBottom: 16 }}
+                />
+              )}
+            </>
+          ) : null}
 
           <hr style={{ margin: "20px 0", borderColor: "rgba(148,163,184,0.25)" }} />
 
@@ -918,88 +924,92 @@ export default function AgentConfig({ agentName, onBack }) {
               Enable OpenViking repo retrieval and file edits
             </label>
           </div>
-          <div className="form-group">
-            <label>Workspace Paths</label>
-            <textarea
-              rows={4}
-              value={form.workspace_paths_text || ""}
-              onChange={(event) => setForm({ ...form, workspace_paths_text: event.target.value })}
-              placeholder="/workspace"
-            />
-            <small>One absolute or repo-relative path per line. Deletes still require approval and every change is archived.</small>
-          </div>
-          <div className="form-group">
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.85 }}>
-              <input
-                type="checkbox"
-                checked={Boolean(form.workspace_delete_requires_approval)}
-                disabled
-                style={{ width: "auto" }}
-              />
-              File deletions require approval
-            </label>
-          </div>
-          <div className="action-row" style={{ marginBottom: 16 }}>
-            <button
-              className="btn btn-ghost"
-              onClick={handleSyncWorkspace}
-              disabled={syncingWorkspace}
-              type="button"
-            >
-              {syncingWorkspace ? "Syncing..." : "Sync Workspace Context"}
-            </button>
-          </div>
-
-          <div className="agent-card-header" style={{ marginBottom: 12 }}>
-            <h3 style={{ margin: 0 }}>Archive History</h3>
-            <span className="meta-tag">{archives.length} entries</span>
-          </div>
-          {archiveLoading ? (
-            <p>Loading archive entries...</p>
-          ) : archives.length === 0 ? (
-            <p>No archived workspace changes yet.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 12, marginBottom: 20 }}>
-              {archives.map((entry) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    border: "1px solid rgba(148,163,184,0.18)",
-                    borderRadius: 12,
-                    padding: 14,
-                    display: "grid",
-                    gap: 8,
-                  }}
+          {showWorkspaceSettings ? (
+            <>
+              <div className="form-group">
+                <label>Workspace Paths</label>
+                <textarea
+                  rows={4}
+                  value={form.workspace_paths_text || ""}
+                  onChange={(event) => setForm({ ...form, workspace_paths_text: event.target.value })}
+                  placeholder="/workspace"
+                />
+                <small>One absolute or repo-relative path per line. Deletes still require approval and every change is archived.</small>
+              </div>
+              <div className="form-group">
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "not-allowed", opacity: 0.85 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.workspace_delete_requires_approval)}
+                    disabled
+                    style={{ width: "auto" }}
+                  />
+                  File deletions require approval
+                </label>
+              </div>
+              <div className="action-row" style={{ marginBottom: 16 }}>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleSyncWorkspace}
+                  disabled={syncingWorkspace}
+                  type="button"
                 >
-                  <div className="agent-card-header">
-                    <div>
-                      <strong>{entry.display_path}</strong>
-                      <div style={{ fontSize: 12, opacity: 0.75 }}>
-                        {entry.operation_type} by {entry.agent_name}
+                  {syncingWorkspace ? "Syncing..." : "Sync Workspace Context"}
+                </button>
+              </div>
+
+              <div className="agent-card-header" style={{ marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Archive History</h3>
+                <span className="meta-tag">{archives.length} entries</span>
+              </div>
+              {archiveLoading ? (
+                <p>Loading archive entries...</p>
+              ) : archives.length === 0 ? (
+                <p>No archived workspace changes yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 12, marginBottom: 20 }}>
+                  {archives.map((entry) => (
+                    <div
+                      key={entry.id}
+                      style={{
+                        border: "1px solid rgba(148,163,184,0.18)",
+                        borderRadius: 12,
+                        padding: 14,
+                        display: "grid",
+                        gap: 8,
+                      }}
+                    >
+                      <div className="agent-card-header">
+                        <div>
+                          <strong>{entry.display_path}</strong>
+                          <div style={{ fontSize: 12, opacity: 0.75 }}>
+                            {entry.operation_type} by {entry.agent_name}
+                          </div>
+                        </div>
+                        <span className="meta-tag">{entry.status}</span>
+                      </div>
+                      <div style={{ fontSize: 13, opacity: 0.8 }}>
+                        Archive #{entry.id} • {formatArchiveTime(entry.resolved_at || entry.created_at)}
+                      </div>
+                      <div className="action-row">
+                        <button
+                          className="btn btn-ghost"
+                          type="button"
+                          onClick={() => handleRestoreArchive(entry)}
+                          disabled={!entry.archive_path}
+                        >
+                          Restore
+                        </button>
+                        {entry.pending_action_id ? (
+                          <span className="meta-tag">Approval #{entry.pending_action_id}</span>
+                        ) : null}
                       </div>
                     </div>
-                    <span className="meta-tag">{entry.status}</span>
-                  </div>
-                  <div style={{ fontSize: 13, opacity: 0.8 }}>
-                    Archive #{entry.id} • {formatArchiveTime(entry.resolved_at || entry.created_at)}
-                  </div>
-                  <div className="action-row">
-                    <button
-                      className="btn btn-ghost"
-                      type="button"
-                      onClick={() => handleRestoreArchive(entry)}
-                      disabled={!entry.archive_path}
-                    >
-                      Restore
-                    </button>
-                    {entry.pending_action_id ? (
-                      <span className="meta-tag">Approval #{entry.pending_action_id}</span>
-                    ) : null}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
+              )}
+            </>
+          ) : null}
 
           <div className="action-row">
             <button className="btn btn-primary" onClick={handleSaveSettings} disabled={saving}>
