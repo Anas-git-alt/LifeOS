@@ -267,6 +267,23 @@ The following phase-1 cleanup work has now been applied in the repo:
 - ad-hoc backend root scripts were moved into `scripts/manual/`
 - tracked `:Zone.Identifier`, stray runtime DB, and generated artifact files were removed from git
 
+## Cleanup Phase 2 Implemented
+
+The following phase-2 hygiene work has now been applied in the repo:
+
+- expanded `.gitattributes` so core text/config files are explicitly normalized to LF
+- added `.editorconfig` so editors and agents default to the same newline/indent rules
+- renormalized the CRLF-tracked workflow/config files that were making the VPS mirror look dirty
+- added `scripts/check_repo_hygiene.py` to catch:
+  - tracked `:Zone.Identifier` files
+  - tracked runtime/generated artifacts
+  - CRLF in tracked text files
+  - missing repo hygiene contract files
+
+Current recommended maintenance command:
+
+- `python3 scripts/check_repo_hygiene.py`
+
 ## Recommended Cleanup Order
 
 1. Remove tracked `:Zone.Identifier` files from git.

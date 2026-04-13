@@ -12,6 +12,15 @@
 *.yaml text eol=lf
 *.json text eol=lf
 *.sh text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.conf text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+.github/workflows/*.yml text eol=lf
+.gitignore text eol=lf
+Dockerfile text eol=lf
+**/Dockerfile text eol=lf
 
 # Treat binary files as binary (no newline conversion).
 *.png binary
