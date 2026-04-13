@@ -44,8 +44,11 @@ def _best_manifest_path() -> str:
     preferred = settings.data_manifest_path
     try:
         preferred.parent.mkdir(parents=True, exist_ok=True)
+        probe = preferred.parent / ".lifeos-write-test"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
         return str(preferred)
-    except PermissionError:
+    except OSError:
         fallback = settings.legacy_storage_root_path / "manifest.json"
         fallback.parent.mkdir(parents=True, exist_ok=True)
         return str(fallback)
