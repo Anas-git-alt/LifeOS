@@ -14,7 +14,7 @@ git_env_file="${LIFEOS_GIT_ENV_FILE:-$REPO_ROOT/.venv/.env}"
 if [[ -f "$git_env_file" ]]; then
   set -a
   # shellcheck disable=SC1090
-  source "$git_env_file"
+  source <(sed 's/\r$//' "$git_env_file")
   set +a
 fi
 
