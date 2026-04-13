@@ -438,6 +438,66 @@ async def test_handle_message_rewrites_false_workspace_success_claims(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_handle_message_answers_directory_listing_without_llm(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+    chat_completion = AsyncMock(return_value="should not be used")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr(
+        "app.services.orchestrator.describe_workspace_listing_request",
+        lambda _message, _paths: "Here are the files in `docs`:\n- `docs/README.md`",
+    )
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="give list files inside docs folder that's this workspace",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "Here are the files in `docs`:\n- `docs/README.md`"
+    assert result["pending_action_id"] is None
+    assert chat_completion.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_message_uses_read_only_workspace_instructions_for_repo_questions(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
+        captured["messages"] = messages
+        return "Here is the repo summary."
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr("app.services.orchestrator.describe_workspace_listing_request", lambda _message, _paths: None)
+    monkeypatch.setattr("app.services.orchestrator.get_openviking_context", AsyncMock(return_value=""))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="summarize the docs folder structure",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "Here is the repo summary."
+    assert "Do not include [WORKSPACE_ACTIONS]" in captured["messages"][0]["content"]
+    assert "You may modify files only" not in captured["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_handle_message_inferrs_direct_delete_into_real_workspace_approval(monkeypatch):
     agent = _make_agent(workspace_enabled=True)
     factory = _FakeSessionFactory(agent)

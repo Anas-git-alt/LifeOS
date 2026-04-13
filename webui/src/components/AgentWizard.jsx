@@ -37,10 +37,12 @@ export default function AgentWizard() {
       enabled: true,
       config_json: { approval_policy: form.approval_policy },
       workspace_enabled: Boolean(form.workspace_enabled),
-      workspace_paths: form.workspace_paths_text
-        .split("\n")
-        .map((value) => value.trim())
-        .filter(Boolean),
+      workspace_paths: form.workspace_enabled
+        ? form.workspace_paths_text
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [],
       workspace_delete_requires_approval: true,
     };
     try {
@@ -131,16 +133,18 @@ export default function AgentWizard() {
             Enable workspace retrieval and file edits
           </label>
         </div>
-        <div className="form-group">
-          <label>Workspace Paths</label>
-          <textarea
-            rows={3}
-            value={form.workspace_paths_text}
-            onChange={(e) => setForm((prev) => ({ ...prev, workspace_paths_text: e.target.value }))}
-            placeholder={DEFAULT_WORKSPACE_PATH}
-          />
-          <small>One absolute or repo-relative path per line. New agents stay read-only unless workspace is enabled.</small>
-        </div>
+        {form.workspace_enabled ? (
+          <div className="form-group">
+            <label>Workspace Paths</label>
+            <textarea
+              rows={3}
+              value={form.workspace_paths_text}
+              onChange={(e) => setForm((prev) => ({ ...prev, workspace_paths_text: e.target.value }))}
+              placeholder={DEFAULT_WORKSPACE_PATH}
+            />
+            <small>One absolute or repo-relative path per line. New agents stay read-only unless workspace is enabled.</small>
+          </div>
+        ) : null}
         <label className="checkbox-row">
           <input type="checkbox" checked={queueForApproval} onChange={(e) => setQueueForApproval(e.target.checked)} />
           Queue in approval flow (recommended)

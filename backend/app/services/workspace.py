@@ -45,6 +45,54 @@ _DIRECT_DELETE_PATH_PATTERN = re.compile(
     r"(?:`([^`]+)`|\"([^\"]+)\"|'([^']+)'|(\S+))\s*$",
     re.IGNORECASE,
 )
+_LIST_DIRECTORY_VERB_PATTERN = re.compile(
+    r"\b(?:list|show|display|give|what(?:'s| is)?(?:\s+the)?|which)\b",
+    re.IGNORECASE,
+)
+_LIST_DIRECTORY_TARGET_PATTERN = re.compile(r"\b(?:files?|contents?|entries|items?)\b", re.IGNORECASE)
+_LIST_DIRECTORY_EXTENSION_PATTERN = re.compile(r"\b([A-Za-z0-9.]{1,12})\s+files?\b", re.IGNORECASE)
+_QUOTED_PATH_PATTERN = re.compile(r"`([^`]+)`|\"([^\"]+)\"|'([^']+)'")
+_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w.])(\/[A-Za-z0-9._\/-]+)")
+_LABELED_DIRECTORY_PATTERN = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9._/-]*)\s+(?:folder|directory)\b", re.IGNORECASE)
+_PREPOSITION_PATH_PATTERN = re.compile(
+    r"\b(?:in|inside|under|within|of)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9._/-]*)\b",
+    re.IGNORECASE,
+)
+_WORKSPACE_LISTING_STOP_WORDS = {
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "workspace",
+    "repo",
+    "repository",
+    "project",
+    "codebase",
+    "folder",
+    "directory",
+    "files",
+    "contents",
+    "list",
+    "show",
+    "display",
+    "give",
+    "what",
+    "which",
+    "all",
+}
+_WORKSPACE_EXTENSION_ALIASES = {
+    "markdown": ".md",
+    "md": ".md",
+    "python": ".py",
+    "py": ".py",
+    "javascript": ".js",
+    "js": ".js",
+    "typescript": ".ts",
+    "ts": ".ts",
+    "text": ".txt",
+    "txt": ".txt",
+}
 OPENVIKING_IGNORE_DIRS = ",".join(
     [
         ".git",
@@ -193,6 +241,128 @@ def workspace_action_instructions(_agent_name: str, workspace_paths: list[str]) 
         "Do not include the block unless you actually want LifeOS to execute file changes. "
         "Keep normal human-facing explanation outside the block."
     )
+
+
+def workspace_read_only_instructions(workspace_paths: list[str]) -> str:
+    joined_paths = ", ".join(workspace_paths)
+    return (
+        "This request is read-only workspace access.\n"
+        f"Allowed read scope: {joined_paths}\n"
+        "Do not include [WORKSPACE_ACTIONS] for listing, reading, summarizing, or searching files.\n"
+        "Do not create helper scripts, temp files, or scratch artifacts just to inspect the workspace.\n"
+        "If exact file names or folder contents are provided in system context, rely on that context directly.\n"
+        "If you still lack enough repo context, say so plainly instead of claiming you already changed or inspected files."
+    )
+
+
+def _dedupe_workspace_candidates(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in values:
+        cleaned = str(raw or "").strip().strip("`\"'.,:;!?()[]{}")
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in _WORKSPACE_LISTING_STOP_WORDS:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def _workspace_listing_candidates(user_message: str) -> list[str]:
+    text = str(user_message or "")
+    candidates: list[str] = []
+    for match in _QUOTED_PATH_PATTERN.finditer(text):
+        candidates.extend(group for group in match.groups() if group)
+    for match in _ABSOLUTE_PATH_PATTERN.finditer(text):
+        candidates.append(match.group(1))
+    for match in _LABELED_DIRECTORY_PATTERN.finditer(text):
+        candidates.append(match.group(1))
+    for match in _PREPOSITION_PATH_PATTERN.finditer(text):
+        candidates.append(match.group(1))
+    return _dedupe_workspace_candidates(candidates)
+
+
+def _workspace_listing_path_variants(raw_path: str, allowed_roots: list[Path]) -> list[str]:
+    cleaned = str(raw_path or "").strip().strip("`\"'.,:;!?()[]{}")
+    if not cleaned:
+        return []
+    variants = [cleaned]
+    if cleaned.startswith("/"):
+        root_strings = [str(root) for root in allowed_roots]
+        if not any(cleaned == root or cleaned.startswith(f"{root}/") for root in root_strings):
+            variants.append(cleaned.lstrip("/"))
+    return _dedupe_workspace_candidates(variants)
+
+
+def describe_workspace_listing_request(user_message: str, workspace_paths: list[str]) -> str | None:
+    text = str(user_message or "").strip()
+    if not text:
+        return None
+    if not _LIST_DIRECTORY_VERB_PATTERN.search(text) or not _LIST_DIRECTORY_TARGET_PATTERN.search(text):
+        return None
+
+    extension_match = _LIST_DIRECTORY_EXTENSION_PATTERN.search(text)
+    extension_filter = None
+    if extension_match:
+        raw_extension = extension_match.group(1).lower().lstrip(".")
+        if raw_extension and raw_extension not in _WORKSPACE_LISTING_STOP_WORDS:
+            extension_filter = _WORKSPACE_EXTENSION_ALIASES.get(raw_extension, f".{raw_extension}")
+    wants_files_only = bool(re.search(r"\bfiles?\b", text, re.IGNORECASE))
+    allowed_roots = [Path(path).resolve() for path in sanitize_workspace_paths(workspace_paths)]
+
+    for raw_candidate in _workspace_listing_candidates(text):
+        for candidate in _workspace_listing_path_variants(raw_candidate, allowed_roots):
+            try:
+                _, resolved = _resolve_target_path(candidate, allowed_roots)
+            except PermissionError:
+                continue
+            if not resolved.exists():
+                continue
+
+            target_dir = resolved if resolved.is_dir() else resolved.parent
+            try:
+                children = sorted(target_dir.iterdir(), key=lambda entry: (not entry.is_file(), entry.name.lower()))
+            except OSError as exc:
+                return f"I couldn't inspect `{_display_path(target_dir)}` because of a filesystem error: {exc}."
+
+            labels: list[str] = []
+            for child in children:
+                if wants_files_only and not child.is_file():
+                    continue
+                if extension_filter and child.suffix.lower() != extension_filter:
+                    continue
+                label = _display_path(child)
+                if child.is_dir():
+                    label = f"{label}/"
+                labels.append(f"- `{label}`")
+
+            if not labels:
+                if extension_filter:
+                    descriptor = f"`{extension_filter}` files"
+                elif wants_files_only:
+                    descriptor = "files"
+                else:
+                    descriptor = "entries"
+                return f"I checked `{_display_path(target_dir)}` and it has no {descriptor}."
+
+            limited_labels = labels[:60]
+            overflow_note = "\n- `...`" if len(labels) > 60 else ""
+            if extension_filter:
+                descriptor = f"`{extension_filter}` files"
+            elif wants_files_only:
+                descriptor = "files"
+            else:
+                descriptor = "entries"
+            return (
+                f"Here are the {descriptor} in `{_display_path(target_dir)}`:\n"
+                f"{chr(10).join(limited_labels)}{overflow_note}"
+            )
+
+    return None
 
 
 def parse_workspace_actions(response_text: str) -> tuple[str, WorkspaceActionEnvelope | None]:
