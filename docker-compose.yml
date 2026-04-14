@@ -12,8 +12,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
-      - ./storage/tts-models:/model-cache
-      - ./data:/app/data
+      - ${LIFEOS_TTS_MODEL_CACHE_DIR:-./storage/tts-models}:/model-cache
+      - ${LIFEOS_DATA_DIR:-./data}:/app/data
     healthcheck:
       test:
         [
@@ -51,7 +51,7 @@ services:
       - python3
       - /config/start_openviking.py
     volumes:
-      - ./storage/openviking:/app/data
+      - ${LIFEOS_OPENVIKING_DIR:-./storage/openviking}:/app/data
       - ./:/workspace:ro
       - ./openviking:/config:ro
     healthcheck:
@@ -76,8 +76,8 @@ services:
     ports:
       - "127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}:8000"
     volumes:
-      - ./data:/app/data
-      - ./storage:/app/storage
+      - ${LIFEOS_DATA_DIR:-./data}:/app/data
+      - ${LIFEOS_STORAGE_DIR:-./storage}:/app/storage
       - ./skills:/app/skills
       - ./:/workspace
     env_file:

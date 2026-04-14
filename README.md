@@ -32,6 +32,13 @@ mkdir -p .venv
 cp .env.example .venv/.env
 ```
 
+Optional, if you want zero user runtime data inside repo:
+
+```bash
+cp compose.env.example .env
+# edit .env with absolute host paths outside repo
+```
+
 2. Edit `.venv/.env` and set at least:
 
 - `DISCORD_BOT_TOKEN`
@@ -61,6 +68,12 @@ curl http://localhost:8100/api/readiness
 ```
 
 5. Open the control plane at [http://localhost:3100](http://localhost:3100) and paste `API_SECRET_KEY` into the token banner.
+
+Runtime-data note:
+
+- `.venv/.env` is for app secrets and service env vars.
+- repo-root `.env` is optional and only for Docker host mount overrides such as runtime data paths.
+- See [docs/RUNTIME_DATA.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/RUNTIME_DATA.md) if you want a clean repo with runtime data stored elsewhere.
 
 ## First-Use Checklist
 

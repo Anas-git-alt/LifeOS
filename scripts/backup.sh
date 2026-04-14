@@ -3,34 +3,21 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+REPO_ROOT="$(pwd)"
 
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 BRANCH="main"
 
 echo "LifeOS Backup - $TIMESTAMP"
 
-DB_PATH=$(python3 - <<'PY'
-from pathlib import Path
-import json
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source <(sed 's/\r$//' "$REPO_ROOT/.env")
+  set +a
+fi
 
-candidates = []
-for manifest_path in (Path("data/manifest.json"), Path("storage/manifest.json")):
-    if not manifest_path.exists():
-        continue
-    try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        candidates.append(payload.get("active", {}).get("database_path", ""))
-        candidates.append(payload.get("legacy", {}).get("database_path", ""))
-    except Exception:
-        pass
-candidates.extend(["data/sqlite/lifeos.db", "storage/lifeos.db"])
-for raw in candidates:
-    value = str(raw or "").strip()
-    if value and Path(value).exists():
-        print(value)
-        break
-PY
-)
+DB_PATH="$(python3 scripts/runtime_path_probe.py db)"
 
 if [ -n "$DB_PATH" ] && [ -f "$DB_PATH" ]; then
   DB_PATH="$DB_PATH" python3 - <<'PY'
