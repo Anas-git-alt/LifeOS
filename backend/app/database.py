@@ -246,6 +246,18 @@ def run_migrations() -> None:
                 cur.execute(
                     "ALTER TABLE agents ADD COLUMN voice_visible_in_runtime_picker BOOLEAN NOT NULL DEFAULT 1"
                 )
+            if "memory_scopes_json" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN memory_scopes_json JSON")
+            if "shared_domains_json" not in agent_cols:
+                cur.execute("ALTER TABLE agents ADD COLUMN shared_domains_json JSON")
+            if "vault_write_mode" not in agent_cols:
+                cur.execute(
+                    "ALTER TABLE agents ADD COLUMN vault_write_mode VARCHAR(40) NOT NULL DEFAULT 'structured_direct_write'"
+                )
+            if "promotion_policy" not in agent_cols:
+                cur.execute(
+                    "ALTER TABLE agents ADD COLUMN promotion_policy VARCHAR(40) NOT NULL DEFAULT 'manual'"
+                )
 
         for file_path in sorted(migrations_dir.glob("*.sql")):
             version = file_path.stem
@@ -261,7 +273,7 @@ def run_migrations() -> None:
             # Fresh databases also rely on ORM create_all() for the latest
             # agents table shape. Skip ALTER-based workspace migrations when
             # the base agents table does not exist yet.
-            if version == "202603220001_openviking_workspace" and "agents" not in existing_tables:
+            if version in {"202603220001_openviking_workspace", "202604150001_obsidian_shared_memory"} and "agents" not in existing_tables:
                 cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
                 applied.add(version)
                 continue
@@ -298,6 +310,7 @@ async def init_db():
         QuranReading,
         RuntimeState,
         ScheduledJob,
+        SharedMemoryProposal,
         SystemSettings,
         TTSModelRegistry,
         UserProfile,

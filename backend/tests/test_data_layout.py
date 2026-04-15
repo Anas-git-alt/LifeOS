@@ -49,6 +49,7 @@ def test_ensure_data_layout_writes_manifest_under_data_root(tmp_path, monkeypatc
         data_root=str(tmp_path / "data"),
         legacy_storage_root=str(legacy_root),
         workspace_repo_root=str(tmp_path / "repo"),
+        obsidian_vault_root="",
         database_url="",
         workspace_archive_root="",
     )
@@ -63,3 +64,7 @@ def test_ensure_data_layout_writes_manifest_under_data_root(tmp_path, monkeypatc
     assert payload == manifest
     assert payload["active"]["database_path"] == str(legacy_db.resolve())
     assert payload["canonical"]["database_path"] == str((tmp_path / "data" / "sqlite" / "lifeos.db").resolve())
+    assert payload["active"]["memory_router_version"] == 1
+    assert payload["active"]["shared_memory_root"] == str((tmp_path / "data" / "shared").resolve())
+    assert payload["active"]["obsidian_vault_root"] == ""
+    assert payload["active"]["shared_index_roots"] == []

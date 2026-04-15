@@ -67,12 +67,27 @@ class Agent(Base):
     workspace_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     workspace_paths_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     workspace_delete_requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    memory_scopes_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    shared_domains_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    vault_write_mode: Mapped[str] = mapped_column(String(40), default="structured_direct_write")
+    promotion_policy: Mapped[str] = mapped_column(String(40), default="manual")
 
     @property
     def workspace_paths(self) -> list[str]:
         raw = self.workspace_paths_json or []
         values = [str(path) for path in raw if str(path).strip()]
         return values or [str(settings.workspace_repo_root_path)]
+
+    @property
+    def memory_scopes(self) -> list[str]:
+        raw = self.memory_scopes_json or []
+        values = [str(value).strip() for value in raw if str(value).strip()]
+        return values or ["shared_global", "shared_domain", "agent_private", "session"]
+
+    @property
+    def shared_domains(self) -> list[str]:
+        raw = self.shared_domains_json or []
+        return [str(value).strip() for value in raw if str(value).strip()]
 
 
 class TTSModelRegistry(Base):
@@ -271,6 +286,34 @@ class WorkspaceArchiveEntry(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class SharedMemoryProposal(Base):
+    __tablename__ = "shared_memory_proposals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_agent: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_session_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("chat_sessions.id"),
+        nullable=True,
+    )
+    scope: Mapped[str] = mapped_column(String(40), nullable=False)
+    domain: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_path: Mapped[str] = mapped_column(Text, nullable=False)
+    proposal_path: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    current_checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    conflict_reason: Mapped[str] = mapped_column(String(60), nullable=False, default="checksum_mismatch")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    proposed_content: Mapped[str] = mapped_column(Text, nullable=False)
+    note_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class AuditLog(Base):
@@ -574,6 +617,12 @@ class AgentCreate(BaseModel):
     workspace_enabled: bool = False
     workspace_paths: list[str] = Field(default_factory=lambda: [str(settings.workspace_repo_root_path)])
     workspace_delete_requires_approval: bool = True
+    memory_scopes: list[str] = Field(
+        default_factory=lambda: ["shared_global", "shared_domain", "agent_private", "session"]
+    )
+    shared_domains: list[str] = Field(default_factory=list)
+    vault_write_mode: str = "structured_direct_write"
+    promotion_policy: str = "manual"
 
 
 class AgentUpdate(BaseModel):
@@ -600,6 +649,10 @@ class AgentUpdate(BaseModel):
     workspace_enabled: Optional[bool] = None
     workspace_paths: Optional[list[str]] = None
     workspace_delete_requires_approval: Optional[bool] = None
+    memory_scopes: Optional[list[str]] = None
+    shared_domains: Optional[list[str]] = None
+    vault_write_mode: Optional[str] = None
+    promotion_policy: Optional[str] = None
 
 
 class AgentResponse(BaseModel):
@@ -629,6 +682,10 @@ class AgentResponse(BaseModel):
     workspace_enabled: bool
     workspace_paths: list[str]
     workspace_delete_requires_approval: bool
+    memory_scopes: list[str]
+    shared_domains: list[str]
+    vault_write_mode: str
+    promotion_policy: str
 
     class Config:
         from_attributes = True
@@ -675,6 +732,7 @@ class ChatResponse(BaseModel):
     risk_level: str = "low"
     session_id: Optional[int] = None
     session_title: Optional[str] = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ChatSessionCreate(BaseModel):
@@ -911,6 +969,79 @@ class WorkspaceArchiveEntryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SharedMemorySearchHit(BaseModel):
+    title: str
+    path: str
+    scope: str
+    domain: Optional[str] = None
+    score: Optional[float] = None
+    source: str
+    snippet: str = ""
+    uri: Optional[str] = None
+
+
+class SharedMemorySearchResponse(BaseModel):
+    query: str
+    scope: Optional[str] = None
+    domain: Optional[str] = None
+    hits: list[SharedMemorySearchHit] = Field(default_factory=list)
+
+
+class SharedMemoryPromoteRequest(BaseModel):
+    agent_name: str
+    title: str
+    content: str
+    scope: Literal["shared_global", "shared_domain", "agent_private"] = "shared_domain"
+    domain: Optional[str] = None
+    session_id: Optional[int] = None
+    source_uri: Optional[str] = None
+    target_path: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    confidence: Optional[str] = None
+    verified_at: Optional[str] = None
+    expected_checksum: Optional[str] = None
+    managed_by: str = "lifeos"
+    status: str = "active"
+
+
+class SharedMemoryPromoteResponse(BaseModel):
+    status: str
+    target_path: str
+    proposal_id: Optional[int] = None
+    proposal_path: Optional[str] = None
+    archive_entry_ids: list[int] = Field(default_factory=list)
+    checksum: Optional[str] = None
+    note_uri: Optional[str] = None
+
+
+class SharedMemoryProposalResponse(BaseModel):
+    id: int
+    source_agent: str
+    source_session_id: Optional[int]
+    scope: str
+    domain: Optional[str]
+    title: str
+    target_path: str
+    proposal_path: str
+    expected_checksum: Optional[str]
+    current_checksum: Optional[str]
+    source_uri: Optional[str]
+    conflict_reason: str
+    status: str
+    proposed_content: str
+    note_metadata_json: Optional[dict[str, Any]]
+    created_at: datetime
+    applied_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class SharedMemoryProposalApplyRequest(BaseModel):
+    source_agent: str = "webui"
 
 
 class LifeItemCreate(BaseModel):

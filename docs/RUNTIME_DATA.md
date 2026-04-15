@@ -23,6 +23,7 @@ LIFEOS_DATA_DIR=/home/you/.lifeos-runtime/data
 LIFEOS_STORAGE_DIR=/home/you/.lifeos-runtime/storage
 LIFEOS_OPENVIKING_DIR=/home/you/.lifeos-runtime/storage/openviking
 LIFEOS_TTS_MODEL_CACHE_DIR=/home/you/.lifeos-runtime/storage/tts-models
+LIFEOS_OBSIDIAN_VAULT_DIR=/home/you/.lifeos-runtime/obsidian-vault
 ```
 
 Notes:
@@ -30,6 +31,7 @@ Notes:
 - `.env` here is for Docker Compose host mount paths.
 - `.venv/.env` still holds app secrets and service env vars.
 - Backend still sees `/app/data` and `/app/storage` in-container, so app behavior does not change.
+- For shared-memory vault mode, set `OBSIDIAN_VAULT_ROOT=/obsidian-vault` in `.venv/.env`. Compose mounts `LIFEOS_OBSIDIAN_VAULT_DIR` there for both backend and OpenViking.
 
 ## Safe migration order
 

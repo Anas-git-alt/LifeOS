@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     workspace_archive_root: str = ""
     data_root: str = DEFAULT_DATA_ROOT
     legacy_storage_root: str = DEFAULT_LEGACY_STORAGE_ROOT
+    obsidian_vault_root: str = ""
+    obsidian_index_enabled: bool = True
+    obsidian_private_namespaces_enabled: bool = True
     discord_audit_channel: str = ""
     tts_worker_url: str = "http://tts-worker:8010"
     tts_request_timeout_seconds: float = 45.0
@@ -219,6 +222,24 @@ class Settings(BaseSettings):
     @property
     def data_manifest_path(self) -> Path:
         return self.data_root_path / "manifest.json"
+
+    @property
+    def obsidian_vault_root_path(self) -> Path | None:
+        value = (self.obsidian_vault_root or "").strip()
+        if not value:
+            return None
+        return Path(value).resolve(strict=False)
+
+    @property
+    def shared_memory_root_path(self) -> Path:
+        vault_root = self.obsidian_vault_root_path
+        if vault_root is not None:
+            return (vault_root / "shared").resolve(strict=False)
+        return (self.data_root_path / "shared").resolve(strict=False)
+
+    @property
+    def memory_router_version(self) -> int:
+        return 1
 
     @property
     def data_layout_paths(self) -> list[Path]:

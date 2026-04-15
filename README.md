@@ -1,6 +1,6 @@
 # LifeOS
 
-LifeOS is a self-hosted AI agent system for personal operations. The current project state is a Discord-first workflow backed by a FastAPI API, a token-gated WebUI, OpenViking memory and workspace search, scheduled jobs, approval gates, prayer and Quran tracking, and optional voice/TTS playback.
+LifeOS is a self-hosted AI agent system for personal operations. The current project state is a Discord-first workflow backed by a FastAPI API, a token-gated WebUI, OpenViking runtime memory and workspace search, an optional Obsidian-based shared-memory vault, scheduled jobs, approval gates, prayer and Quran tracking, and optional voice/TTS playback.
 
 The recommended way to run it today is Docker Compose on Linux or WSL2.
 
@@ -19,6 +19,7 @@ Important runtime notes:
 - Most API routes require `X-LifeOS-Token`, which should match `API_SECRET_KEY`.
 - The WebUI asks for that token once and stores it in browser local storage.
 - The backend currently requires OpenViking to be enabled and reachable at startup.
+- If `OBSIDIAN_VAULT_ROOT` is configured, LifeOS treats that vault as the durable shared wiki and indexes it into OpenViking for targeted retrieval.
 - Backend and WebUI are intentionally bound to `127.0.0.1` by default. Put them behind a reverse proxy before exposing them remotely.
 
 ## Quick Start
@@ -51,8 +52,15 @@ Recommended:
 
 - `OPENVIKING_API_KEY` if you do not want OpenViking to reuse `API_SECRET_KEY`
 - `BRAVE_API_KEY` for Brave-backed web search instead of DuckDuckGo fallback
+- `OBSIDIAN_VAULT_ROOT=/obsidian-vault` if you want durable cross-agent shared memory in an external Obsidian vault mounted into Docker
 
 3. Run the startup check and start the stack.
+
+In WSL, make sure Docker Desktop integration or a local Docker daemon is already running first:
+
+```bash
+docker version
+```
 
 ```bash
 ./scripts/startup_self_check.sh
@@ -73,6 +81,7 @@ Runtime-data note:
 
 - `.venv/.env` is for app secrets and service env vars.
 - repo-root `.env` is optional and only for Docker host mount overrides such as runtime data paths.
+- In Docker/Compose, set `OBSIDIAN_VAULT_ROOT=/obsidian-vault` in `.venv/.env` and set `LIFEOS_OBSIDIAN_VAULT_DIR=/absolute/host/path` in repo-root `.env`.
 - See [docs/RUNTIME_DATA.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/RUNTIME_DATA.md) if you want a clean repo with runtime data stored elsewhere.
 
 ## First-Use Checklist
@@ -106,6 +115,7 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Use Discord for capture and lightweight execution. It is the fastest place to ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
 - Use WebUI for configuration and review. `Mission Control`, `Jobs`, `Approvals`, `Agents`, `Profile`, and `Settings` are the main operator surfaces.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
+- Use the Obsidian vault for durable shared knowledge. Session chat stays transient; promoted facts live in the vault and become available cross-agent by scope/domain.
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
 - Prefer approval queues for risky changes. New agents and natural-language job creation are safer when you queue them first and review them in `Approvals`.
 - Keep workspace access narrow. If an agent needs repo access, enable workspace support only for the paths it really needs, then use `Sync Workspace` and rely on archives for rollback.
@@ -156,6 +166,9 @@ python -m venv .python-venv
 source .python-venv/bin/activate
 cd backend
 pip install -r requirements.txt
+set -a
+source ../.venv/.env
+set +a
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -165,6 +178,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 source .python-venv/bin/activate
 cd discord-bot
 pip install -r requirements.txt
+set -a
+source ../.venv/.env
+set +a
 BACKEND_URL=http://localhost:8000 python -m bot.main
 ```
 
@@ -184,16 +200,42 @@ The Vite dev server runs on `http://localhost:3000` and proxies `/api` to `http:
 source .python-venv/bin/activate
 cd tts-worker
 pip install -r requirements.txt
+set -a
+source ../.venv/.env
+set +a
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
 ```
 
 OpenViking is easiest to run through Compose because the repo already ships the config wrapper used in production.
 
+## Shared Memory
+
+If `OBSIDIAN_VAULT_ROOT` is set, LifeOS bootstraps a managed vault layout and uses it as the durable shared-memory layer:
+
+- `shared/global`
+- `shared/domains/{work,health,deen,family,planning}`
+- `private/agents/{agent_name}`
+- `private/user`
+- `inbox/proposals`
+- `system/indexes`
+
+OpenViking remains the runtime search/index layer. Retrieval now prefers vault router notes and narrow domain hubs before semantic fallback.
+
+New API surfaces:
+
+- `POST /api/memory/promote`
+- `POST /api/memory/proposals/{id}/apply`
+- `GET /api/memory/shared/search`
+- `POST /api/vault/sync`
+- `GET /api/vault/conflicts`
+
 ## Tests And Ops Commands
 
 ```bash
-cd backend && pytest tests
+cd backend && ../.python-venv/bin/python -m pytest -q
+cd discord-bot && ../.python-venv/bin/python -m pytest -q
 cd webui && npm run test:run
+cd webui && npm run test:e2e
 ./scripts/startup_self_check.sh
 ./scripts/backup.sh
 ./scripts/verify_backup.sh
@@ -202,6 +244,7 @@ cd webui && npm run test:run
 
 Important:
 
+- The Python test commands above use the repo venv directly. If `.python-venv` is already activated, `python -m pytest -q` is enough.
 - `scripts/restore.sh` shuts the stack down, checks out a git target, and starts services again. Treat it as a controlled recovery action and avoid running it on a dirty worktree.
 - `scripts/backup.sh` commits and tags the current repo state, so make sure you actually want a repo-level backup before running it.
 
@@ -220,7 +263,12 @@ Important:
 
 - [README.md](README.md): overview, startup, and usage
 - [codebase.md](codebase.md): technical architecture and data flow
+- [TEST_REPORT.md](TEST_REPORT.md): historical WebUI bug report with link to current revalidation
+- [docs/VERIFICATION_2026-04-14.md](docs/VERIFICATION_2026-04-14.md): latest local + VPS verification snapshot
 - [docs/DISCORD_COMMANDS.md](docs/DISCORD_COMMANDS.md): bot command reference
+- [docs/DEV_VPS_WORKFLOW.md](docs/DEV_VPS_WORKFLOW.md): local branch to VPS workflow
 - [docs/LOCAL_PROD_RUNBOOK.md](docs/LOCAL_PROD_RUNBOOK.md): operator runbook
 - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md): release and smoke-test checklist
+- [docs/RUNTIME_DATA.md](docs/RUNTIME_DATA.md): runtime path and storage layout guidance
+- [docs/TEST_AND_CLEANUP_REPORT_2026-04-13.md](docs/TEST_AND_CLEANUP_REPORT_2026-04-13.md): historical cleanup report
 - [docs/adr/001-provider-router-circuit-breaker.md](docs/adr/001-provider-router-circuit-breaker.md): provider routing decision record

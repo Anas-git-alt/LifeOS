@@ -23,8 +23,10 @@ from app.routers import (
     providers,
     settings as system_settings,
     tts,
+    vault,
     voice,
     workspace,
+    memory,
 )
 from app.services.memory import get_legacy_memory_max_entry_id, import_legacy_memory_to_openviking
 from app.services.data_layout import ensure_data_layout
@@ -37,6 +39,7 @@ from app.services.runtime_state import (
 )
 from app.services.scheduler import bootstrap_agent_jobs, shutdown_scheduler, start_scheduler
 from app.services.seed import seed_default_agents
+from app.services.shared_memory import bootstrap_and_sync_vault
 from app.services.tts_catalog import sync_tts_registry
 from app.services.workspace import sync_workspace_resources
 
@@ -126,6 +129,11 @@ async def lifespan(app: FastAPI):
             logger.info("openviking_workspace_sync result=%s", sync_result)
         except Exception:
             logger.exception("Failed syncing workspace resources to OpenViking on startup")
+        try:
+            vault_sync_result = await bootstrap_and_sync_vault()
+            logger.info("openviking_vault_sync result=%s", vault_sync_result)
+        except Exception:
+            logger.exception("Failed syncing Obsidian vault resources to OpenViking on startup")
 
     start_scheduler()
     await bootstrap_agent_jobs()
@@ -168,4 +176,6 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(life.router, prefix="/api/life", tags=["life"])
 app.include_router(prayer.router, prefix="/api/prayer", tags=["prayer"])
 app.include_router(workspace.router, prefix="/api/workspace", tags=["workspace"])
+app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
+app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(experiments.router)

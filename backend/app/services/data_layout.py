@@ -10,6 +10,20 @@ from typing import Any
 from app.config import settings
 
 
+def _shared_index_roots() -> list[str]:
+    vault_root = settings.obsidian_vault_root_path
+    if vault_root is None:
+        return []
+    roots = [
+        vault_root / "shared" / "global",
+        vault_root / "shared" / "domains",
+        vault_root / "system" / "indexes",
+    ]
+    if settings.obsidian_private_namespaces_enabled:
+        roots.append(vault_root / "private")
+    return [str(path.resolve(strict=False)) for path in roots]
+
+
 def build_data_manifest(*, manifest_path: str) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -22,6 +36,10 @@ def build_data_manifest(*, manifest_path: str) -> dict[str, Any]:
             "workspace_repo_root": str(settings.workspace_repo_root_path),
             "workspace_archive_root": str(settings.workspace_archive_root_path),
             "memory_backend": settings.normalized_memory_backend,
+            "obsidian_vault_root": str(settings.obsidian_vault_root_path or ""),
+            "shared_memory_root": str(settings.shared_memory_root_path),
+            "shared_index_roots": _shared_index_roots(),
+            "memory_router_version": settings.memory_router_version,
         },
         "canonical": {
             "data_root": str(settings.data_root_path),
@@ -31,6 +49,7 @@ def build_data_manifest(*, manifest_path: str) -> dict[str, Any]:
             "tmp_root": str(settings.data_root_path / "tmp"),
             "shared_root": str(settings.data_root_path / "shared"),
             "voices_root": str(settings.data_root_path / "voices"),
+            "obsidian_vault_root": str(settings.obsidian_vault_root_path or ""),
         },
         "legacy": {
             "storage_root": str(settings.legacy_storage_root_path),

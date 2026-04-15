@@ -14,11 +14,13 @@ REPO_ROOT = BACKEND_DIR.parent
 TEST_RUNTIME_DIR = REPO_ROOT / "tmp" / "backend-pytest"
 TEST_DB_PATH = TEST_RUNTIME_DIR / "lifeos-test.db"
 TEST_ARCHIVE_DIR = TEST_RUNTIME_DIR / "workspace-archive"
+TEST_VAULT_DIR = REPO_ROOT / "tmp" / "obsidian-vault"
 
 os.environ["API_SECRET_KEY"] = "pytest-secret-key"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
 os.environ["WORKSPACE_REPO_ROOT"] = str(REPO_ROOT)
 os.environ["WORKSPACE_ARCHIVE_ROOT"] = str(TEST_ARCHIVE_DIR)
+os.environ["OBSIDIAN_VAULT_ROOT"] = str(TEST_VAULT_DIR)
 os.environ["OPENVIKING_ENABLED"] = "true"
 os.environ["MEMORY_BACKEND"] = "openviking"
 os.environ["OPENVIKING_API_KEY"] = "pytest-openviking-key"
@@ -51,6 +53,7 @@ def _stub_app_lifespan_dependencies(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr("app.main.set_runtime_state", AsyncMock(return_value=None))
     monkeypatch.setattr("app.main.sync_workspace_resources", AsyncMock(return_value={"synced": 0}))
+    monkeypatch.setattr("app.main.bootstrap_and_sync_vault", AsyncMock(return_value={"items": []}))
     monkeypatch.setattr("app.main.start_scheduler", lambda: None)
     monkeypatch.setattr("app.main.bootstrap_agent_jobs", AsyncMock(return_value=None))
     monkeypatch.setattr("app.main.shutdown_scheduler", lambda: None)
@@ -64,6 +67,7 @@ async def _reset_test_database():
 
     TEST_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(TEST_ARCHIVE_DIR, ignore_errors=True)
+    shutil.rmtree(TEST_VAULT_DIR, ignore_errors=True)
     await engine.dispose()
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()

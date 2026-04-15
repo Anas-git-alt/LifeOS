@@ -52,6 +52,7 @@ services:
       - /config/start_openviking.py
     volumes:
       - ${LIFEOS_OPENVIKING_DIR:-./storage/openviking}:/app/data
+      - ${LIFEOS_OBSIDIAN_VAULT_DIR:-./data/obsidian-vault}:/obsidian-vault:ro
       - ./:/workspace:ro
       - ./openviking:/config:ro
     healthcheck:
@@ -78,6 +79,7 @@ services:
     volumes:
       - ${LIFEOS_DATA_DIR:-./data}:/app/data
       - ${LIFEOS_STORAGE_DIR:-./storage}:/app/storage
+      - ${LIFEOS_OBSIDIAN_VAULT_DIR:-./data/obsidian-vault}:/obsidian-vault
       - ./skills:/app/skills
       - ./:/workspace
     env_file:

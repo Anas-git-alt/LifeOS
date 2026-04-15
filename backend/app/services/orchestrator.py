@@ -34,6 +34,7 @@ from app.services.workspace import (
 )
 from app.config import settings
 from app.services.seed import SCHEDULED_PROMPTS
+from app.services.shared_memory import build_shared_memory_context
 from app.services.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,12 @@ def _append_response_notes(base_text: str, notes: list[str]) -> str:
     if not base:
         return f"Workspace update:\n{note_block}"
     return f"{base}\n\nWorkspace update:\n{note_block}"
+
+
+def _append_unique_warning(warnings: list[str], warning: str) -> None:
+    cleaned = str(warning or "").strip()
+    if cleaned and cleaned not in warnings:
+        warnings.append(cleaned)
 
 
 def _memory_unavailable_result(active_session, exc: Exception) -> dict:
@@ -295,6 +302,7 @@ async def handle_message(
 ) -> dict:
     """Process user text through an agent with policy-based approvals."""
     active_session = None
+    response_warnings: list[str] = []
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
@@ -382,8 +390,16 @@ async def handle_message(
                     apply_data_start_filter=reporting_mode,
                 )
             except OpenVikingUnavailableError as exc:
-                logger.error("Memory context unavailable for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
-                return _memory_unavailable_result(active_session, exc)
+                logger.warning(
+                    "Memory context unavailable for agent '%s'; continuing without session context: %s",
+                    agent_name,
+                    redact_sensitive(str(exc)),
+                )
+                _append_unique_warning(
+                    response_warnings,
+                    "OpenViking memory was unavailable for this turn, so the reply was generated without prior session context.",
+                )
+                context = []
             messages = [{"role": "system", "content": system_prompt}, *context]
             if referenced_session_context:
                 messages.append({"role": "system", "content": referenced_session_context})
@@ -405,6 +421,24 @@ async def handle_message(
                     )
                 except Exception as exc:
                     logger.warning("Failed building weekly deen context: %s", exc)
+            if referenced_session_id is None and not _is_local_context_query(user_message):
+                try:
+                    shared_memory_context = await build_shared_memory_context(
+                        agent=agent,
+                        query=user_message,
+                    )
+                except OpenVikingUnavailableError as exc:
+                    logger.warning(
+                        "Shared-memory retrieval unavailable for agent '%s'; continuing without optional context: %s",
+                        agent_name,
+                        redact_sensitive(str(exc)),
+                    )
+                    shared_memory_context = ""
+                except Exception as exc:
+                    logger.warning("Shared-memory context failed for agent '%s': %s", agent_name, exc)
+                    shared_memory_context = ""
+                if shared_memory_context:
+                    final_user_content = f"{shared_memory_context}\n\n{final_user_content}"
             if agent.workspace_enabled and _should_fetch_workspace_context(user_message, referenced_session_id):
                 try:
                     openviking_context = await get_openviking_context(
@@ -532,12 +566,23 @@ async def handle_message(
                 user_message,
                 session_id=active_session.id if active_session else None,
             )
-        # NOTE: The assistant message is saved here unconditionally so that the
-        # conversation history stays coherent. If the corresponding action is
-        # later rejected the agent will see its own "I will do X" in context -
-        # this is intentional: it lets the agent know the action was proposed
-        # and can be followed up. A future improvement is to tag pending
-        # messages with a status flag and filter them in get_context.
+        except OpenVikingUnavailableError as exc:
+            logger.warning(
+                "User message persistence unavailable for agent '%s'; returning unsaved response: %s",
+                agent_name,
+                redact_sensitive(str(exc)),
+            )
+            _append_unique_warning(
+                response_warnings,
+                "This turn could not be saved to OpenViking session memory, so session history may look incomplete until memory is healthy again.",
+            )
+        try:
+            # NOTE: The assistant message is saved here unconditionally so that the
+            # conversation history stays coherent. If the corresponding action is
+            # later rejected the agent will see its own "I will do X" in context -
+            # this is intentional: it lets the agent know the action was proposed
+            # and can be followed up. A future improvement is to tag pending
+            # messages with a status flag and filter them in get_context.
             await save_message(
                 agent_name,
                 "assistant",
@@ -545,8 +590,15 @@ async def handle_message(
                 session_id=active_session.id if active_session else None,
             )
         except OpenVikingUnavailableError as exc:
-            logger.error("Memory persistence unavailable for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
-            return _memory_unavailable_result(active_session, exc)
+            logger.warning(
+                "Assistant message persistence unavailable for agent '%s'; returning unsaved response: %s",
+                agent_name,
+                redact_sensitive(str(exc)),
+            )
+            _append_unique_warning(
+                response_warnings,
+                "This turn could not be saved to OpenViking session memory, so session history may look incomplete until memory is healthy again.",
+            )
 
         if active_session:
             try:
@@ -640,6 +692,7 @@ async def handle_message(
             "risk_level": risk_level,
             "session_id": active_session.id if active_session else None,
             "session_title": active_session.title if active_session else None,
+            "warnings": response_warnings,
         }
 
 
