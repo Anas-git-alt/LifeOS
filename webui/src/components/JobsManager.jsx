@@ -9,6 +9,7 @@ import {
   resumeJob,
   updateJob,
 } from "../api";
+import { getJobRunDetail, getJobRunDetailLabel } from "../jobRuns";
 
 const DEFAULT_JOB = {
   name: "",
@@ -122,13 +123,28 @@ export default function JobsManager() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const loadLatestRuns = async (jobRows, limit = 1) => {
+    const runs = await Promise.all(
+      jobRows.map(async (job) => {
+        try {
+          return [job.id, await getJobRuns(job.id, limit)];
+        } catch {
+          return [job.id, []];
+        }
+      }),
+    );
+    return Object.fromEntries(runs);
+  };
+
   const loadData = async (agentName = selectedAgent) => {
     setLoading(true);
     setError("");
     try {
       const [jobRows, agentRows] = await Promise.all([getJobs(agentName), getAgents()]);
+      const latestRuns = await loadLatestRuns(jobRows, 1);
       setJobs(jobRows);
       setAgents(agentRows);
+      setRunsByJob(latestRuns);
     } catch (exc) {
       setError(String(exc.message || exc));
     } finally {
@@ -416,6 +432,8 @@ export default function JobsManager() {
             <div className="grid">
               {jobs.map((job) => {
                 const status = jobStatusMeta(job);
+                const latestRun = runsByJob[job.id]?.[0];
+                const latestRunDetail = getJobRunDetail(latestRun);
                 return (
                   <article key={job.id} className="glass-card job-card">
                     <div className="job-card-head">
@@ -436,6 +454,11 @@ export default function JobsManager() {
                         </p>
                         {job.completed_at && (
                           <p className="job-card-meta">Completed: {formatInTimezone(job.completed_at, job.timezone)}</p>
+                        )}
+                        {latestRunDetail && (
+                          <p className="job-card-meta">
+                            {getJobRunDetailLabel(latestRun?.status)}: {latestRunDetail}
+                          </p>
                         )}
                         {job.last_error && <p className="error-text job-card-meta">Last error: {job.last_error}</p>}
                       </div>
@@ -462,7 +485,7 @@ export default function JobsManager() {
                             <li key={run.id}>
                               {formatInTimezone(run.created_at, job.timezone, run.created_at)} ·{" "}
                               <span className={`badge ${runStatusBadge(run.status)}`}>{run.status}</span>
-                              {run.error ? ` · ${run.error}` : ""}
+                              {getJobRunDetail(run) ? ` · ${getJobRunDetail(run)}` : ""}
                             </li>
                           ))}
                         </ul>

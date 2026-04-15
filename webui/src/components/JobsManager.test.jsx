@@ -7,7 +7,15 @@ vi.mock("../api", () => ({
   createJob: vi.fn(),
   deleteJob: vi.fn(),
   getAgents: vi.fn(async () => [{ name: "sandbox" }]),
-  getJobRuns: vi.fn(async () => []),
+  getJobRuns: vi.fn(async () => [
+    {
+      id: 101,
+      status: "skipped",
+      message: "{'status': 'skipped', 'reason': 'memory_unavailable'}",
+      error: null,
+      created_at: "2026-03-02T07:30:00Z",
+    },
+  ]),
   getJobs: vi.fn(async () => [
     {
       id: 11,
@@ -46,6 +54,7 @@ describe("JobsManager", () => {
     render(<JobsManager />);
 
     await screen.findByText(/Morning stretch/i);
+    await screen.findByText(/Skip reason: memory unavailable/i);
     fireEvent.click(screen.getByRole("button", { name: /^pause$/i }));
 
     await waitFor(() => expect(pauseJob).toHaveBeenCalledWith(11));

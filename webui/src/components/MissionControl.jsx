@@ -12,6 +12,7 @@ import {
   getTodayAgenda,
 } from "../api";
 import { useEventStream } from "../hooks/useEventStream";
+import { getJobRunDetail } from "../jobRuns";
 import { QUERY_KEYS } from "../queryKeys";
 import { routeRealtimeEvents } from "../realtime/eventRouter";
 import WidgetCard, { WidgetEmpty, WidgetError, WidgetSkeleton } from "./WidgetCard";
@@ -237,6 +238,7 @@ export default function MissionControl({ hasToken = false, onNavigate, onChangeT
             <div className="widget-list">
               {jobs.slice(0, listLimit(expanded.jobs, 4)).map((job) => {
                 const latestRun = runsByJob[job.id]?.[0];
+                const latestRunDetail = getJobRunDetail(latestRun);
                 return (
                   <div key={job.id} className="widget-row stack">
                     <strong>#{job.id} {job.name}</strong>
@@ -249,6 +251,7 @@ export default function MissionControl({ hasToken = false, onNavigate, onChangeT
                       <span>
                         Last run: <span className={`badge ${healthBadge(latestRun.status)}`}>{latestRun.status}</span> at{" "}
                         {new Date(latestRun.created_at).toLocaleTimeString()}
+                        {latestRunDetail ? ` · ${latestRunDetail}` : ""}
                       </span>
                     ) : (
                       <span>No runs yet</span>
