@@ -68,6 +68,7 @@ function ProviderTelemetry({ stats }) {
 
 export default function ExperimentDashboard() {
   const [experiments, setExperiments] = useState([]);
+  const [pendingPromotions, setPendingPromotions] = useState([]);
   const [telemetry, setTelemetry] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -81,6 +82,7 @@ export default function ExperimentDashboard() {
         getProviderTelemetry(),
       ]);
       setExperiments(expData?.experiments || []);
+      setPendingPromotions(expData?.pending_promotions || []);
       setTelemetry(telData?.providers || []);
     } catch (e) {
       setError('Could not load experiment data. Backend may be offline.');
@@ -95,15 +97,14 @@ export default function ExperimentDashboard() {
     return () => clearInterval(iv);
   }, []);
 
-  const promotionCandidates = experiments.filter(
-    (e) => e.shadow_wins && !e.promoted
-  );
-
   const shadowWins = experiments.filter((e) => e.shadow_wins).length;
-  const primaryWins = experiments.length - shadowWins;
   const winRate = experiments.length > 0
     ? Math.round((shadowWins / experiments.length) * 100)
     : 0;
+  const hasPendingPromotionRequest = pendingPromotions.length > 0;
+  const pendingPromotionSummary = pendingPromotions.length === 1
+    ? `Shadow provider "${pendingPromotions[0]}" hit the promotion threshold. Review the Approval Queue to decide whether to promote it.`
+    : `${pendingPromotions.length} shadow providers hit the promotion threshold. Review the Approval Queue to decide whether to promote them.`;
 
   return (
     <div className="page-header" style={{ marginBottom: 0 }}>
@@ -111,7 +112,7 @@ export default function ExperimentDashboard() {
         <div>
           <h1>🧪 Experiments</h1>
           <p style={{ marginTop: 4 }}>
-            Shadow-router A/B test log. Watching alternative providers passively — promotions need your approval.
+            Shadow-router A/B test log. Watching alternative providers passively — promotion requests appear only after sustained wins and still need your approval.
           </p>
         </div>
         <button className="btn btn-ghost" onClick={load} disabled={loading}>
@@ -151,12 +152,12 @@ export default function ExperimentDashboard() {
       </div>
 
       {/* Promotion candidates banner */}
-      {promotionCandidates.length > 0 && (
+      {hasPendingPromotionRequest && (
         <div className="card experiment-promo-banner" style={{ marginBottom: 16 }}>
           <span className="experiment-promo-icon">🏆</span>
           <div>
-            <strong>Promotion candidate detected!</strong>
-            <p>Shadow provider is outperforming primary. A promotion request has been sent to the Approval Queue for your review.</p>
+            <strong>Promotion request pending</strong>
+            <p>{pendingPromotionSummary}</p>
           </div>
         </div>
       )}
@@ -171,7 +172,7 @@ export default function ExperimentDashboard() {
         ) : experiments.length === 0 ? (
           <div className="empty-state" style={{ padding: 40 }}>
             <p>No shadow tests run yet.</p>
-            <p style={{ marginTop: 8, fontSize: 12 }}>They fire automatically on ~5% of LLM calls when multiple providers are configured.</p>
+            <p style={{ marginTop: 8, fontSize: 12 }}>They fire automatically on ~5% of successful LLM calls when multiple healthy providers are configured.</p>
           </div>
         ) : (
           <table className="experiment-table">

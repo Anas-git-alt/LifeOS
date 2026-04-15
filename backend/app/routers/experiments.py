@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 
-from app.services.experiment_log import get_experiments
+from app.services.experiment_log import get_experiments, get_pending_promotion_requests
 from app.services.telemetry import get_provider_stats
 from app.security import require_api_token
 
@@ -17,7 +17,12 @@ router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 async def list_experiments(limit: int = Query(default=50, ge=1, le=500)):
     """Return recent shadow-router experiment runs."""
     runs = await get_experiments(limit=limit)
-    return {"experiments": runs, "total": len(runs)}
+    pending_promotions = await get_pending_promotion_requests()
+    return {
+        "experiments": runs,
+        "total": len(runs),
+        "pending_promotions": pending_promotions,
+    }
 
 
 @router.get("/telemetry", dependencies=[Depends(require_api_token)])

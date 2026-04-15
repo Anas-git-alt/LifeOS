@@ -85,6 +85,34 @@ async def get_experiments(limit: int = 100) -> list[dict]:
         ]
 
 
+async def get_pending_promotion_requests() -> list[str]:
+    """Return shadow providers that currently have a pending promotion request."""
+    try:
+        from app.models import PendingAction, ActionStatus
+    except ImportError:
+        return []
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(PendingAction.agent_name)
+            .where(
+                PendingAction.action_type == "promote_provider",
+                PendingAction.status == ActionStatus.PENDING,
+            )
+            .order_by(PendingAction.created_at.desc())
+        )
+
+        providers: list[str] = []
+        seen: set[str] = set()
+        for (agent_name,) in result.all():
+            provider = (agent_name or "").removeprefix("shadow:")
+            if not provider or provider in seen:
+                continue
+            seen.add(provider)
+            providers.append(provider)
+        return providers
+
+
 async def check_for_promotion_candidate(
     shadow_provider: str,
     threshold: int = 10,
