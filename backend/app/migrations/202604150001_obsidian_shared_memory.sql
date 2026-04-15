@@ -1,8 +1,3 @@
-ALTER TABLE agents ADD COLUMN memory_scopes_json JSON;
-ALTER TABLE agents ADD COLUMN shared_domains_json JSON;
-ALTER TABLE agents ADD COLUMN vault_write_mode VARCHAR(40) NOT NULL DEFAULT 'structured_direct_write';
-ALTER TABLE agents ADD COLUMN promotion_policy VARCHAR(40) NOT NULL DEFAULT 'manual';
-
 CREATE TABLE IF NOT EXISTS shared_memory_proposals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_agent VARCHAR(100) NOT NULL,
