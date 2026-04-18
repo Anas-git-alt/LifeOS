@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import sqlite3
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import database as database_module
 from app.config import settings
 from app.main import app
 from app.models import DailyLogCreate, ProfileUpdate
@@ -194,3 +196,56 @@ async def test_today_summary_includes_sleep_protocol_targets_and_logged_sleep(mo
     summary = await get_today_agenda()
     assert summary["sleep_protocol"]["bedtime_target"] == "23:00"
     assert summary["sleep_protocol"]["wake_time_logged"] == "07:10"
+
+
+def test_run_migrations_skips_duplicate_sleep_protocol_alters_when_columns_exist(tmp_path, monkeypatch):
+    db_path = tmp_path / "existing-profile.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE user_profile (
+                id INTEGER PRIMARY KEY,
+                timezone VARCHAR(64) NOT NULL DEFAULT 'Africa/Casablanca',
+                city VARCHAR(64) NOT NULL DEFAULT 'Casablanca',
+                country VARCHAR(64) NOT NULL DEFAULT 'Morocco',
+                prayer_method INTEGER NOT NULL DEFAULT 2,
+                work_shift_start VARCHAR(5) NOT NULL DEFAULT '14:00',
+                work_shift_end VARCHAR(5) NOT NULL DEFAULT '00:00',
+                quiet_hours_start VARCHAR(5) NOT NULL DEFAULT '23:00',
+                quiet_hours_end VARCHAR(5) NOT NULL DEFAULT '06:00',
+                nudge_mode VARCHAR(20) NOT NULL DEFAULT 'moderate',
+                sleep_bedtime_target VARCHAR(5) DEFAULT '23:30',
+                sleep_wake_target VARCHAR(5) DEFAULT '07:30',
+                sleep_caffeine_cutoff VARCHAR(5) DEFAULT '15:00',
+                sleep_wind_down_checklist_json JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(database_module, "db_url", f"sqlite+aiosqlite:///{db_path.as_posix()}")
+
+    database_module.run_migrations()
+    database_module.run_migrations()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        applied = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert "202604180002_sleep_protocol_profile" in applied

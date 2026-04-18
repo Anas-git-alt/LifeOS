@@ -218,16 +218,30 @@ def run_migrations() -> None:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+        sleep_protocol_version = "202604180002_sleep_protocol_profile"
+        sleep_protocol_columns = {
+            "sleep_bedtime_target",
+            "sleep_wake_target",
+            "sleep_caffeine_cutoff",
+            "sleep_wind_down_checklist_json",
+        }
         if "user_profile" in existing_tables:
             profile_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_profile)").fetchall()}
             if "sleep_bedtime_target" not in profile_cols:
                 cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_bedtime_target VARCHAR(5) DEFAULT '23:30'")
+                profile_cols.add("sleep_bedtime_target")
             if "sleep_wake_target" not in profile_cols:
                 cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_wake_target VARCHAR(5) DEFAULT '07:30'")
+                profile_cols.add("sleep_wake_target")
             if "sleep_caffeine_cutoff" not in profile_cols:
                 cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_caffeine_cutoff VARCHAR(5) DEFAULT '15:00'")
+                profile_cols.add("sleep_caffeine_cutoff")
             if "sleep_wind_down_checklist_json" not in profile_cols:
                 cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_wind_down_checklist_json JSON")
+                profile_cols.add("sleep_wind_down_checklist_json")
+            if sleep_protocol_version not in applied and sleep_protocol_columns.issubset(profile_cols):
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (sleep_protocol_version,))
+                applied.add(sleep_protocol_version)
         if "chat_sessions" in existing_tables:
             chat_session_cols = {row[1] for row in cur.execute("PRAGMA table_info(chat_sessions)").fetchall()}
             if "deleted_at" not in chat_session_cols:
