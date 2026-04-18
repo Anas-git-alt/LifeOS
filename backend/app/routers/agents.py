@@ -150,6 +150,7 @@ async def chat_with_agent(data: ChatRequest):
         risk_level=result.get("risk_level", "low"),
         session_id=result.get("session_id"),
         session_title=result.get("session_title"),
+        warnings=result.get("warnings") or [],
     )
 
 

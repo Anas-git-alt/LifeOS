@@ -1,5 +1,8 @@
 # WebUI Test Report (2026-03-03)
 
+> Historical report only.
+> Current verification status lives in [docs/VERIFICATION_2026-04-14.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-14.md).
+
 ## Pages tested
 - Home / Mission Control
 - Today

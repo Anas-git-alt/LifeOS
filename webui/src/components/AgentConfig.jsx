@@ -70,6 +70,9 @@ export default function AgentConfig({ agentName, onBack }) {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [chatNotice, setChatNotice] = useState("");
+  const [chatRequestStartedAt, setChatRequestStartedAt] = useState(null);
+  const [chatElapsedSeconds, setChatElapsedSeconds] = useState(0);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedSessionId) || null,
@@ -81,6 +84,7 @@ export default function AgentConfig({ agentName, onBack }) {
     setAgent(null);
     setSettingsMessage("");
     setChatError("");
+    setChatNotice("");
     setSessions([]);
     setSessionArchives([]);
     setSelectedSessionId(null);
@@ -100,6 +104,21 @@ export default function AgentConfig({ agentName, onBack }) {
     if (!agentName || !selectedSessionId) return;
     loadSessionMessages(selectedSessionId);
   }, [agentName, selectedSessionId]);
+
+  useEffect(() => {
+    if (!chatSending || !chatRequestStartedAt) {
+      setChatElapsedSeconds(0);
+      return undefined;
+    }
+
+    const updateElapsed = () => {
+      setChatElapsedSeconds(Math.max(0, Math.floor((Date.now() - chatRequestStartedAt) / 1000)));
+    };
+
+    updateElapsed();
+    const intervalId = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [chatRequestStartedAt, chatSending]);
 
   async function loadAgent() {
     try {
@@ -383,19 +402,54 @@ export default function AgentConfig({ agentName, onBack }) {
     const trimmed = chatInput.trim();
     if (!trimmed || !selectedSessionId || chatSending) return;
 
+    const startedAt = Date.now();
+    const timestamp = new Date(startedAt).toISOString();
+    const localUserId = `local-user-${startedAt}`;
+    const localAssistantId = `local-assistant-${startedAt}`;
+
     setChatInput("");
     setChatSending(true);
     setChatError("");
+    setChatNotice("");
+    setChatRequestStartedAt(startedAt);
+    setMessages((prev) => [
+      ...prev,
+      { id: localUserId, role: "user", content: trimmed, timestamp },
+      { id: localAssistantId, role: "assistant", content: "Thinking...", timestamp, isPending: true },
+    ]);
 
     try {
       const result = await chatWithAgent(agentName, trimmed, "auto", selectedSessionId);
+      const responseText = String(result.response || "No response received.");
+      const warnings = Array.isArray(result.warnings)
+        ? result.warnings.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
+
+      setMessages((prev) =>
+        prev.map((entry) =>
+          entry.id === localAssistantId
+            ? { ...entry, content: responseText, isPending: false }
+            : entry,
+        ),
+      );
+      if (warnings.length) {
+        setChatNotice(warnings.join(" "));
+      }
       const activeSessionId = result.session_id || selectedSessionId;
-      await loadSessions(activeSessionId);
-      await loadSessionMessages(activeSessionId);
+      try {
+        await loadSessions(activeSessionId);
+        await loadSessionMessages(activeSessionId);
+      } catch (refreshError) {
+        const refreshMessage = `Reply received, but session refresh failed: ${refreshError.message}`;
+        setChatNotice((prev) => (prev ? `${prev} ${refreshMessage}` : refreshMessage));
+      }
     } catch (error) {
+      setMessages((prev) => prev.filter((entry) => entry.id !== localUserId && entry.id !== localAssistantId));
+      setChatInput(trimmed);
       setChatError(`Chat failed: ${error.message}`);
     } finally {
       setChatSending(false);
+      setChatRequestStartedAt(null);
     }
   }
 
@@ -540,7 +594,7 @@ export default function AgentConfig({ agentName, onBack }) {
                 messages.map((entry) => (
                   <article
                     key={entry.id}
-                    className={`chat-message ${entry.role === "user" ? "chat-message-user" : "chat-message-assistant"}`}
+                    className={`chat-message ${entry.role === "user" ? "chat-message-user" : "chat-message-assistant"} ${entry.isPending ? "chat-message-pending" : ""}`}
                   >
                     <header>
                       <strong>{entry.role === "user" ? "You" : agentName}</strong>
@@ -566,6 +620,46 @@ export default function AgentConfig({ agentName, onBack }) {
                 </button>
               </div>
             </form>
+            {chatSending && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(56,189,248,0.35)",
+                  background: "rgba(56,189,248,0.08)",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <strong>Thinking...</strong>
+                  <span className="meta-tag">{chatElapsedSeconds}s elapsed</span>
+                </div>
+                <details>
+                  <summary style={{ cursor: "pointer" }}>View request status</summary>
+                  <div style={{ marginTop: 8, display: "grid", gap: 6, color: "var(--text-secondary)", fontSize: 13 }}>
+                    <span>Session #{selectedSessionId}</span>
+                    <span>Status: waiting for backend reply.</span>
+                    <span>Note: internal reasoning is not shown here; this panel only shows request progress.</span>
+                    {form.workspace_enabled && <span>Workspace-enabled agents may take longer while reading files.</span>}
+                  </div>
+                </details>
+              </div>
+            )}
+            {chatNotice && !chatError && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  background: "rgba(59,130,246,0.10)",
+                  border: "1px solid rgba(59,130,246,0.25)",
+                }}
+              >
+                {chatNotice}
+              </div>
+            )}
             {chatError && (
               <div className="token-banner-error" style={{ marginTop: 12 }}>
                 {chatError}

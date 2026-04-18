@@ -5,6 +5,7 @@ This runbook is for the current Docker Compose deployment model.
 ## 1. Preconditions
 
 - Linux or WSL2 host with Docker Compose
+- Docker daemon reachable from that host or WSL distro (`docker version` succeeds)
 - Repo checked out locally
 - `.venv/.env` present
 - Backend and WebUI kept on localhost unless you have a reverse proxy in front of them
@@ -27,12 +28,14 @@ Recommended:
 ```bash
 cp .env.example .venv/.env
 nano .venv/.env
+docker version >/dev/null
 ./scripts/startup_self_check.sh
 docker compose config >/dev/null
 ```
 
 Preflight expectations:
 
+- Docker daemon responds before any Compose action
 - `API_SECRET_KEY` has been replaced with a strong random value
 - `DISCORD_OWNER_IDS` contains at least one real Discord user ID
 - Docker Compose config renders successfully

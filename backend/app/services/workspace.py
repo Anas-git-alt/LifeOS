@@ -59,6 +59,7 @@ _PREPOSITION_PATH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _WORKSPACE_LISTING_STOP_WORDS = {
+    "of",
     "the",
     "this",
     "that",

@@ -4,6 +4,23 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import App from "./App";
 
+const NAV_EXPECTATIONS = [
+  { label: /^Mission Control$/i, heading: "Mission Control" },
+  { label: /^Today$/i, heading: "Today Focus" },
+  { label: /^Inbox$/i, heading: "Inbox" },
+  { label: /^Prayer$/i, heading: "Prayer Dashboard" },
+  { label: /^Quran$/i, heading: "Quran Log" },
+  { label: /^Life Items$/i, heading: "Life Items" },
+  { label: /^Agents$/i, heading: "Agents" },
+  { label: /^Spawn Agent$/i, heading: "Spawn Agent" },
+  { label: /^Jobs$/i, heading: "Scheduled Jobs" },
+  { label: /^Approvals$/i, heading: "Approval Queue" },
+  { label: /^Providers$/i, heading: "Provider Setup" },
+  { label: /^Experiments$/i, heading: /Experiments/i },
+  { label: /^Profile$/i, heading: "Profile" },
+  { label: /^Settings$/i, heading: "Global Settings" },
+];
+
 const apiMocks = vi.hoisted(() => ({
   ensureEventsSession: vi.fn(async () => ({})),
   getHealth: vi.fn(async () => ({ status: "healthy" })),
@@ -22,6 +39,11 @@ const apiMocks = vi.hoisted(() => ({
   getPrayerScheduleToday: vi.fn(async () => ({ next_prayer: "Asr", rows: [] })),
   getPrayerWeeklySummary: vi.fn(async () => ({ prayer_accuracy_percent: 84 })),
   getAgentSessionsSummary: vi.fn(async () => [{ id: 7, agent_name: "planner", title: "Daily plan", updated_at: "2026-03-03T08:00:00Z" }]),
+  getIntakeInbox: vi.fn(async () => [{ id: 21, title: "Inbox capture", status: "ready", domain: "planning", kind: "task", updated_at: "2026-03-03T08:00:00Z", linked_life_item_id: null, source_session_id: null }]),
+  getAgentSessionMessages: vi.fn(async () => []),
+  captureIntake: vi.fn(async () => ({ session_id: 77, entry: { id: 21 } })),
+  updateIntakeEntry: vi.fn(async () => ({})),
+  promoteIntakeEntry: vi.fn(async () => ({ life_item: { id: 31, title: "Inbox capture" } })),
   getPrayerDashboard: vi.fn(async () => ({ summary: { on_time: 20, late: 4, missed: 1, unknown: 0 }, days: [{ date: "2026-03-03", prayers: { Fajr: "on_time", Dhuhr: "late", Asr: "on_time", Maghrib: "missed", Isha: "on_time" } }] })),
   editPrayerCheckin: vi.fn(async () => ({})),
   getQuranProgress: vi.fn(async () => ({ current_page: 10, total_pages_read: 24, completion_percent: 4, recent_readings: [] })),
@@ -36,6 +58,35 @@ const apiMocks = vi.hoisted(() => ({
   createAgent: vi.fn(async () => ({})),
   getProviders: vi.fn(async () => [{ name: "openai", available: true, default_model: "gpt-5", base_url: "https://api.openai.com" }, { name: "anthropic", available: false, default_model: "claude", base_url: "https://api.anthropic.com" }]),
   getCapabilities: vi.fn(async () => ({ vision: { enabled: true }, tools: { enabled: false, reason: "disabled in config" } })),
+  getExperiments: vi.fn(async () => ({
+    experiments: [
+      {
+        id: 91,
+        created_at: "2026-03-03T08:00:00Z",
+        primary_provider: "openai",
+        shadow_provider: "anthropic",
+        primary_score: 0.51,
+        shadow_score: 0.67,
+        shadow_latency_ms: 820,
+        cost_estimate: 0.00123,
+        shadow_wins: true,
+        promoted: false,
+      },
+    ],
+  })),
+  getProviderTelemetry: vi.fn(async () => ({
+    providers: [
+      {
+        provider: "openai",
+        avg_latency_ms: 740,
+        avg_tokens: 812,
+        successes: 10,
+        failures: 1,
+        circuit_open: false,
+        last_model: "openai/gpt-5",
+      },
+    ],
+  })),
   getProfile: vi.fn(async () => ({ timezone: "Africa/Casablanca", city: "Casablanca", country: "MA", prayer_method: 2, work_shift_start: "09:00", work_shift_end: "18:00", quiet_hours_start: "23:00", quiet_hours_end: "06:00", nudge_mode: "balanced" })),
   updateProfile: vi.fn(async () => ({})),
   getSettings: vi.fn(async () => ({ data_start_date: "2026-03-02", default_timezone: "Africa/Casablanca", autonomy_enabled: true, approval_required_for_mutations: true })),
@@ -79,15 +130,12 @@ describe("App flow smoke", () => {
     renderApp();
 
     await screen.findAllByRole("heading", { name: "Mission Control" });
-    fireEvent.click(screen.getByRole("button", { name: /^Today$/i }));
-    await screen.findByRole("heading", { name: "Today Focus" });
-
-    const pages = ["Prayer", "Quran", "Life Items", "Agents", "Spawn Agent", "Jobs", "Approvals", "Providers", "Profile", "Settings"];
-    for (const label of pages) {
-      fireEvent.click(screen.getAllByRole("button", { name: new RegExp(label, "i") })[0]);
+    for (const target of NAV_EXPECTATIONS) {
+      fireEvent.click(screen.getAllByRole("button", { name: target.label })[0]);
+      const headings = await screen.findAllByRole("heading", { name: target.heading });
+      expect(headings.length).toBeGreaterThan(0);
     }
 
-    await screen.findByRole("heading", { name: "Global Settings" });
     expect(screen.getByText("Workspace connected")).toBeInTheDocument();
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });

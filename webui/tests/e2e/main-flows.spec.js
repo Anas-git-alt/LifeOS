@@ -1,18 +1,20 @@
 import { expect, test } from "@playwright/test";
 
 const NAV_PAGES = [
-  { button: /^MC\s+Mission Control$/i, heading: /Mission Control/i, slug: "mission-control" },
-  { button: /^TD\s+Today$/i, heading: /Today Focus/i, slug: "today" },
-  { button: /Prayer/i, heading: /Prayer Dashboard/i, slug: "prayer" },
-  { button: /Quran/i, heading: /Quran Log/i, slug: "quran" },
-  { button: /Life Items/i, heading: /Life Items/i, slug: "life-items" },
-  { button: /^AG\s+Agents$/i, heading: /Agents/i, slug: "agents" },
-  { button: /Spawn Agent/i, heading: /Spawn Agent/i, slug: "spawn-agent" },
-  { button: /^JB\s+Jobs$/i, heading: /Jobs/i, slug: "jobs" },
-  { button: /^AP\s+Approvals$/i, heading: /Approval Queue/i, slug: "approvals" },
-  { button: /^PV\s+Providers$/i, heading: /Provider Setup/i, slug: "providers" },
-  { button: /^ME\s+Profile$/i, heading: /Profile/i, slug: "profile" },
-  { button: /^CFG\s+Settings$/i, heading: /Global Settings/i, slug: "settings" },
+  { button: /^Mission Control$/i, heading: /Mission Control/i, slug: "mission-control" },
+  { button: /^Today$/i, heading: /Today Focus/i, slug: "today" },
+  { button: /^Inbox$/i, heading: /^Inbox$/i, slug: "inbox" },
+  { button: /^Prayer$/i, heading: /Prayer Dashboard/i, slug: "prayer" },
+  { button: /^Quran$/i, heading: /Quran Log/i, slug: "quran" },
+  { button: /^Life Items$/i, heading: /Life Items/i, slug: "life-items" },
+  { button: /^Agents$/i, heading: /^Agents$/i, slug: "agents" },
+  { button: /^Spawn Agent$/i, heading: /Spawn Agent/i, slug: "spawn-agent" },
+  { button: /^Jobs$/i, heading: /Scheduled Jobs/i, slug: "jobs" },
+  { button: /^Approvals$/i, heading: /Approval Queue/i, slug: "approvals" },
+  { button: /^Providers$/i, heading: /Provider Setup/i, slug: "providers" },
+  { button: /^Experiments$/i, heading: /Experiments/i, slug: "experiments" },
+  { button: /^Profile$/i, heading: /^Profile$/i, slug: "profile" },
+  { button: /^Settings$/i, heading: /Global Settings/i, slug: "settings" },
 ];
 
 function trackConsoleErrors(page) {
@@ -136,6 +138,25 @@ async function mockApi(page) {
       });
       return;
     }
+    if (path === "/life/inbox" || path.startsWith("/life/inbox?")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: 21,
+            title: "Inbox capture",
+            status: "ready",
+            domain: "planning",
+            kind: "task",
+            updated_at: "2026-03-03T08:00:00Z",
+            linked_life_item_id: null,
+            source_session_id: null,
+          },
+        ]),
+      });
+      return;
+    }
     if (path === "/prayer/schedule/today") {
       await route.fulfill({
         status: 200,
@@ -212,6 +233,49 @@ async function mockApi(page) {
       });
       return;
     }
+    if (path === "/experiments" || path.startsWith("/experiments?")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          experiments: [
+            {
+              id: 91,
+              created_at: "2026-03-03T08:00:00Z",
+              primary_provider: "openai",
+              shadow_provider: "anthropic",
+              primary_score: 0.51,
+              shadow_score: 0.67,
+              shadow_latency_ms: 820,
+              cost_estimate: 0.00123,
+              shadow_wins: true,
+              promoted: false,
+            },
+          ],
+        }),
+      });
+      return;
+    }
+    if (path === "/experiments/telemetry") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          providers: [
+            {
+              provider: "openai",
+              avg_latency_ms: 740,
+              avg_tokens: 812,
+              successes: 10,
+              failures: 1,
+              circuit_open: false,
+              last_model: "openai/gpt-5",
+            },
+          ],
+        }),
+      });
+      return;
+    }
     if (path === "/jobs/" && method === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(jobs) });
       return;
@@ -269,9 +333,9 @@ test("smoke: landing, nav pages, status indicators, and console hygiene", async 
     await page.getByRole("button", { name: target.button }).first().click();
     await expect(page.getByRole("heading", { name: target.heading }).first()).toBeVisible();
 
-    const topbar = page.locator(".topbar").first();
-    await expect(topbar).toBeVisible();
-    const box = await topbar.boundingBox();
+    const header = page.locator(".ui-zen-header").first();
+    await expect(header).toBeVisible();
+    const box = await header.boundingBox();
     expect(box).not.toBeNull();
     expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
     expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
@@ -287,8 +351,8 @@ test("primary CTA: jobs form submission", async ({ page }) => {
   await seedToken(page);
   await page.goto("/");
 
-  await page.getByRole("button", { name: /^JB\s+Jobs$/i }).first().click();
-  await expect(page.getByRole("heading", { name: /Cron Jobs/i })).toBeVisible();
+  await page.getByRole("button", { name: /^Jobs$/i }).first().click();
+  await expect(page.getByRole("heading", { name: /Scheduled Jobs/i })).toBeVisible();
 
   await page.getByLabel("Job Name").fill("Night summary");
   await page.getByLabel("Agent", { exact: true }).selectOption("planner");

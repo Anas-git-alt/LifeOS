@@ -5,6 +5,7 @@
 
 const API_BASE = "/api";
 const DEFAULT_TIMEOUT_MS = 12000;
+const CHAT_TIMEOUT_MS = 180000;
 
 export class ApiError extends Error {
   constructor(message, { kind = "server", status = 0, detail = "", cause = null } = {}) {
@@ -130,6 +131,7 @@ export const chatWithAgent = (agentName, message, approvalPolicy = "auto", sessi
       approval_policy: approvalPolicy,
       session_id: sessionId,
     }),
+    timeoutMs: CHAT_TIMEOUT_MS,
   });
 export const runScheduledAgent = (agentName) => request(`/agents/${agentName}/run-scheduled`, { method: "POST" });
 export const listAgentSessions = (agentName) => request(`/agents/${agentName}/sessions`);

@@ -1,5 +1,8 @@
 # LifeOS Test And Cleanup Report
 
+> Historical snapshot from 2026-04-13.
+> Current local/VPS revalidation lives in [docs/VERIFICATION_2026-04-14.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-14.md).
+
 Date: 2026-04-13
 
 ## Scope

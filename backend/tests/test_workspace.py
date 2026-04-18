@@ -25,3 +25,24 @@ def test_describe_workspace_listing_request_lists_markdown_files(tmp_path, monke
     assert "`docs/README.md`" in response
     assert "`docs/guide.md`" in response
     assert "`docs/draft.txt`" not in response
+
+
+def test_describe_workspace_listing_request_does_not_treat_of_as_extension(tmp_path, monkeypatch):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "README.md").write_text("# Docs\n", encoding="utf-8")
+    (docs_dir / "guide.txt").write_text("Guide\n", encoding="utf-8")
+
+    monkeypatch.setattr("app.services.workspace.settings.workspace_repo_root", str(tmp_path))
+    monkeypatch.setattr("app.services.workspace.settings.workspace_archive_root", str(tmp_path / "archive"))
+
+    response = describe_workspace_listing_request(
+        "what's the list of files in docs/",
+        [str(tmp_path)],
+    )
+
+    assert response is not None
+    assert "Here are the files in `docs`" in response
+    assert "`.of` files" not in response
+    assert "`docs/README.md`" in response
+    assert "`docs/guide.txt`" in response

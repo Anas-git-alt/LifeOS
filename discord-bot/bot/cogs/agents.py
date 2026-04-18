@@ -92,6 +92,9 @@ class AgentsCog(commands.Cog, name="Agents"):
                         title = result.get("session_title") or "New chat"
                         embed.set_footer(text=f"Session #{returned_session_id} · {title}")
                     await ctx.send(embed=embed)
+                warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
+                if warnings:
+                    await ctx.send(f"Note: {warnings[0][:350]}")
                 if result.get("pending_action_id"):
                     await ctx.send(f"Action #{result['pending_action_id']} requires approval (`!pending`).")
             except Exception as exc:

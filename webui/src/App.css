@@ -516,6 +516,11 @@
   gap: 6px;
 }
 
+.chat-message-pending {
+  border-style: dashed;
+  opacity: 0.84;
+}
+
 .chat-message header {
   display: flex;
   justify-content: space-between;
@@ -1175,4 +1180,3 @@
   color: var(--text-secondary);
   margin: 0;
 }
-

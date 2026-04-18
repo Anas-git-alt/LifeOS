@@ -263,6 +263,71 @@ async def test_handle_message_preserves_workspace_delete_pending(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_message_continues_without_memory_context(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    save_message = AsyncMock()
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr(
+        "app.services.orchestrator.get_context",
+        AsyncMock(side_effect=OpenVikingUnavailableError("search unavailable")),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(return_value="Recovered answer"),
+    )
+    monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="Reply with exactly: DISCORD_OK",
+        approval_policy="never",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "Recovered answer"
+    assert result["pending_action_id"] is None
+    assert any("without prior session context" in warning for warning in result["warnings"])
+    save_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_returns_reply_when_memory_persistence_fails(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(return_value="Recovered answer"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.save_message",
+        AsyncMock(
+            side_effect=[
+                OpenVikingUnavailableError("user save failed"),
+                OpenVikingUnavailableError("assistant save failed"),
+            ]
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="Reply with exactly: DISCORD_OK",
+        approval_policy="never",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "Recovered answer"
+    assert result["pending_action_id"] is None
+    assert any("could not be saved to OpenViking session memory" in warning for warning in result["warnings"])
+
+
+@pytest.mark.asyncio
 async def test_handle_message_uses_referenced_session_without_switching_active_session(monkeypatch):
     agent = SimpleNamespace(**_make_agent(workspace_enabled=False).__dict__)
     agent.config_json = {"use_web_search": True}
