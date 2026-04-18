@@ -367,6 +367,10 @@ class UserProfile(Base):
     quiet_hours_start: Mapped[str] = mapped_column(String(5), default="23:00")
     quiet_hours_end: Mapped[str] = mapped_column(String(5), default="06:00")
     nudge_mode: Mapped[str] = mapped_column(String(20), default="moderate")
+    sleep_bedtime_target: Mapped[str] = mapped_column(String(5), default="23:30")
+    sleep_wake_target: Mapped[str] = mapped_column(String(5), default="07:30")
+    sleep_caffeine_cutoff: Mapped[str] = mapped_column(String(5), default="15:00")
+    sleep_wind_down_checklist_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -825,6 +829,10 @@ class ProfileUpdate(BaseModel):
     quiet_hours_start: Optional[str] = None
     quiet_hours_end: Optional[str] = None
     nudge_mode: Optional[str] = None
+    sleep_bedtime_target: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    sleep_wake_target: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    sleep_caffeine_cutoff: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    sleep_wind_down_checklist: Optional[list[str]] = None
 
 
 class ProfileResponse(BaseModel):
@@ -838,8 +846,40 @@ class ProfileResponse(BaseModel):
     quiet_hours_start: str
     quiet_hours_end: str
     nudge_mode: str
+    sleep_bedtime_target: str
+    sleep_wake_target: str
+    sleep_caffeine_cutoff: str
+    sleep_wind_down_checklist: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_sleep_profile_fields(cls, value: Any):
+        if isinstance(value, dict):
+            data = dict(value)
+            if "sleep_wind_down_checklist" not in data:
+                data["sleep_wind_down_checklist"] = data.get("sleep_wind_down_checklist_json") or []
+            return data
+
+        return {
+            "id": value.id,
+            "timezone": value.timezone,
+            "city": value.city,
+            "country": value.country,
+            "prayer_method": value.prayer_method,
+            "work_shift_start": value.work_shift_start,
+            "work_shift_end": value.work_shift_end,
+            "quiet_hours_start": value.quiet_hours_start,
+            "quiet_hours_end": value.quiet_hours_end,
+            "nudge_mode": value.nudge_mode,
+            "sleep_bedtime_target": value.sleep_bedtime_target,
+            "sleep_wake_target": value.sleep_wake_target,
+            "sleep_caffeine_cutoff": value.sleep_caffeine_cutoff,
+            "sleep_wind_down_checklist": getattr(value, "sleep_wind_down_checklist_json", None) or [],
+            "created_at": value.created_at,
+            "updated_at": value.updated_at,
+        }
 
     class Config:
         from_attributes = True
@@ -1299,6 +1339,38 @@ class RescuePlanResponse(BaseModel):
     actions: list[str] = Field(default_factory=list)
 
 
+class SleepProtocolResponse(BaseModel):
+    bedtime_target: str
+    wake_target: str
+    caffeine_cutoff: str
+    wind_down_checklist: list[str] = Field(default_factory=list)
+    sleep_hours_logged: Optional[float] = None
+    bedtime_logged: Optional[str] = None
+    wake_time_logged: Optional[str] = None
+
+
+class AccountabilityMetricResponse(BaseModel):
+    key: str
+    label: str
+    current_streak: int
+    hits_last_7: int
+    today_status: Literal["hit", "miss", "pending"]
+
+
+class AccountabilityTrendDayResponse(BaseModel):
+    date: date
+    hits: int
+    total: int
+    completion_pct: int
+
+
+class AccountabilityTrendSummaryResponse(BaseModel):
+    window_days: int
+    average_completion_pct: int
+    best_day: Optional[AccountabilityTrendDayResponse] = None
+    recent_days: list[AccountabilityTrendDayResponse] = Field(default_factory=list)
+
+
 class DailyLogCreate(BaseModel):
     kind: Literal["sleep", "meal", "training", "hydration", "shutdown", "family", "priority"]
     note: Optional[str] = None
@@ -1306,8 +1378,8 @@ class DailyLogCreate(BaseModel):
     done: Optional[bool] = None
     status: Optional[Literal["done", "rest", "missed"]] = None
     hours: Optional[float] = Field(default=None, ge=0, le=24)
-    bedtime: Optional[str] = None
-    wake_time: Optional[str] = None
+    bedtime: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    wake_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     protein_hit: Optional[bool] = None
 
 
@@ -1316,6 +1388,9 @@ class DailyLogResponse(BaseModel):
     message: str
     scorecard: DailyScorecardResponse
     rescue_plan: RescuePlanResponse
+    sleep_protocol: Optional[SleepProtocolResponse] = None
+    streaks: list[AccountabilityMetricResponse] = Field(default_factory=list)
+    trend_summary: Optional[AccountabilityTrendSummaryResponse] = None
 
 
 class TodayAgendaResponse(BaseModel):
@@ -1330,6 +1405,9 @@ class TodayAgendaResponse(BaseModel):
     scorecard: Optional[DailyScorecardResponse] = None
     next_prayer: Optional[NextPrayerResponse] = None
     rescue_plan: Optional[RescuePlanResponse] = None
+    sleep_protocol: Optional[SleepProtocolResponse] = None
+    streaks: list[AccountabilityMetricResponse] = Field(default_factory=list)
+    trend_summary: Optional[AccountabilityTrendSummaryResponse] = None
 
 
 class PrayerWindowResponse(BaseModel):

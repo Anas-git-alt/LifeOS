@@ -13,7 +13,10 @@ export default function ProfileSettings() {
   async function load() {
     try {
       const profile = await getProfile();
-      setForm(profile);
+      setForm({
+        ...profile,
+        sleep_wind_down_checklist_text: (profile.sleep_wind_down_checklist || []).join("\n"),
+      });
       setMessage("");
     } catch (err) {
       setMessage(err.message);
@@ -32,6 +35,10 @@ export default function ProfileSettings() {
         quiet_hours_start: form.quiet_hours_start,
         quiet_hours_end: form.quiet_hours_end,
         nudge_mode: form.nudge_mode,
+        sleep_bedtime_target: form.sleep_bedtime_target,
+        sleep_wake_target: form.sleep_wake_target,
+        sleep_caffeine_cutoff: form.sleep_caffeine_cutoff,
+        sleep_wind_down_checklist: parseChecklist(form.sleep_wind_down_checklist_text),
       });
       setMessage("Profile saved.");
     } catch (err) {
@@ -45,7 +52,7 @@ export default function ProfileSettings() {
     <div>
       <header className="page-header">
         <h1>Profile</h1>
-        <p>Timezone, location, shift, and nudge preferences.</p>
+        <p>Timezone, location, shift, nudge, and core sleep protocol preferences.</p>
       </header>
       {message && (
         <div className={`glass-card ${isSuccessMessage ? "status-message-success" : "status-message-error"}`} style={{ marginBottom: 14 }}>
@@ -91,6 +98,37 @@ export default function ProfileSettings() {
             </select>
           </div>
         </div>
+        <div className="panel-card-head" style={{ marginTop: 8 }}>
+          <h2>Sleep Protocol</h2>
+          <span>Targets shown on Today board</span>
+        </div>
+        <div className="grid grid-3">
+          <TimeField
+            label="Bedtime Target"
+            value={form.sleep_bedtime_target}
+            onChange={(value) => setForm({ ...form, sleep_bedtime_target: value })}
+          />
+          <TimeField
+            label="Wake Target"
+            value={form.sleep_wake_target}
+            onChange={(value) => setForm({ ...form, sleep_wake_target: value })}
+          />
+          <TimeField
+            label="Caffeine Cutoff"
+            value={form.sleep_caffeine_cutoff}
+            onChange={(value) => setForm({ ...form, sleep_caffeine_cutoff: value })}
+          />
+        </div>
+        <div className="form-group" style={{ marginTop: 12 }}>
+          <label htmlFor="sleep-wind-down-checklist">Wind-Down Checklist</label>
+          <textarea
+            id="sleep-wind-down-checklist"
+            rows={5}
+            value={form.sleep_wind_down_checklist_text || ""}
+            onChange={(event) => setForm({ ...form, sleep_wind_down_checklist_text: event.target.value })}
+            placeholder={"Dim lights and put phone away\nSet tomorrow's first step\nBrush teeth and make wudu"}
+          />
+        </div>
         <button className="btn btn-primary" onClick={save}>
           Save
         </button>
@@ -100,10 +138,28 @@ export default function ProfileSettings() {
 }
 
 function Field({ label, value, onChange }) {
+  const id = `profile-${label.toLowerCase().replace(/\s+/g, "-")}`;
   return (
     <div className="form-group">
-      <label>{label}</label>
-      <input value={value || ""} onChange={(event) => onChange(event.target.value)} />
+      <label htmlFor={id}>{label}</label>
+      <input id={id} value={value || ""} onChange={(event) => onChange(event.target.value)} />
     </div>
   );
+}
+
+function TimeField({ label, value, onChange }) {
+  const id = `profile-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  return (
+    <div className="form-group">
+      <label htmlFor={id}>{label}</label>
+      <input id={id} type="time" value={value || ""} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function parseChecklist(raw) {
+  return String(raw || "")
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

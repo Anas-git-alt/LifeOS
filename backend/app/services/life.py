@@ -1,6 +1,6 @@
 """Life item and agenda services."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -22,6 +22,26 @@ from app.services.system_settings import get_data_start_date
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 TRAINING_STATUSES = {"done", "rest", "missed"}
+DEFAULT_SLEEP_PROTOCOL = {
+    "bedtime_target": "23:30",
+    "wake_target": "07:30",
+    "caffeine_cutoff": "15:00",
+    "wind_down_checklist": [
+        "Dim lights and put phone away",
+        "Set tomorrow's first step",
+        "Brush teeth and make wudu",
+        "Get into bed on time",
+    ],
+}
+ACCOUNTABILITY_METRICS = (
+    {"key": "sleep", "label": "Sleep 7h+", "deadline_hour": 12},
+    {"key": "hydration", "label": "Hydration 2+", "deadline_hour": 21},
+    {"key": "protein", "label": "Protein", "deadline_hour": 21},
+    {"key": "training", "label": "Train/Rest Set", "deadline_hour": 18},
+    {"key": "family", "label": "Family Action", "deadline_hour": 18},
+    {"key": "priority", "label": "Priority Done", "deadline_hour": 20},
+    {"key": "shutdown", "label": "Shutdown", "deadline_hour": 23},
+)
 
 
 def _resolve_tz(timezone_name: str) -> ZoneInfo:
@@ -104,13 +124,13 @@ def _coerce_due_to_local_date(item: LifeItem, tz: ZoneInfo):
     return due_dt.astimezone(tz).date()
 
 
-async def _get_profile_context(db) -> tuple[str, ZoneInfo, datetime]:
+async def _get_profile_context(db) -> tuple[UserProfile | None, str, ZoneInfo, datetime]:
     profile_result = await db.execute(select(UserProfile).where(UserProfile.id == 1))
     profile = profile_result.scalar_one_or_none()
     timezone_name = profile.timezone if profile else "Africa/Casablanca"
     tz = _resolve_tz(timezone_name)
     now_local = datetime.now(timezone.utc).astimezone(tz)
-    return timezone_name, tz, now_local
+    return profile, timezone_name, tz, now_local
 
 
 async def _get_or_create_daily_scorecard(db, *, local_date, timezone_name: str) -> tuple[DailyScorecard, bool]:
@@ -138,6 +158,220 @@ async def _get_or_create_daily_scorecard(db, *, local_date, timezone_name: str) 
 
 def _scorecard_notes(scorecard: DailyScorecard) -> dict:
     return dict(scorecard.notes_json or {})
+
+
+def _build_sleep_protocol(profile: UserProfile | None, scorecard: DailyScorecard | None) -> dict:
+    sleep_summary = dict(getattr(scorecard, "sleep_summary_json", None) or {})
+    checklist = list(getattr(profile, "sleep_wind_down_checklist_json", None) or [])
+    if not checklist:
+        checklist = list(DEFAULT_SLEEP_PROTOCOL["wind_down_checklist"])
+
+    return {
+        "bedtime_target": getattr(profile, "sleep_bedtime_target", None) or DEFAULT_SLEEP_PROTOCOL["bedtime_target"],
+        "wake_target": getattr(profile, "sleep_wake_target", None) or DEFAULT_SLEEP_PROTOCOL["wake_target"],
+        "caffeine_cutoff": getattr(profile, "sleep_caffeine_cutoff", None) or DEFAULT_SLEEP_PROTOCOL["caffeine_cutoff"],
+        "wind_down_checklist": checklist,
+        "sleep_hours_logged": scorecard.sleep_hours if scorecard else None,
+        "bedtime_logged": sleep_summary.get("bedtime"),
+        "wake_time_logged": sleep_summary.get("wake_time"),
+    }
+
+
+def _metric_hit(metric_key: str, scorecard: DailyScorecard | None) -> bool:
+    if scorecard is None:
+        return False
+    if metric_key == "sleep":
+        return scorecard.sleep_hours is not None and scorecard.sleep_hours >= 7
+    if metric_key == "hydration":
+        return scorecard.hydration_count >= 2
+    if metric_key == "protein":
+        return bool(scorecard.protein_hit)
+    if metric_key == "training":
+        return scorecard.training_status in {"done", "rest"}
+    if metric_key == "family":
+        return bool(scorecard.family_action_done)
+    if metric_key == "priority":
+        return scorecard.top_priority_completed_count >= 1
+    if metric_key == "shutdown":
+        return bool(scorecard.shutdown_done)
+    return False
+
+
+def _metric_status_for_date(
+    metric: dict,
+    scorecard: DailyScorecard | None,
+    *,
+    current_date: date,
+    today_date: date,
+    now_local: datetime,
+) -> str:
+    if _metric_hit(metric["key"], scorecard):
+        return "hit"
+    if current_date != today_date:
+        return "miss"
+    if now_local.hour >= metric["deadline_hour"]:
+        return "miss"
+    return "pending"
+
+
+def _calculate_metric_streak(
+    metric: dict,
+    *,
+    scorecards_by_date: dict[date, DailyScorecard],
+    data_start_date: date,
+    today_date: date,
+    now_local: datetime,
+) -> int:
+    streak = 0
+    current_date = today_date
+
+    while current_date >= data_start_date:
+        status = _metric_status_for_date(
+            metric,
+            scorecards_by_date.get(current_date),
+            current_date=current_date,
+            today_date=today_date,
+            now_local=now_local,
+        )
+        if current_date == today_date and status == "pending":
+            current_date -= timedelta(days=1)
+            continue
+        if status != "hit":
+            break
+        streak += 1
+        current_date -= timedelta(days=1)
+
+    return streak
+
+
+def _count_metric_hits(
+    metric: dict,
+    *,
+    scorecards_by_date: dict[date, DailyScorecard],
+    start_date: date,
+    end_date: date,
+) -> int:
+    if end_date < start_date:
+        return 0
+
+    hits = 0
+    current_date = start_date
+    while current_date <= end_date:
+        if _metric_hit(metric["key"], scorecards_by_date.get(current_date)):
+            hits += 1
+        current_date += timedelta(days=1)
+    return hits
+
+
+def _build_day_completion(
+    *,
+    current_date: date,
+    scorecard: DailyScorecard | None,
+    today_date: date,
+    now_local: datetime,
+) -> dict:
+    hits = sum(
+        1
+        for metric in ACCOUNTABILITY_METRICS
+        if _metric_status_for_date(
+            metric,
+            scorecard,
+            current_date=current_date,
+            today_date=today_date,
+            now_local=now_local,
+        )
+        == "hit"
+    )
+    total = len(ACCOUNTABILITY_METRICS)
+    completion_pct = round((hits / total) * 100) if total else 0
+    return {
+        "date": current_date,
+        "hits": hits,
+        "total": total,
+        "completion_pct": completion_pct,
+    }
+
+
+async def _build_accountability_summary(
+    db,
+    *,
+    data_start_date: date,
+    today_date: date,
+    now_local: datetime,
+) -> dict:
+    history_result = await db.execute(
+        select(DailyScorecard)
+        .where(DailyScorecard.local_date >= data_start_date)
+        .where(DailyScorecard.local_date <= today_date)
+        .order_by(DailyScorecard.local_date.asc())
+    )
+    history = list(history_result.scalars().all())
+    scorecards_by_date = {row.local_date: row for row in history}
+
+    last_7_start = max(data_start_date, today_date - timedelta(days=6))
+    streaks = []
+    for metric in ACCOUNTABILITY_METRICS:
+        streaks.append(
+            {
+                "key": metric["key"],
+                "label": metric["label"],
+                "current_streak": _calculate_metric_streak(
+                    metric,
+                    scorecards_by_date=scorecards_by_date,
+                    data_start_date=data_start_date,
+                    today_date=today_date,
+                    now_local=now_local,
+                ),
+                "hits_last_7": _count_metric_hits(
+                    metric,
+                    scorecards_by_date=scorecards_by_date,
+                    start_date=last_7_start,
+                    end_date=today_date,
+                ),
+                "today_status": _metric_status_for_date(
+                    metric,
+                    scorecards_by_date.get(today_date),
+                    current_date=today_date,
+                    today_date=today_date,
+                    now_local=now_local,
+                ),
+            }
+        )
+
+    completed_end = today_date - timedelta(days=1)
+    recent_days: list[dict] = []
+    if completed_end >= data_start_date:
+        completed_start = max(data_start_date, completed_end - timedelta(days=6))
+        current_date = completed_start
+        while current_date <= completed_end:
+            recent_days.append(
+                _build_day_completion(
+                    current_date=current_date,
+                    scorecard=scorecards_by_date.get(current_date),
+                    today_date=today_date,
+                    now_local=now_local,
+                )
+            )
+            current_date += timedelta(days=1)
+
+    best_day = None
+    if recent_days:
+        best_day = max(recent_days, key=lambda day: (day["completion_pct"], day["hits"], day["date"]))
+    average_completion_pct = (
+        round(sum(day["completion_pct"] for day in recent_days) / len(recent_days))
+        if recent_days
+        else 0
+    )
+
+    return {
+        "streaks": streaks,
+        "trend_summary": {
+            "window_days": 7,
+            "average_completion_pct": average_completion_pct,
+            "best_day": best_day,
+            "recent_days": recent_days,
+        },
+    }
 
 
 async def _load_open_items_snapshot(db, *, tz: ZoneInfo, today_date) -> dict:
@@ -360,8 +594,9 @@ def _apply_daily_log_to_scorecard(scorecard: DailyScorecard, data: DailyLogCreat
 
 
 async def get_today_agenda() -> dict:
+    data_start_date = await get_data_start_date()
     async with async_session() as db:
-        timezone_name, tz, now_local = await _get_profile_context(db)
+        profile, timezone_name, tz, now_local = await _get_profile_context(db)
         today_date = now_local.date()
         agenda_snapshot = await _load_open_items_snapshot(db, tz=tz, today_date=today_date)
         intake_snapshot = await _load_intake_snapshot(db)
@@ -379,6 +614,13 @@ async def get_today_agenda() -> dict:
             overdue=agenda_snapshot["overdue"],
             next_prayer=next_prayer,
         )
+        accountability_summary = await _build_accountability_summary(
+            db,
+            data_start_date=data_start_date,
+            today_date=today_date,
+            now_local=now_local,
+        )
+        sleep_protocol = _build_sleep_protocol(profile, scorecard)
 
         if created or scorecard.rescue_status != rescue_plan["status"]:
             scorecard.rescue_status = rescue_plan["status"]
@@ -397,12 +639,16 @@ async def get_today_agenda() -> dict:
             "scorecard": scorecard,
             "next_prayer": next_prayer,
             "rescue_plan": rescue_plan,
+            "sleep_protocol": sleep_protocol,
+            "streaks": accountability_summary["streaks"],
+            "trend_summary": accountability_summary["trend_summary"],
         }
 
 
 async def log_daily_signal(data: DailyLogCreate) -> dict:
+    data_start_date = await get_data_start_date()
     async with async_session() as db:
-        timezone_name, tz, now_local = await _get_profile_context(db)
+        profile, timezone_name, tz, now_local = await _get_profile_context(db)
         today_date = now_local.date()
         scorecard, _ = await _get_or_create_daily_scorecard(
             db,
@@ -421,6 +667,13 @@ async def log_daily_signal(data: DailyLogCreate) -> dict:
             overdue=agenda_snapshot["overdue"],
             next_prayer=next_prayer,
         )
+        accountability_summary = await _build_accountability_summary(
+            db,
+            data_start_date=data_start_date,
+            today_date=today_date,
+            now_local=now_local,
+        )
+        sleep_protocol = _build_sleep_protocol(profile, scorecard)
         scorecard.rescue_status = rescue_plan["status"]
         await db.commit()
         await db.refresh(scorecard)
@@ -430,6 +683,9 @@ async def log_daily_signal(data: DailyLogCreate) -> dict:
             "message": _format_daily_log_message(data.kind, scorecard, rescue_plan),
             "scorecard": scorecard,
             "rescue_plan": rescue_plan,
+            "sleep_protocol": sleep_protocol,
+            "streaks": accountability_summary["streaks"],
+            "trend_summary": accountability_summary["trend_summary"],
         }
 
 

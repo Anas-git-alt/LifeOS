@@ -19,6 +19,7 @@ from app.models import (
     LifeItemResponse,
     NextPrayerResponse,
     RescuePlanResponse,
+    SleepProtocolResponse,
     LifeItemUpdate,
     TodayAgendaResponse,
 )
@@ -92,6 +93,9 @@ async def post_daily_log(data: DailyLogCreate):
         message=result["message"],
         scorecard=DailyScorecardResponse.model_validate(result["scorecard"]),
         rescue_plan=RescuePlanResponse.model_validate(result["rescue_plan"]),
+        sleep_protocol=SleepProtocolResponse.model_validate(result["sleep_protocol"]) if result.get("sleep_protocol") else None,
+        streaks=result.get("streaks") or [],
+        trend_summary=result.get("trend_summary"),
     )
 
 
@@ -110,6 +114,9 @@ async def get_today():
         scorecard=DailyScorecardResponse.model_validate(agenda["scorecard"]) if agenda.get("scorecard") else None,
         next_prayer=NextPrayerResponse.model_validate(agenda["next_prayer"]) if agenda.get("next_prayer") else None,
         rescue_plan=RescuePlanResponse.model_validate(agenda["rescue_plan"]) if agenda.get("rescue_plan") else None,
+        sleep_protocol=SleepProtocolResponse.model_validate(agenda["sleep_protocol"]) if agenda.get("sleep_protocol") else None,
+        streaks=agenda.get("streaks") or [],
+        trend_summary=agenda.get("trend_summary"),
     )
 
 

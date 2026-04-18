@@ -218,6 +218,16 @@ def run_migrations() -> None:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+        if "user_profile" in existing_tables:
+            profile_cols = {row[1] for row in cur.execute("PRAGMA table_info(user_profile)").fetchall()}
+            if "sleep_bedtime_target" not in profile_cols:
+                cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_bedtime_target VARCHAR(5) DEFAULT '23:30'")
+            if "sleep_wake_target" not in profile_cols:
+                cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_wake_target VARCHAR(5) DEFAULT '07:30'")
+            if "sleep_caffeine_cutoff" not in profile_cols:
+                cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_caffeine_cutoff VARCHAR(5) DEFAULT '15:00'")
+            if "sleep_wind_down_checklist_json" not in profile_cols:
+                cur.execute("ALTER TABLE user_profile ADD COLUMN sleep_wind_down_checklist_json JSON")
         if "chat_sessions" in existing_tables:
             chat_session_cols = {row[1] for row in cur.execute("PRAGMA table_info(chat_sessions)").fetchall()}
             if "deleted_at" not in chat_session_cols:
