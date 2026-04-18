@@ -21,6 +21,8 @@ Purpose: manual user acceptance checks for the current `codex/obsidian-shared-me
   - expanded top-level navigation coverage
   - Discord display of backend warnings
   - workspace file-list parsing fix for prompts like "list of files in docs/"
+  - Today accountability board with scorecard, next prayer, rescue plan, and quick logs
+  - Discord quick-log commands for sleep, meals, training, water, and shutdown
 
 ## Discord Tests
 
@@ -84,6 +86,25 @@ Expected:
 - If provider retries happen, Discord still returns final answer once backend completes.
 - If warnings exist, they appear in a `Note:` line.
 
+### 5. Quick accountability commands
+
+Commands:
+
+```text
+!sleep 7.5 solid night
+!meal protein shake
+!train rest sore today
+!water 2 after walk
+!shutdown tomorrow planned
+```
+
+Expected:
+
+- Each command returns success message instead of generic error.
+- Reply contains compact scorecard summary like `Meals`, `water`, `train`, `priorities`, and `rescue`.
+- `!meal protein shake` marks protein context without extra prompt.
+- `!train rest ...` keeps training state explicit as `rest`.
+
 ## WebUI Tests
 
 ### 1. Navigation smoke
@@ -110,7 +131,34 @@ Expected:
 - Each page opens without blank screen or console-visible failure.
 - Heading matches selected page.
 
-### 2. Agent chat pending state
+### 2. Today accountability board
+
+Open `Today`.
+
+Expected:
+
+- Page renders scorecard stats for sleep, meals, water, training, shutdown, protein, family, priorities, and inbox-ready count.
+- `Next Prayer` card renders prayer name plus start/end window, or clean fallback text.
+- `Rescue Plan` card renders status badge and action list or on-track text.
+- `Quick Logs` buttons render for meal, protein meal, water, training, rest day, family action, priority done, and shutdown.
+- `Sleep Log` form renders with hours and note fields.
+- Due today, overdue, top focus, and inbox-ready sections still render below new accountability cards.
+
+### 3. Today quick-log interaction
+
+On `Today`, click:
+
+- `Water +1`
+- `Priority Done`
+
+Expected:
+
+- Success banner appears with compact scorecard summary.
+- Corresponding counts update without full page reload.
+- Rescue plan card stays visible and may change status/headline.
+- Buttons show temporary `Saving...` state while request is in flight.
+
+### 4. Agent chat pending state
 
 Open:
 
@@ -138,7 +186,7 @@ Expected after reply:
 - Input stays usable
 - No browser-level request timeout at 12s
 
-### 3. Warning banner in chat
+### 5. Warning banner in chat
 
 Use same agent chat if backend returns warnings.
 
@@ -148,7 +196,7 @@ Expected:
 - Warning text appears in a blue notice area below chat form
 - Warning does not replace the actual reply
 
-### 4. Jobs page heading and basic create flow
+### 6. Jobs page heading and basic create flow
 
 Open `Jobs`.
 
@@ -163,7 +211,7 @@ Expected:
 - Form submits
 - No stale expectation for old `Cron Jobs` heading
 
-### 5. Inbox page visibility
+### 7. Inbox page visibility
 
 Open `Inbox`.
 
@@ -172,7 +220,7 @@ Expected:
 - Page renders without crash
 - Existing inbox items are visible if present
 
-### 6. Experiments page visibility
+### 8. Experiments page visibility
 
 Open `Experiments`.
 
@@ -200,6 +248,9 @@ Expected:
 
 - Discord basic reply works
 - Discord warning note appears when backend sends warnings
+- Discord quick-log commands update scorecard state and return summary text
+- WebUI Today page shows scorecard, next prayer, rescue plan, and quick logs
+- WebUI quick logs update counts without reload
 - WebUI agent chat waits beyond the old short timeout and eventually returns
 - WebUI shows `Thinking...` and elapsed timer during slow requests
 - Inbox and Experiments pages load
@@ -210,6 +261,9 @@ Expected:
 - `Chat failed: Request timed out`
 - Discord `503 Service Unavailable`
 - Missing `Note:` line when backend warnings exist
+- Missing Today scorecard, next prayer, or rescue plan sections
+- Today quick-log buttons do nothing or never leave `Saving...`
+- Quick-log reply does not include updated summary
 - Pending bubble never resolves
 - Inbox or Experiments page crashes
 - Prompt `list of files in docs/` produces `.of`-style filtering behavior
@@ -218,7 +272,10 @@ Expected:
 
 - Screenshot of WebUI pending chat state
 - Screenshot of final WebUI reply
+- Screenshot of Today page scorecard/rescue plan
+- Screenshot of quick-log success state after button click
 - Screenshot or Discord message link for warning note
+- Discord message links for at least one quick-log command
 - Exact prompt used
 - Agent name
 - Timestamp

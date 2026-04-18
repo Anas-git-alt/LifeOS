@@ -295,6 +295,7 @@ async def init_db():
         AuditLog,
         ChatSession,
         ChatSessionArchive,
+        DailyScorecard,
         DeenHabit,
         IntakeEntry,
         LifeCheckin,

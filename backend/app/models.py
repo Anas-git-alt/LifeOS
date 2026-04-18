@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum as SAEnum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -440,6 +441,33 @@ class LifeCheckin(Base):
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class DailyScorecard(Base):
+    __tablename__ = "daily_scorecards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    local_date: Mapped[date] = mapped_column(nullable=False, unique=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Africa/Casablanca")
+    sleep_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sleep_summary_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    meals_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    training_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    hydration_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shutdown_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    protein_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    family_action_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    top_priority_completed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rescue_status: Mapped[str] = mapped_column(String(20), nullable=False, default="watch")
+    notes_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
 
 
@@ -1207,6 +1235,89 @@ class LifeCheckinResponse(BaseModel):
         from_attributes = True
 
 
+class DailyScorecardResponse(BaseModel):
+    id: int
+    local_date: date
+    timezone: str
+    sleep_hours: Optional[float] = None
+    sleep_summary: Optional[dict[str, Any]] = None
+    meals_count: int
+    training_status: Optional[str] = None
+    hydration_count: int
+    shutdown_done: bool
+    protein_hit: bool
+    family_action_done: bool
+    top_priority_completed_count: int
+    rescue_status: str
+    notes: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_daily_scorecard_fields(cls, value: Any):
+        if isinstance(value, dict):
+            data = dict(value)
+            if "sleep_summary" not in data:
+                data["sleep_summary"] = data.get("sleep_summary_json")
+            if "notes" not in data:
+                data["notes"] = data.get("notes_json") or {}
+            return data
+
+        return {
+            "id": value.id,
+            "local_date": value.local_date,
+            "timezone": value.timezone,
+            "sleep_hours": value.sleep_hours,
+            "sleep_summary": getattr(value, "sleep_summary_json", None),
+            "meals_count": value.meals_count,
+            "training_status": value.training_status,
+            "hydration_count": value.hydration_count,
+            "shutdown_done": value.shutdown_done,
+            "protein_hit": value.protein_hit,
+            "family_action_done": value.family_action_done,
+            "top_priority_completed_count": value.top_priority_completed_count,
+            "rescue_status": value.rescue_status,
+            "notes": getattr(value, "notes_json", None) or {},
+            "created_at": value.created_at,
+            "updated_at": value.updated_at,
+        }
+
+    class Config:
+        from_attributes = True
+
+
+class NextPrayerResponse(BaseModel):
+    name: str
+    starts_at: datetime
+    ends_at: datetime
+
+
+class RescuePlanResponse(BaseModel):
+    status: str
+    headline: str
+    actions: list[str] = Field(default_factory=list)
+
+
+class DailyLogCreate(BaseModel):
+    kind: Literal["sleep", "meal", "training", "hydration", "shutdown", "family", "priority"]
+    note: Optional[str] = None
+    count: Optional[int] = Field(default=None, ge=1)
+    done: Optional[bool] = None
+    status: Optional[Literal["done", "rest", "missed"]] = None
+    hours: Optional[float] = Field(default=None, ge=0, le=24)
+    bedtime: Optional[str] = None
+    wake_time: Optional[str] = None
+    protein_hit: Optional[bool] = None
+
+
+class DailyLogResponse(BaseModel):
+    kind: str
+    message: str
+    scorecard: DailyScorecardResponse
+    rescue_plan: RescuePlanResponse
+
+
 class TodayAgendaResponse(BaseModel):
     timezone: str
     now: datetime
@@ -1216,6 +1327,9 @@ class TodayAgendaResponse(BaseModel):
     domain_summary: dict[str, int]
     intake_summary: dict[str, int] = Field(default_factory=dict)
     ready_intake: list[IntakeEntryResponse] = Field(default_factory=list)
+    scorecard: Optional[DailyScorecardResponse] = None
+    next_prayer: Optional[NextPrayerResponse] = None
+    rescue_plan: Optional[RescuePlanResponse] = None
 
 
 class PrayerWindowResponse(BaseModel):

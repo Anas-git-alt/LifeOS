@@ -429,6 +429,48 @@
 .status-text-danger { color: var(--color-danger); }
 .status-text-warning { color: var(--color-warning); }
 
+/* ─── Today ─────────────────────────────────────────────────────────────── */
+.today-score-grid { align-items: stretch; }
+
+.today-stat-card {
+  display: grid;
+  gap: 8px;
+  min-height: 108px;
+}
+
+.today-highlight-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.today-highlight-value {
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.today-highlight-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.today-checklist {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.today-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
 /* ─── Jobs ───────────────────────────────────────────────────────────────── */
 .job-card { padding: 14px; }
 

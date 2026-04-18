@@ -3,6 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models import (
+    DailyLogCreate,
+    DailyLogResponse,
+    DailyScorecardResponse,
     GoalProgressResponse,
     IntakeCaptureRequest,
     IntakeCaptureResponse,
@@ -14,6 +17,8 @@ from app.models import (
     LifeCheckinResponse,
     LifeItemCreate,
     LifeItemResponse,
+    NextPrayerResponse,
+    RescuePlanResponse,
     LifeItemUpdate,
     TodayAgendaResponse,
 )
@@ -26,7 +31,15 @@ from app.services.intake import (
     promote_intake_entry,
     update_intake_entry,
 )
-from app.services.life import add_checkin, create_life_item, get_goal_progress, get_today_agenda, list_life_items, update_life_item
+from app.services.life import (
+    add_checkin,
+    create_life_item,
+    get_goal_progress,
+    get_today_agenda,
+    list_life_items,
+    log_daily_signal,
+    update_life_item,
+)
 from app.services.orchestrator import handle_message
 
 router = APIRouter()
@@ -67,6 +80,21 @@ async def post_checkin(item_id: int, data: LifeCheckinCreate):
     return LifeCheckinResponse.model_validate(checkin)
 
 
+@router.post("/daily-log", response_model=DailyLogResponse, dependencies=[Depends(require_api_token)])
+async def post_daily_log(data: DailyLogCreate):
+    try:
+        result = await log_daily_signal(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return DailyLogResponse(
+        kind=result["kind"],
+        message=result["message"],
+        scorecard=DailyScorecardResponse.model_validate(result["scorecard"]),
+        rescue_plan=RescuePlanResponse.model_validate(result["rescue_plan"]),
+    )
+
+
 @router.get("/today", response_model=TodayAgendaResponse, dependencies=[Depends(require_api_token)])
 async def get_today():
     agenda = await get_today_agenda()
@@ -79,6 +107,9 @@ async def get_today():
         domain_summary=agenda["domain_summary"],
         intake_summary=agenda.get("intake_summary") or {},
         ready_intake=[IntakeEntryResponse.model_validate(item) for item in agenda.get("ready_intake") or []],
+        scorecard=DailyScorecardResponse.model_validate(agenda["scorecard"]) if agenda.get("scorecard") else None,
+        next_prayer=NextPrayerResponse.model_validate(agenda["next_prayer"]) if agenda.get("next_prayer") else None,
+        rescue_plan=RescuePlanResponse.model_validate(agenda["rescue_plan"]) if agenda.get("rescue_plan") else None,
     )
 
 

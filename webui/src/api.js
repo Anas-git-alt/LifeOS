@@ -282,6 +282,8 @@ export const createLifeItem = (data) => request("/life/items", { method: "POST",
 export const updateLifeItem = (id, data) => request(`/life/items/${id}`, { method: "PUT", body: JSON.stringify(data) });
 export const checkinLifeItem = (id, result, note = "") =>
   request(`/life/items/${id}/checkin`, { method: "POST", body: JSON.stringify({ result, note }) });
+export const logDailySignal = (data) =>
+  request("/life/daily-log", { method: "POST", body: JSON.stringify(data) });
 export const getTodayAgenda = () => request("/life/today");
 export const getGoalProgress = (itemId) => request(`/life/items/${itemId}/progress`);
 export const getIntakeInbox = (params = {}) => {

@@ -53,6 +53,53 @@ async function mockApi(page) {
       approval_required: true,
     },
   ];
+  const todayAgenda = {
+    timezone: "Africa/Casablanca",
+    now: "2026-03-03T12:00:00Z",
+    top_focus: [{ id: 2, title: "Deep work block", domain: "work", priority: "high" }],
+    due_today: [{ id: 5, title: "Call family", domain: "family", priority: "medium" }],
+    overdue: [{ id: 6, title: "Send invoice", domain: "work", priority: "high" }],
+    domain_summary: { work: 2, family: 1 },
+    intake_summary: { ready: 1, clarifying: 0, parked: 0 },
+    ready_intake: [
+      {
+        id: 21,
+        title: "Inbox capture",
+        raw_text: "Inbox capture",
+        status: "ready",
+        domain: "planning",
+        kind: "task",
+      },
+    ],
+    scorecard: {
+      id: 1,
+      local_date: "2026-03-03",
+      timezone: "Africa/Casablanca",
+      sleep_hours: 7.5,
+      sleep_summary: { hours: 7.5 },
+      meals_count: 1,
+      training_status: null,
+      hydration_count: 1,
+      shutdown_done: false,
+      protein_hit: false,
+      family_action_done: false,
+      top_priority_completed_count: 0,
+      rescue_status: "watch",
+      notes: {},
+      created_at: "2026-03-03T08:00:00Z",
+      updated_at: "2026-03-03T08:00:00Z",
+    },
+    next_prayer: {
+      name: "Asr",
+      starts_at: "2026-03-03T15:30:00Z",
+      ends_at: "2026-03-03T18:45:00Z",
+    },
+    rescue_plan: {
+      status: "watch",
+      headline: "Hydration is behind.",
+      actions: ["Log water twice in the next hour."],
+    },
+  };
 
   await page.route("**/api/**", async (route) => {
     const req = route.request();
@@ -121,11 +168,32 @@ async function mockApi(page) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
+        body: JSON.stringify(todayAgenda),
+      });
+      return;
+    }
+    if (path === "/life/daily-log" && method === "POST") {
+      const payload = req.postDataJSON();
+      if (payload.kind === "hydration") {
+        todayAgenda.scorecard.hydration_count += payload.count || 1;
+        todayAgenda.scorecard.rescue_status = "rescue";
+        todayAgenda.rescue_plan = {
+          status: "rescue",
+          headline: "Day needs a rescue plan. Shrink scope and recover anchors first.",
+          actions: [
+            "Log water twice in the next hour.",
+            "Clear or reschedule overdue priority: Send invoice",
+          ],
+        };
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
         body: JSON.stringify({
-          timezone: "Africa/Casablanca",
-          now_local: "2026-03-03 12:00",
-          top_focus: [{ id: 2, title: "Deep work block", domain: "work", priority: "high" }],
-          domain_summary: { work: 1 },
+          kind: payload.kind,
+          message: `Logged ${payload.kind}. Meals ${todayAgenda.scorecard.meals_count} | water ${todayAgenda.scorecard.hydration_count} | train unset | priorities 0 | rescue ${todayAgenda.rescue_plan.status}`,
+          scorecard: todayAgenda.scorecard,
+          rescue_plan: todayAgenda.rescue_plan,
         }),
       });
       return;
@@ -359,4 +427,19 @@ test("primary CTA: jobs form submission", async ({ page }) => {
   await page.getByRole("button", { name: /create job/i }).click();
 
   await expect(page.getByText("#99 Night summary")).toBeVisible();
+});
+
+test("today quick log updates scorecard", async ({ page }) => {
+  await mockApi(page);
+  await seedToken(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /^Today$/i }).first().click();
+  await expect(page.getByRole("heading", { name: /Today Focus/i }).first()).toBeVisible();
+  await expect(page.getByText("Hydration is behind.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Water +1" }).click();
+
+  await expect(page.getByText(/Logged hydration\./i)).toBeVisible();
+  await expect(page.getByText("Day needs a rescue plan. Shrink scope and recover anchors first.")).toBeVisible();
 });

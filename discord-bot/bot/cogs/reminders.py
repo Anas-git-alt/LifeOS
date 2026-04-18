@@ -45,6 +45,18 @@ class RemindersCog(commands.Cog, name="Reminders"):
                     return channel
         return None
 
+    @staticmethod
+    def _split_number_prefix(raw: str, caster):
+        text = (raw or "").strip()
+        if not text:
+            return None, ""
+        first, *rest = text.split(maxsplit=1)
+        try:
+            value = caster(first)
+        except ValueError:
+            return None, text
+        return value, (rest[0] if rest else "").strip()
+
     @commands.command(name="prayer")
     async def prayer_check(self, ctx):
         """Log a prayer and get the next prayer time."""
@@ -149,6 +161,82 @@ class RemindersCog(commands.Cog, name="Reminders"):
             await ctx.send(embed=embed)
         except Exception as exc:
             await ctx.send(f"Failed to get Quran progress: {str(exc)[:180]}")
+
+    @commands.command(name="sleep")
+    async def log_sleep_quick(self, ctx, *, details: str = ""):
+        """Quick sleep log. Usage: !sleep 7.5 slept better / !sleep rough night"""
+        hours, parsed_note = self._split_number_prefix(details, float)
+        note = parsed_note if hours is not None else details.strip()
+        payload = {"kind": "sleep", "hours": hours, "note": note or None}
+        try:
+            result = await api_post("/life/daily-log", payload)
+            await ctx.send(f"😴 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log sleep: {str(exc)[:180]}")
+
+    @commands.command(name="meal")
+    async def log_meal_quick(self, ctx, *, details: str = ""):
+        """Quick meal log. Usage: !meal 2 chicken rice / !meal protein shake"""
+        count, parsed_note = self._split_number_prefix(details, int)
+        note = parsed_note if count is not None else details.strip()
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {
+                    "kind": "meal",
+                    "count": count or 1,
+                    "note": note or None,
+                    "protein_hit": "protein" in note.lower() if note else None,
+                },
+            )
+            await ctx.send(f"🍽️ {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log meal: {str(exc)[:180]}")
+
+    @commands.command(name="train")
+    async def log_training_quick(self, ctx, *, details: str = ""):
+        """Quick training log. Usage: !train done push day / !train rest sore today"""
+        status = "done"
+        note = details.strip()
+        if note:
+            first, *rest = note.split(maxsplit=1)
+            if first.lower() in {"done", "rest", "missed"}:
+                status = first.lower()
+                note = (rest[0] if rest else "").strip()
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {"kind": "training", "status": status, "note": note or None},
+            )
+            await ctx.send(f"💪 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log training: {str(exc)[:180]}")
+
+    @commands.command(name="water")
+    async def log_water_quick(self, ctx, *, details: str = ""):
+        """Quick hydration log. Usage: !water 2 after walk"""
+        count, parsed_note = self._split_number_prefix(details, int)
+        note = parsed_note if count is not None else details.strip()
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {"kind": "hydration", "count": count or 1, "note": note or None},
+            )
+            await ctx.send(f"💧 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log water: {str(exc)[:180]}")
+
+    @commands.command(name="shutdown")
+    async def log_shutdown_quick(self, ctx, *, note: str = ""):
+        """Quick shutdown log. Usage: !shutdown inbox zero and tomorrow ready"""
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {"kind": "shutdown", "done": True, "note": note.strip() or None},
+            )
+            await ctx.send(f"🌙 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log shutdown: {str(exc)[:180]}")
 
     @commands.command(name="tahajjud")
     async def tahajjud(self, ctx, state: str, prayer_date: str | None = None):

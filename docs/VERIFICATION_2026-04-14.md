@@ -1,5 +1,8 @@
 # LifeOS Verification Snapshot
 
+Newer local accountability verification lives in [docs/VERIFICATION_2026-04-18.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-18.md).
+This file remains latest live VPS verification snapshot.
+
 Date: 2026-04-14
 
 This file records the most recent verification pass after updating docs and test expectations.

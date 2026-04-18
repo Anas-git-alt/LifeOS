@@ -13,6 +13,7 @@
 - [ ] `docker compose ps` shows `backend`, `discord-bot`, `webui`, `openviking`, and `tts-worker` up.
 - [ ] `GET /api/health` returns backend status plus OpenViking health details.
 - [ ] `GET /api/readiness` returns `ready`.
+- [ ] `GET /api/life/today` returns legacy agenda fields plus `scorecard`, `next_prayer`, and `rescue_plan`.
 - [ ] The VPS has been tested on the feature branch that is about to be promoted.
 - [ ] OpenViking legacy memory import and workspace sync complete without startup errors.
 - [ ] `GET /api/tts/health` succeeds with a valid API token.
@@ -20,11 +21,14 @@
 ## Core Product Flows
 
 - [ ] `!status`, `!agents`, `!today`, and `!prayertoday` work in Discord.
+- [ ] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` work and return updated summary text.
 - [ ] Agent chat works through Discord and WebUI.
 - [ ] Session flows work end to end: create, switch, rename, clear, and history restore.
 - [ ] Approvals work through both commands and emoji reactions for owner users only.
 - [ ] WebUI token banner accepts the API token and protected pages load correctly.
 - [ ] Mission Control shows health, approvals, jobs, today agenda, and recent agent activity.
+- [ ] WebUI `Today` shows scorecard, next prayer, rescue plan, quick logs, due work, focus items, and inbox-ready items.
+- [ ] WebUI quick-log buttons update same-day scorecard state without reload.
 - [ ] SSE updates reach the WebUI after token exchange without manual refresh.
 - [ ] Jobs can be created, edited, paused, resumed, deleted, and inspected for run logs.
 - [ ] Discord natural-language job creation works with follow-up prompts when fields are missing.
@@ -52,5 +56,6 @@
 - [ ] Docker images build successfully.
 - [ ] Manual Discord smoke test completed.
 - [ ] Manual WebUI smoke test completed.
+- [ ] Manual Today accountability smoke test completed in both Discord and WebUI.
 - [ ] `./scripts/promote_to_main.sh` completed and redeployed the VPS to `main`.
 - [ ] Docs reviewed for the current stack and operator workflow.

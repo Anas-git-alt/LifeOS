@@ -90,13 +90,18 @@ Examples:
 - `!goal health regain mobility consistency`
 - `!goalprogress 77`
 
-## Prayer, Quran, And Habit Tracking
+## Prayer, Quran, Habits, And Quick Logs
 
 - `!prayer`
 - `!prayertoday`
 - `!prayerlog <YYYY-MM-DD> <prayer> <status> [note]`
 - `!quran <end_page> [start_page] [note]`
 - `!quranprogress`
+- `!sleep [hours] [note]`
+- `!meal [count] [note]`
+- `!train [done|rest|missed] [note]`
+- `!water [count] [note]`
+- `!shutdown [note]`
 - `!tahajjud <done|missed> [YYYY-MM-DD]`
 - `!adhkar <morning|evening> <done|missed> [YYYY-MM-DD]`
 - `!workout <details>`
@@ -123,10 +128,26 @@ Examples:
 - `!prayerlog 2026-03-01 Fajr late overslept`
 - `!quran 25`
 - `!quran 40 26`
+- `!sleep 7.5 solid night`
+- `!sleep rough night but up for Fajr`
+- `!meal 2 chicken rice`
+- `!meal protein shake`
+- `!train done push day`
+- `!train rest sore today`
+- `!water 2 after walk`
+- `!shutdown tomorrow planned and inbox clear`
 - `!adhkar morning done`
 - `!tahajjud missed 2026-03-05`
 - `!workout pushed legs today for 45 minutes`
 - `!wife promised dinner out Friday`
+
+Quick-log behavior:
+
+- `!sleep` accepts leading float hours or note-only text.
+- `!meal` and `!water` accept leading integer count, default `1`.
+- `!train` accepts optional first token `done`, `rest`, or `missed`; default is `done`.
+- `!shutdown` marks shutdown complete for today and stores optional note.
+- Quick-log replies echo compact scorecard state: meals, water, training, priorities, and rescue status.
 
 Reminder reactions:
 
@@ -225,6 +246,7 @@ Examples:
 
 1. Start with `!status`.
 2. Run `!today` or `!daily`.
-3. Clear pending actions with `!pending`.
-4. Use `!schedule` for recurring reminders you would otherwise forget.
-5. Keep longer agent work in explicit sessions instead of one giant running thread.
+3. Log anchors as they happen with `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown`.
+4. Clear pending actions with `!pending`.
+5. Use `!schedule` for recurring reminders you would otherwise forget.
+6. Keep longer agent work in explicit sessions instead of one giant running thread.

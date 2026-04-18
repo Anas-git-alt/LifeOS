@@ -6,10 +6,22 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.database import async_session
-from app.models import IntakeEntry, LifeCheckin, LifeCheckinCreate, LifeItem, LifeItemCreate, LifeItemUpdate, UserProfile
+from app.models import (
+    DailyLogCreate,
+    DailyScorecard,
+    IntakeEntry,
+    LifeCheckin,
+    LifeCheckinCreate,
+    LifeItem,
+    LifeItemCreate,
+    LifeItemUpdate,
+    UserProfile,
+)
+from app.services.prayer_service import get_today_schedule
 from app.services.system_settings import get_data_start_date
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+TRAINING_STATUSES = {"done", "rest", "missed"}
 
 
 def _resolve_tz(timezone_name: str) -> ZoneInfo:
@@ -81,74 +93,343 @@ async def add_checkin(item_id: int, data: LifeCheckinCreate) -> tuple[LifeChecki
         return checkin, item
 
 
+def _coerce_due_to_local_date(item: LifeItem, tz: ZoneInfo):
+    if not item.due_at:
+        return None
+    due_dt = item.due_at
+    if due_dt.tzinfo is None:
+        due_dt = due_dt.replace(tzinfo=timezone.utc)
+    else:
+        due_dt = due_dt.astimezone(timezone.utc)
+    return due_dt.astimezone(tz).date()
+
+
+async def _get_profile_context(db) -> tuple[str, ZoneInfo, datetime]:
+    profile_result = await db.execute(select(UserProfile).where(UserProfile.id == 1))
+    profile = profile_result.scalar_one_or_none()
+    timezone_name = profile.timezone if profile else "Africa/Casablanca"
+    tz = _resolve_tz(timezone_name)
+    now_local = datetime.now(timezone.utc).astimezone(tz)
+    return timezone_name, tz, now_local
+
+
+async def _get_or_create_daily_scorecard(db, *, local_date, timezone_name: str) -> tuple[DailyScorecard, bool]:
+    result = await db.execute(select(DailyScorecard).where(DailyScorecard.local_date == local_date))
+    scorecard = result.scalar_one_or_none()
+    if scorecard:
+        scorecard.timezone = timezone_name
+        return scorecard, False
+    scorecard = DailyScorecard(
+        local_date=local_date,
+        timezone=timezone_name,
+        meals_count=0,
+        hydration_count=0,
+        shutdown_done=False,
+        protein_hit=False,
+        family_action_done=False,
+        top_priority_completed_count=0,
+        rescue_status="watch",
+        notes_json={},
+    )
+    db.add(scorecard)
+    await db.flush()
+    return scorecard, True
+
+
+def _scorecard_notes(scorecard: DailyScorecard) -> dict:
+    return dict(scorecard.notes_json or {})
+
+
+async def _load_open_items_snapshot(db, *, tz: ZoneInfo, today_date) -> dict:
+    open_items_result = await db.execute(
+        select(LifeItem).where(LifeItem.status == "open").order_by(LifeItem.updated_at.desc())
+    )
+    open_items = list(open_items_result.scalars().all())
+
+    top_focus = sorted(
+        open_items,
+        key=lambda item: (
+            PRIORITY_ORDER.get(item.priority, 1),
+            item.due_at.timestamp() if item.due_at else 9999999999,
+        ),
+    )[:3]
+
+    due_today = []
+    overdue = []
+    for item in open_items:
+        due_local = _coerce_due_to_local_date(item, tz)
+        if due_local is None:
+            continue
+        if due_local == today_date:
+            due_today.append(item)
+        elif due_local < today_date:
+            overdue.append(item)
+
+    domain_counts_result = await db.execute(
+        select(LifeItem.domain, func.count(LifeItem.id))
+        .where(LifeItem.status == "open")
+        .group_by(LifeItem.domain)
+    )
+    domain_summary = {domain: count for domain, count in domain_counts_result.all()}
+    return {
+        "open_items": open_items,
+        "top_focus": top_focus,
+        "due_today": due_today,
+        "overdue": overdue,
+        "domain_summary": domain_summary,
+    }
+
+
+async def _load_intake_snapshot(db) -> dict:
+    intake_counts_result = await db.execute(
+        select(IntakeEntry.status, func.count(IntakeEntry.id))
+        .group_by(IntakeEntry.status)
+    )
+    intake_summary = {status: count for status, count in intake_counts_result.all()}
+
+    ready_intake_result = await db.execute(
+        select(IntakeEntry)
+        .where(IntakeEntry.status.in_(["ready", "clarifying"]))
+        .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+        .limit(3)
+    )
+    ready_intake = list(ready_intake_result.scalars().all())
+    return {"intake_summary": intake_summary, "ready_intake": ready_intake}
+
+
+async def _load_next_prayer_context() -> dict | None:
+    try:
+        schedule = await get_today_schedule()
+    except Exception:
+        return None
+
+    next_prayer_name = schedule.get("next_prayer")
+    if not next_prayer_name:
+        return None
+    for row in schedule.get("windows") or []:
+        if row.get("prayer_name") == next_prayer_name:
+            return {
+                "name": next_prayer_name,
+                "starts_at": row["starts_at"],
+                "ends_at": row["ends_at"],
+            }
+    return None
+
+
+def _build_rescue_plan(
+    *,
+    scorecard: DailyScorecard,
+    now_local: datetime,
+    top_focus: list[LifeItem],
+    due_today: list[LifeItem],
+    overdue: list[LifeItem],
+    next_prayer: dict | None,
+) -> dict:
+    issues: list[str] = []
+    actions: list[str] = []
+
+    overdue_high = [item for item in overdue if item.priority == "high"]
+    if overdue_high:
+        issues.append("High-priority work is overdue.")
+        actions.append(f"Clear or reschedule overdue priority: {overdue_high[0].title}")
+
+    if now_local.hour >= 12 and scorecard.meals_count == 0:
+        issues.append("No meals logged yet.")
+        actions.append("Eat one solid meal before adding more work.")
+
+    if now_local.hour >= 15 and scorecard.hydration_count < 2:
+        issues.append("Hydration is behind.")
+        actions.append("Log water twice in the next hour.")
+
+    if now_local.hour >= 14 and scorecard.top_priority_completed_count == 0 and any(
+        item.priority == "high" for item in top_focus + due_today
+    ):
+        issues.append("Top priorities still untouched.")
+        actions.append("Finish one priority item before opening new loops.")
+
+    if now_local.hour >= 18 and scorecard.training_status is None:
+        issues.append("Training status still undecided.")
+        actions.append("Choose training or explicit rest so day has a clear close.")
+
+    if now_local.hour >= 18 and not scorecard.family_action_done:
+        issues.append("No family action logged yet.")
+        actions.append("Do one visible family action before late evening.")
+
+    if now_local.hour >= 21 and not scorecard.shutdown_done:
+        issues.append("Shutdown routine still open.")
+        actions.append("Start shutdown now: close loops, set tomorrow's first step, go offline.")
+
+    if next_prayer:
+        actions.append(f"Protect {next_prayer['name']} window before schedule drifts the day.")
+
+    deduped_actions: list[str] = []
+    seen = set()
+    for action in actions:
+        if action in seen:
+            continue
+        deduped_actions.append(action)
+        seen.add(action)
+        if len(deduped_actions) >= 4:
+            break
+
+    if overdue_high or len(issues) >= 3:
+        status = "rescue"
+    elif issues:
+        status = "watch"
+    else:
+        status = "on_track"
+
+    if status == "on_track":
+        headline = "Day is on track. Protect anchors and keep momentum."
+    elif status == "watch":
+        headline = issues[0]
+    else:
+        headline = "Day needs a rescue plan. Shrink scope and recover anchors first."
+
+    return {
+        "status": status,
+        "headline": headline,
+        "actions": deduped_actions,
+    }
+
+
+def _format_daily_log_message(kind: str, scorecard: DailyScorecard, rescue_plan: dict) -> str:
+    training_label = scorecard.training_status or "unset"
+    return (
+        f"Logged {kind}. Meals {scorecard.meals_count} | water {scorecard.hydration_count} | "
+        f"train {training_label} | priorities {scorecard.top_priority_completed_count} | "
+        f"rescue {rescue_plan['status']}"
+    )
+
+
+def _apply_daily_log_to_scorecard(scorecard: DailyScorecard, data: DailyLogCreate) -> None:
+    notes = _scorecard_notes(scorecard)
+    note = (data.note or "").strip() or None
+
+    if data.kind == "sleep":
+        if data.hours is None and not data.bedtime and not data.wake_time and not note:
+            raise ValueError("Sleep log needs hours, bedtime, wake time, or note.")
+        scorecard.sleep_hours = data.hours
+        summary = dict(scorecard.sleep_summary_json or {})
+        if data.hours is not None:
+            summary["hours"] = data.hours
+        if data.bedtime:
+            summary["bedtime"] = data.bedtime
+        if data.wake_time:
+            summary["wake_time"] = data.wake_time
+        if note:
+            summary["note"] = note
+            notes["sleep_note"] = note
+        scorecard.sleep_summary_json = summary or None
+    elif data.kind == "meal":
+        increment = data.count or 1
+        scorecard.meals_count += increment
+        protein_hit = data.protein_hit
+        if protein_hit is None and note:
+            protein_hit = "protein" in note.lower()
+        scorecard.protein_hit = bool(scorecard.protein_hit or protein_hit)
+        if note:
+            notes["last_meal_note"] = note
+    elif data.kind == "training":
+        status = data.status or "done"
+        if status not in TRAINING_STATUSES:
+            raise ValueError("Training status must be one of: done, rest, missed.")
+        scorecard.training_status = status
+        if note:
+            notes["training_note"] = note
+    elif data.kind == "hydration":
+        increment = data.count or 1
+        scorecard.hydration_count += increment
+        if note:
+            notes["last_hydration_note"] = note
+    elif data.kind == "shutdown":
+        scorecard.shutdown_done = True if data.done is None else bool(data.done)
+        if note:
+            notes["shutdown_note"] = note
+    elif data.kind == "family":
+        scorecard.family_action_done = True if data.done is None else bool(data.done)
+        if note:
+            notes["family_note"] = note
+    elif data.kind == "priority":
+        increment = data.count or 1
+        scorecard.top_priority_completed_count += increment
+        if note:
+            notes["priority_note"] = note
+
+    scorecard.notes_json = notes or None
+
+
 async def get_today_agenda() -> dict:
     async with async_session() as db:
-        profile_result = await db.execute(select(UserProfile).where(UserProfile.id == 1))
-        profile = profile_result.scalar_one_or_none()
-        timezone_name = profile.timezone if profile else "Africa/Casablanca"
-        tz = _resolve_tz(timezone_name)
-        now_local = datetime.now(timezone.utc).astimezone(tz)
+        timezone_name, tz, now_local = await _get_profile_context(db)
         today_date = now_local.date()
-
-        open_items_result = await db.execute(
-            select(LifeItem).where(LifeItem.status == "open").order_by(LifeItem.updated_at.desc())
+        agenda_snapshot = await _load_open_items_snapshot(db, tz=tz, today_date=today_date)
+        intake_snapshot = await _load_intake_snapshot(db)
+        scorecard, created = await _get_or_create_daily_scorecard(
+            db,
+            local_date=today_date,
+            timezone_name=timezone_name,
         )
-        open_items = list(open_items_result.scalars().all())
-
-        top_focus = sorted(
-            open_items,
-            key=lambda item: (
-                PRIORITY_ORDER.get(item.priority, 1),
-                item.due_at.timestamp() if item.due_at else 9999999999,
-            ),
-        )[:3]
-
-        due_today = []
-        overdue = []
-        for item in open_items:
-            if not item.due_at:
-                continue
-            due_dt = item.due_at
-            if due_dt.tzinfo is None:
-                due_dt = due_dt.replace(tzinfo=timezone.utc)
-            else:
-                due_dt = due_dt.astimezone(timezone.utc)
-            due_local = due_dt.astimezone(tz).date()
-            if due_local == today_date:
-                due_today.append(item)
-            elif due_local < today_date:
-                overdue.append(item)
-
-        domain_counts_result = await db.execute(
-            select(LifeItem.domain, func.count(LifeItem.id))
-            .where(LifeItem.status == "open")
-            .group_by(LifeItem.domain)
+        next_prayer = await _load_next_prayer_context()
+        rescue_plan = _build_rescue_plan(
+            scorecard=scorecard,
+            now_local=now_local,
+            top_focus=agenda_snapshot["top_focus"],
+            due_today=agenda_snapshot["due_today"],
+            overdue=agenda_snapshot["overdue"],
+            next_prayer=next_prayer,
         )
-        domain_summary = {domain: count for domain, count in domain_counts_result.all()}
 
-        intake_counts_result = await db.execute(
-            select(IntakeEntry.status, func.count(IntakeEntry.id))
-            .group_by(IntakeEntry.status)
-        )
-        intake_summary = {status: count for status, count in intake_counts_result.all()}
-
-        ready_intake_result = await db.execute(
-            select(IntakeEntry)
-            .where(IntakeEntry.status.in_(["ready", "clarifying"]))
-            .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
-            .limit(3)
-        )
-        ready_intake = list(ready_intake_result.scalars().all())
+        if created or scorecard.rescue_status != rescue_plan["status"]:
+            scorecard.rescue_status = rescue_plan["status"]
+            await db.commit()
+            await db.refresh(scorecard)
 
         return {
             "timezone": timezone_name,
             "now": now_local,
-            "top_focus": top_focus,
-            "due_today": due_today,
-            "overdue": overdue,
-            "domain_summary": domain_summary,
-            "intake_summary": intake_summary,
-            "ready_intake": ready_intake,
+            "top_focus": agenda_snapshot["top_focus"],
+            "due_today": agenda_snapshot["due_today"],
+            "overdue": agenda_snapshot["overdue"],
+            "domain_summary": agenda_snapshot["domain_summary"],
+            "intake_summary": intake_snapshot["intake_summary"],
+            "ready_intake": intake_snapshot["ready_intake"],
+            "scorecard": scorecard,
+            "next_prayer": next_prayer,
+            "rescue_plan": rescue_plan,
+        }
+
+
+async def log_daily_signal(data: DailyLogCreate) -> dict:
+    async with async_session() as db:
+        timezone_name, tz, now_local = await _get_profile_context(db)
+        today_date = now_local.date()
+        scorecard, _ = await _get_or_create_daily_scorecard(
+            db,
+            local_date=today_date,
+            timezone_name=timezone_name,
+        )
+        _apply_daily_log_to_scorecard(scorecard, data)
+
+        agenda_snapshot = await _load_open_items_snapshot(db, tz=tz, today_date=today_date)
+        next_prayer = await _load_next_prayer_context()
+        rescue_plan = _build_rescue_plan(
+            scorecard=scorecard,
+            now_local=now_local,
+            top_focus=agenda_snapshot["top_focus"],
+            due_today=agenda_snapshot["due_today"],
+            overdue=agenda_snapshot["overdue"],
+            next_prayer=next_prayer,
+        )
+        scorecard.rescue_status = rescue_plan["status"]
+        await db.commit()
+        await db.refresh(scorecard)
+
+        return {
+            "kind": data.kind,
+            "message": _format_daily_log_message(data.kind, scorecard, rescue_plan),
+            "scorecard": scorecard,
+            "rescue_plan": rescue_plan,
         }
 
 

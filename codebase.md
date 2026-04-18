@@ -22,9 +22,9 @@ graph TD
 
 | Service | Responsibility |
 | --- | --- |
-| `backend` | FastAPI API, orchestration, approvals, profile/settings, life items, prayer/Quran data, jobs, SSE events, workspace integration |
-| `discord-bot` | Command surface, approval reactions, prayer reminders, natural-language job and agent proposals, voice channel playback |
-| `webui` | Operator dashboard for health, jobs, approvals, agents, providers, experiments, prayer, Quran, and profile/settings |
+| `backend` | FastAPI API, orchestration, approvals, profile/settings, life items, intake inbox, daily scorecards, prayer/Quran data, jobs, SSE events, workspace integration |
+| `discord-bot` | Command surface, approval reactions, prayer reminders, quick accountability logs, natural-language job and agent proposals, voice channel playback |
+| `webui` | Operator dashboard for health, today accountability board, jobs, approvals, agents, providers, experiments, prayer, Quran, and profile/settings |
 | `openviking` | Memory backend, repo/external resource indexing, workspace retrieval, legacy memory import target |
 | `tts-worker` | Local synthesis service used by backend TTS APIs and Discord voice playback |
 
@@ -54,7 +54,7 @@ That means OpenViking is no longer optional in the current runtime design.
 - `backend/app/routers/experiments.py`: shadow-router history and provider telemetry
 - `backend/app/routers/health.py`: health and readiness
 - `backend/app/routers/jobs.py`: persistent scheduled job CRUD, proposals, run logs
-- `backend/app/routers/life.py`: life items, check-ins, today agenda, goal progress
+- `backend/app/routers/life.py`: life items, check-ins, intake inbox, daily logs, today agenda, goal progress
 - `backend/app/routers/prayer.py`: prayer schedule, check-ins, weekly dashboard, Quran/tahajjud/adhkar tracking
 - `backend/app/routers/profile.py`: profile settings
 - `backend/app/routers/settings.py`: global runtime settings
@@ -70,6 +70,7 @@ That means OpenViking is no longer optional in the current runtime design.
 - `backend/app/services/telemetry.py`: in-memory provider performance and circuit-breaker state
 - `backend/app/services/scheduler.py`: APScheduler wiring for agent cadence and persistent jobs
 - `backend/app/services/jobs.py`: job normalization, persistence, next-run calculation, run log publishing
+- `backend/app/services/life.py`: life items, intake snapshot, daily scorecards, rescue-plan logic, today agenda, quick-log updates
 - `backend/app/services/memory.py`: legacy memory handling and OpenViking migration hooks
 - `backend/app/services/openviking_client.py`: OpenViking API wrapper
 - `backend/app/services/workspace.py`: workspace path scoping, archive/restore, OpenViking sync, action parsing
@@ -86,6 +87,7 @@ Main entry points:
 - `webui/src/api.js`: fetch client, token handling, and API wrappers
 - `webui/src/hooks/useEventStream.js`: SSE client with buffering and reconnects
 - `webui/src/components/MissionControl.jsx`: realtime operations dashboard
+- `webui/src/components/TodayView.jsx`: accountability board with scorecard, next prayer, rescue plan, quick logs, and agenda blocks
 - `webui/src/components/AgentConfig.jsx`: agent settings, voice preview, workspace sync/archive restore, chat sessions
 - `webui/src/components/JobsManager.jsx`: job CRUD and run log viewing
 - `webui/src/components/GlobalSettings.jsx`: `data_start_date`, autonomy, mutation approval
@@ -105,7 +107,7 @@ Main modules:
 
 - `bot/main.py`: bot setup, command prefix, help topics, cog loading
 - `bot/cogs/agents.py`: `!ask`, `!sandbox`, sessions, life item commands, `!daily`, `!weekly`
-- `bot/cogs/reminders.py`: prayer/Quran/habit commands, reminder dispatch, workout and spouse note shortcuts
+- `bot/cogs/reminders.py`: prayer/Quran/habit commands, quick accountability logs, reminder dispatch, workout and spouse note shortcuts
 - `bot/cogs/automation.py`: `!schedule`, `!spawnagent`, `!reply`, job inspection commands
 - `bot/cogs/approvals.py`: pending queue and owner-only approve/reject paths
 - `bot/cogs/voice.py`: Discord voice join, speak, interrupt, leave
@@ -116,7 +118,7 @@ The bot is currently the fastest way to:
 - talk to agents
 - handle approvals
 - create simple jobs from natural language
-- log prayer and Quran activity
+- log prayer, Quran, sleep, meals, hydration, training, and shutdown activity
 - use voice playback
 
 ## Important Data Flows
@@ -160,11 +162,19 @@ The bot is currently the fastest way to:
 2. `GET /api/events` streams system, job, approval, prayer, and session updates.
 3. Mission Control and related pages merge those updates into React Query caches.
 
+### 6. Daily Accountability Loop
+
+1. WebUI `Today` and Discord quick logs both write to `POST /api/life/daily-log`.
+2. Backend resolves local date from profile timezone and loads or creates one `daily_scorecards` row for that day.
+3. Deterministic rules update sleep, meals, hydration, training, family, shutdown, and priority counters without LLM involvement.
+4. `GET /api/life/today` returns legacy agenda fields plus `scorecard`, `next_prayer`, and rule-based `rescue_plan`.
+5. WebUI updates the board in place after quick logs, and Discord echoes back compact scorecard state.
+
 ## Storage Layout
 
 | Path | What it stores |
 | --- | --- |
-| `storage/lifeos.db` | Main SQLite database |
+| `storage/lifeos.db` | Main SQLite database, including life items, intake inbox, prayer/Quran data, jobs, and `daily_scorecards` |
 | `storage/openviking/` | OpenViking runtime data and indexed resources |
 | `storage/workspace-archive/` | Archived files created during workspace mutations |
 | `skills/` | Mounted skills available to backend tooling |
@@ -184,7 +194,8 @@ The bot is currently the fastest way to:
 - Bot commands: `docs/DISCORD_COMMANDS.md`
 - Operations: `docs/LOCAL_PROD_RUNBOOK.md`
 - Backend startup: `backend/app/main.py`
+- Daily accountability logic: `backend/app/services/life.py`
 - Agent/chat behavior: `backend/app/services/orchestrator.py`
 - Jobs: `backend/app/routers/jobs.py` and `backend/app/services/jobs.py`
 - Workspace logic: `backend/app/services/workspace.py`
-- WebUI state flow: `webui/src/api.js`, `webui/src/hooks/useEventStream.js`, and `webui/src/components/MissionControl.jsx`
+- WebUI state flow: `webui/src/api.js`, `webui/src/hooks/useEventStream.js`, `webui/src/components/MissionControl.jsx`, and `webui/src/components/TodayView.jsx`

@@ -1,6 +1,6 @@
 # Accountability Upgrade Roadmap
 
-Status date: 2026-04-11
+Status date: 2026-04-18
 Purpose: permanent product and implementation roadmap for making LifeOS a stronger accountability system
 
 ## Vision
@@ -86,28 +86,45 @@ Status: not done yet
 - no intake-specific frontend tests yet
 - no deeper pattern scoring yet
 
-## Roadmap
-
 ### Phase 2: Daily Accountability Layer
 
-Status: next priority
+Status: v1 implemented locally, pending live UAT and deployment
 
-Goal:
+Implemented in v1:
 
-- make Today page become a real accountability board, not only a task summary
+- Added `daily_scorecards` data model with one row per local date
+- Added deterministic `POST /api/life/daily-log`
+- Extended `GET /api/life/today` with `scorecard`, `next_prayer`, and `rescue_plan`
+- Redesigned WebUI `Today` around scorecard first, quick logs second, then next prayer, due work, and inbox-ready items
+- Added Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Added rule-based rescue plan for missing anchors and overdue high-priority work
 
-Build:
+Concrete implementation areas:
 
-- daily scorecard
-- quick logs for sleep, meals, training, shutdown, hydration
-- next-prayer plus readiness context
-- rescue plan when day goes off track
-- top commitments due today
-- quick-start prompts for deen, health, work, and family
+- backend model/migration work in `backend/app/models.py` and `backend/app/migrations/202604180001_daily_scorecards.sql`
+- life/accountability logic in `backend/app/services/life.py`
+- API routes in `backend/app/routers/life.py`
+- Discord quick-log commands in `discord-bot/bot/cogs/reminders.py`
+- Today board UI in `webui/src/components/TodayView.jsx`
+- automated coverage in backend, Discord bot, WebUI unit, and Playwright tests
 
-Target outcome:
+Phase 2 user-facing result:
 
-- one glance should tell you whether today is on track spiritually, physically, and operationally
+- one screen now shows spiritual timing, anchor metrics, rescue state, and most urgent commitments
+- daily anchors can be logged from WebUI buttons or short Discord commands
+- rescue status changes without LLM dependency
+
+### Phase 2 Open Gaps
+
+Status: not done yet
+
+- no live VPS/UAT promotion recorded yet for this branch
+- no streak or trend summaries yet
+- no deeper food/cooking/sleep protocol layer yet
+- no calendar/email accountability integrations yet
+- no LLM-generated rescue plans by design
+
+## Roadmap
 
 ### Phase 3: Food, Cooking, Sleep, and Training Systems
 
@@ -178,7 +195,7 @@ Target outcome:
 
 Recommended execution order:
 
-1. Phase 2: daily accountability layer
+1. finish live UAT and promotion for Phase 2 branch
 2. Phase 3: food, cooking, sleep, and training systems
 3. Phase 4: pattern detection and reviews
 4. Phase 5: full life operating system
@@ -209,14 +226,14 @@ Start with these before expanding:
 
 ## Recommended Next Build
 
-Build Phase 2 next.
+Finish Phase 2 live validation next, then start Phase 3.
 
 Most valuable concrete pieces:
 
-- `daily_scorecards` model and API
-- quick log commands like `!sleep`, `!meal`, `!train`, `!shutdown`
-- Today page redesign around scorecard plus rescue plan
-- simple streak and trend summaries
+- live Discord and WebUI UAT on deployed stack
+- deploy/promotion of current shared-memory plus accountability branch
+- simple streak and trend summaries after ship
+- deeper food, sleep, meal rotation, and training-system flows
 
 ## Definition Of Success
 

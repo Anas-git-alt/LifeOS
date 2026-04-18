@@ -1,7 +1,8 @@
 # WebUI Test Report (2026-03-03)
 
 > Historical report only.
-> Current verification status lives in [docs/VERIFICATION_2026-04-14.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-14.md).
+> Current local verification status lives in [docs/VERIFICATION_2026-04-18.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-18.md).
+> Latest live VPS verification remains [docs/VERIFICATION_2026-04-14.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-14.md).
 
 ## Pages tested
 - Home / Mission Control

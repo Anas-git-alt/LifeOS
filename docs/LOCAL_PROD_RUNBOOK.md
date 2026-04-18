@@ -89,6 +89,7 @@ Healthy deployment signs:
 3. In `Profile`, set timezone, city, country, prayer method, work shift, quiet hours, and nudge mode.
 4. In `Settings`, set `data_start_date` and confirm autonomy and approval rules.
 5. In `Providers`, confirm your intended providers show as configured.
+6. In `Today`, confirm scorecard, next prayer, rescue plan, and quick-log controls render for local day.
 
 ### Discord
 
@@ -100,6 +101,8 @@ Run a short smoke test:
 !today
 !prayertoday
 !pending
+!sleep 7.5 baseline check
+!water 1 startup smoke
 ```
 
 Optional workflow smoke tests:
@@ -113,6 +116,28 @@ Optional workflow smoke tests:
 ```
 
 ## 6. Daily Operations
+
+### Today Board
+
+Use WebUI `Today` as primary accountability surface.
+
+Check:
+
+- scorecard metrics for sleep, meals, water, training, shutdown, protein, family, and priorities
+- next-prayer window
+- rescue-plan headline and actions
+- due today, overdue, top focus, and inbox-ready panels
+
+Quick actions:
+
+- WebUI buttons for `Meal +1`, `Protein Meal`, `Water +1`, `Train`, `Rest Day`, `Family Action`, `Priority Done`, and `Shutdown`
+- sleep form in `Today`
+- Discord quick logs: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+
+Important:
+
+- daily scorecards are keyed by local date from `Profile` timezone
+- if date/time feels wrong, check `Profile` before debugging app logic
 
 ### Mission Control
 
@@ -182,6 +207,8 @@ Daily checks:
 - `!prayertoday`
 - `!prayer`
 - `!quranprogress`
+- WebUI `Today`
+- one or more quick logs for anchors you already completed
 
 Weekly review:
 
@@ -232,6 +259,7 @@ Important restore warning:
 | Voice playback fails | `docker compose logs -f tts-worker discord-bot`, confirm `ffmpeg` and Opus availability |
 | Workspace answers feel stale | resync from WebUI `Agents` or `POST /api/workspace/sync` |
 | Prayer reminders do not post | confirm `DISCORD_OWNER_IDS`, profile timezone/location, reminder channels, bot permissions |
+| Today board shows wrong day or stale rescue state | confirm `Profile` timezone, reload `Today`, inspect `/api/life/today`, then backend logs |
 
 Useful log commands:
 
