@@ -158,6 +158,7 @@ def ensure_obsidian_vault_layout() -> dict[str, Any]:
 
     root = obsidian_vault_root()
     created: list[str] = []
+    warnings: list[str] = []
     directories = [
         root,
         root / "shared" / "global",
@@ -171,8 +172,18 @@ def ensure_obsidian_vault_layout() -> dict[str, Any]:
         directories.append(root / "shared" / "domains" / domain)
 
     for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
-        created.append(str(directory))
+        if directory.exists():
+            created.append(str(directory))
+            continue
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            created.append(str(directory))
+        except PermissionError:
+            logger.warning("obsidian_vault_layout mkdir skipped for %s due to permissions", directory)
+            warnings.append(f"mkdir:{directory}")
+        except OSError as exc:
+            logger.warning("obsidian_vault_layout mkdir skipped for %s: %s", directory, exc)
+            warnings.append(f"mkdir:{directory}")
 
     seed_files: dict[Path, str] = {
         root / "shared" / "global" / "index.md": _index_template(
@@ -203,9 +214,19 @@ def ensure_obsidian_vault_layout() -> dict[str, Any]:
     for path, content in seed_files.items():
         if path.exists():
             continue
-        path.write_text(content, encoding="utf-8")
+        if not path.parent.exists():
+            warnings.append(f"seed-parent-missing:{path}")
+            continue
+        try:
+            path.write_text(content, encoding="utf-8")
+        except PermissionError:
+            logger.warning("obsidian_vault_layout seed skipped for %s due to permissions", path)
+            warnings.append(f"seed:{path}")
+        except OSError as exc:
+            logger.warning("obsidian_vault_layout seed skipped for %s: %s", path, exc)
+            warnings.append(f"seed:{path}")
 
-    return {"enabled": True, "root": str(root), "created": created}
+    return {"enabled": True, "root": str(root), "created": created, "warnings": warnings}
 
 
 async def sync_obsidian_vault_resources() -> dict[str, list[dict[str, str]]]:

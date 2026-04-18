@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -138,3 +139,58 @@ async def test_build_shared_memory_context_includes_router_hubs_and_exact_note(m
     assert "[SHARED MEMORY ROUTER]" in context
     assert "[SHARED MEMORY HUBS]" in context
     assert "sleep-routine.md" in context
+
+
+@pytest.mark.asyncio
+async def test_build_shared_memory_context_survives_partial_read_only_vault(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.shared_memory.openviking_client.search",
+        AsyncMock(return_value=SimpleNamespace(resources=[], memories=[], skills=[])),
+    )
+    root = obsidian_vault_root()
+    planning_dir = root / "shared" / "domains" / "planning"
+    planning_dir.mkdir(parents=True, exist_ok=True)
+    note_path = planning_dir / "focus-block.md"
+    note_path.write_text(
+        (
+            "---\n"
+            "id: focus-block\n"
+            "scope: shared_domain\n"
+            "domain: planning\n"
+            "---\n\n"
+            "# Focus Block\n\n"
+            "Deep work starts at 09:00.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    real_mkdir = Path.mkdir
+    real_write_text = Path.write_text
+
+    def guarded_mkdir(self: Path, *args, **kwargs):
+        target = self.as_posix()
+        if target.endswith("/shared/global") or "/system/indexes" in target or "/private/" in target:
+            raise PermissionError("read-only test vault")
+        return real_mkdir(self, *args, **kwargs)
+
+    def guarded_write_text(self: Path, *args, **kwargs):
+        target = self.as_posix()
+        if target.endswith("/index.md"):
+            raise PermissionError("read-only test vault")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", guarded_mkdir)
+    monkeypatch.setattr(Path, "write_text", guarded_write_text)
+
+    context = await build_shared_memory_context(
+        agent=SimpleNamespace(
+            name="sandbox",
+            memory_scopes=["shared_domain", "shared_global", "agent_private", "session"],
+            shared_domains=[],
+        ),
+        query="In my planning memory, what time is my focus block?",
+    )
+
+    assert "[SHARED MEMORY ROUTER]" in context
+    assert "focus-block.md" in context
+    assert "09:00" in context
