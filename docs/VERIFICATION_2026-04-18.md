@@ -50,3 +50,17 @@ cd webui && npm run test:e2e
 ## Latest Live Validation Reference
 
 - Latest live VPS smoke remains [docs/VERIFICATION_2026-04-14.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/VERIFICATION_2026-04-14.md).
+
+## VPS Test Runtime Validation
+
+Validated on VPS `84.8.221.51` after deploy of branch head `20de2c6`.
+
+- backend pytest on VPS host: `80 passed`
+- discord-bot pytest on VPS host: `20 passed`
+- webui Vitest on VPS through Dockerized Node runtime: `14 passed`
+- webui Playwright on VPS through Dockerized Playwright runtime: `3 passed`
+
+Notes:
+
+- VPS host did not have a prebuilt dev Node toolchain, so WebUI tests were run in disposable Docker containers.
+- Real Discord manual command execution and real browser UAT are still tracked separately in the manual checklist.

@@ -4,6 +4,37 @@ Date: 2026-04-18
 
 Purpose: manual user acceptance checks for the current `codex/obsidian-shared-memory-runtime` branch before promoting wider.
 
+## Status Of This Checklist
+
+This checklist mixes two kinds of validation:
+
+- `Implemented and covered locally`: feature exists in code and already has local automated coverage.
+- `Still requires manual UAT`: feature may already be implemented, but this document still asks you to verify the live Discord/WebUI behavior on the deployed stack.
+
+Already implemented and covered locally before this manual pass:
+
+- Discord smoke commands `!status`, `!agents`, and `!today`
+- Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- WebUI `Today` accountability board
+- WebUI quick-log interactions
+- WebUI pending chat state with `Thinking...`, elapsed timer, and `View request status`
+- Discord warning follow-up line starting with `Note:`
+- top-level WebUI navigation coverage
+- Jobs page heading `Scheduled Jobs`
+
+Still manual in this checklist:
+
+- real Discord command execution on the live server
+- real browser rendering and interaction against the deployed WebUI
+- real backend warning display under live provider/memory conditions
+
+Latest automated verification now also includes VPS-side test runs:
+
+- backend pytest on VPS
+- Discord bot pytest on VPS
+- WebUI Vitest on VPS through Dockerized Node runtime
+- WebUI Playwright on VPS through Dockerized Playwright runtime
+
 ## Preconditions
 
 - VPS or local stack is running the same branch you want to test.
@@ -28,6 +59,11 @@ Purpose: manual user acceptance checks for the current `codex/obsidian-shared-me
 
 ### 1. Basic agent reply
 
+Status:
+
+- Implemented in app
+- Still requires manual UAT here
+
 Command:
 
 ```text
@@ -41,6 +77,11 @@ Expected:
 - No generic `503 Service Unavailable`.
 
 ### 2. Warning visibility when memory is degraded
+
+Status:
+
+- Implemented in app
+- Still requires manual UAT here
 
 Goal: confirm Discord now shows backend warnings instead of silently hiding them.
 
@@ -58,6 +99,11 @@ Expected:
 
 ### 3. Session continuity
 
+Status:
+
+- Implemented in app
+- Still requires manual UAT here
+
 Commands:
 
 ```text
@@ -74,6 +120,11 @@ Expected:
 
 ### 4. Long-running chat behavior
 
+Status:
+
+- Implemented in app
+- Still requires manual UAT here
+
 Command:
 
 ```text
@@ -87,6 +138,12 @@ Expected:
 - If warnings exist, they appear in a `Note:` line.
 
 ### 5. Quick accountability commands
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
 
 Commands:
 
@@ -108,6 +165,12 @@ Expected:
 ## WebUI Tests
 
 ### 1. Navigation smoke
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
 
 Open WebUI and confirm these pages load from the left nav:
 
@@ -133,6 +196,12 @@ Expected:
 
 ### 2. Today accountability board
 
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
+
 Open `Today`.
 
 Expected:
@@ -145,6 +214,12 @@ Expected:
 - Due today, overdue, top focus, and inbox-ready sections still render below new accountability cards.
 
 ### 3. Today quick-log interaction
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
 
 On `Today`, click:
 
@@ -159,6 +234,12 @@ Expected:
 - Buttons show temporary `Saving...` state while request is in flight.
 
 ### 4. Agent chat pending state
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
 
 Open:
 
@@ -188,6 +269,12 @@ Expected after reply:
 
 ### 5. Warning banner in chat
 
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
+
 Use same agent chat if backend returns warnings.
 
 Expected:
@@ -197,6 +284,11 @@ Expected:
 - Warning does not replace the actual reply
 
 ### 6. Jobs page heading and basic create flow
+
+Status:
+
+- Heading change is implemented and covered locally
+- Create flow still requires manual UAT here
 
 Open `Jobs`.
 
@@ -213,6 +305,12 @@ Expected:
 
 ### 7. Inbox page visibility
 
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
+
 Open `Inbox`.
 
 Expected:
@@ -221,6 +319,12 @@ Expected:
 - Existing inbox items are visible if present
 
 ### 8. Experiments page visibility
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still requires manual UAT here
 
 Open `Experiments`.
 
