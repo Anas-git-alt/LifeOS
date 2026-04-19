@@ -44,11 +44,17 @@ Use Codex in the exact worktree that matches the current task.
 ```bash
 git worktree list
 git status --short --branch
+./scripts/new_feature_worktree.sh my-feature-slug
 ./scripts/startup_self_check.sh
 docker compose ps
 curl http://localhost:8100/api/health
 curl http://localhost:8100/api/readiness
 ```
+
+Quick start for a fresh feature worktree:
+
+- run `./scripts/new_feature_worktree.sh my-feature-slug`
+- read [docs/NEW_FEATURE_WORKTREE.md](/home/anasbe/LifeOS-feature-next/docs/NEW_FEATURE_WORKTREE.md) for the short flow
 
 ## Deployment Flow
 
