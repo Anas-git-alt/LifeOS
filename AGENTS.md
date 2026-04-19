@@ -37,6 +37,7 @@ Use Codex in the exact worktree that matches the current task.
 - If current tree is dirty, avoid risky branch/promotion operations until the user confirms intent.
 - Prefer reading existing runbooks before inventing new commands.
 - Keep edits scoped to the repo/worktree that the user is actively using.
+- For VPS validation and promotion, follow [docs/FEATURE_STAGING_PLAYBOOK.md](/home/anasbe/LifeOS-feature-next/docs/FEATURE_STAGING_PLAYBOOK.md) and [docs/DEV_VPS_WORKFLOW.md](/home/anasbe/LifeOS-feature-next/docs/DEV_VPS_WORKFLOW.md).
 
 ## Common Commands
 

@@ -130,6 +130,18 @@ shift
 services=("$@")
 
 deploy_root="$(dirname "$vps_repo")"
+compose_args=(--env-file "$compose_env_file")
+
+show_failure_state() {
+  echo
+  echo "Deployment failed. Compose status:"
+  docker compose "${compose_args[@]}" ps || true
+  echo
+  echo "Recent service logs:"
+  docker compose "${compose_args[@]}" logs --tail=120 "${services[@]}" || true
+}
+
+trap 'show_failure_state' ERR
 
 mkdir -p \
   "$deploy_root/data" \
@@ -154,8 +166,8 @@ git config core.autocrlf false
 git fetch origin --prune
 git checkout -B "$branch" "origin/$branch"
 git reset --hard "origin/$branch"
-docker compose --env-file "$compose_env_file" config >/dev/null
-docker compose --env-file "$compose_env_file" up --build -d "${services[@]}"
+docker compose "${compose_args[@]}" config >/dev/null
+docker compose "${compose_args[@]}" up --build -d "${services[@]}"
 
 for attempt in $(seq 1 30); do
   if curl -fsS "$readiness_url" >/dev/null; then
@@ -165,7 +177,7 @@ for attempt in $(seq 1 30); do
 done
 
 curl -fsS "$readiness_url" >/dev/null
-docker compose --env-file "$compose_env_file" ps
+docker compose "${compose_args[@]}" ps
 EOF
 
 echo "VPS target $target now runs branch $branch."

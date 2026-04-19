@@ -41,6 +41,7 @@ Rules:
 - staging and prod use different Compose project names
 - staging and prod use different localhost ports
 - staging defaults to no Discord bot deploy unless you explicitly opt in with a separate token
+- `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` should match `id -u ubuntu` and `id -g ubuntu` on the VPS
 
 ## 3. Required VPS Env Files
 
@@ -59,6 +60,8 @@ COMPOSE_PROJECT_NAME=lifeos-staging
 BACKEND_PUBLIC_PORT=18100
 WEBUI_PUBLIC_PORT=13100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/staging/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/staging/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/staging/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/staging/storage/openviking
@@ -72,6 +75,8 @@ COMPOSE_PROJECT_NAME=lifeos-prod
 BACKEND_PUBLIC_PORT=8100
 WEBUI_PUBLIC_PORT=3100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/prod/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/prod/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/prod/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/prod/storage/openviking

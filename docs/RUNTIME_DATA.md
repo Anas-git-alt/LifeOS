@@ -23,6 +23,8 @@ COMPOSE_PROJECT_NAME=lifeos-local
 BACKEND_PUBLIC_PORT=8100
 WEBUI_PUBLIC_PORT=3100
 LIFEOS_SERVICE_ENV_FILE=.venv/.env
+LIFEOS_RUNTIME_UID=1000
+LIFEOS_RUNTIME_GID=1000
 LIFEOS_DATA_DIR=/home/you/.lifeos-runtime/data
 LIFEOS_STORAGE_DIR=/home/you/.lifeos-runtime/storage
 LIFEOS_OPENVIKING_DIR=/home/you/.lifeos-runtime/storage/openviking
@@ -36,6 +38,7 @@ Notes:
 - `.env` can also live outside repo when you invoke Compose with `docker compose --env-file /srv/lifeos/<target>/.env ...`.
 - `.venv/.env` still holds app secrets and service env vars.
 - `LIFEOS_SERVICE_ENV_FILE` lets Compose load service secrets from an external file such as `/srv/lifeos/staging/.venv/.env`.
+- `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` should match the host user that owns mounted runtime folders.
 - Backend still sees `/app/data` and `/app/storage` in-container, so app behavior does not change.
 - For shared-memory vault mode, set `OBSIDIAN_VAULT_ROOT=/obsidian-vault` in `.venv/.env`. Compose mounts `LIFEOS_OBSIDIAN_VAULT_DIR` there for both backend and OpenViking.
 
@@ -48,6 +51,8 @@ COMPOSE_PROJECT_NAME=lifeos-staging
 BACKEND_PUBLIC_PORT=18100
 WEBUI_PUBLIC_PORT=13100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/staging/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/staging/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/staging/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/staging/storage/openviking
@@ -62,6 +67,8 @@ COMPOSE_PROJECT_NAME=lifeos-prod
 BACKEND_PUBLIC_PORT=8100
 WEBUI_PUBLIC_PORT=3100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/prod/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/prod/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/prod/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/prod/storage/openviking

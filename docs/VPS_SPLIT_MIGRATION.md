@@ -78,6 +78,8 @@ COMPOSE_PROJECT_NAME=lifeos-staging
 BACKEND_PUBLIC_PORT=18100
 WEBUI_PUBLIC_PORT=13100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/staging/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/staging/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/staging/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/staging/storage/openviking
@@ -94,6 +96,8 @@ COMPOSE_PROJECT_NAME=lifeos-prod
 BACKEND_PUBLIC_PORT=8100
 WEBUI_PUBLIC_PORT=3100
 LIFEOS_SERVICE_ENV_FILE=/srv/lifeos/prod/.venv/.env
+LIFEOS_RUNTIME_UID=1001
+LIFEOS_RUNTIME_GID=1001
 LIFEOS_DATA_DIR=/srv/lifeos/prod/data
 LIFEOS_STORAGE_DIR=/srv/lifeos/prod/storage
 LIFEOS_OPENVIKING_DIR=/srv/lifeos/prod/storage/openviking
@@ -118,6 +122,7 @@ Then update:
 - prod keeps real prod token and secrets
 - `DATABASE_URL` stays container-local, for example `sqlite+aiosqlite:////app/storage/lifeos.db`
 - `OBSIDIAN_VAULT_ROOT=/obsidian-vault` if vault mount used
+- `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` in compose env should match `id -u ubuntu` and `id -g ubuntu`
 
 Staging safest default: do not run `discord-bot` service.
 
@@ -158,6 +163,7 @@ Then verify:
 - main read-only flows work
 - one or two safe write flows work
 - staging Discord bot remains off unless separate token configured
+- if backend reports permission errors, verify runtime mounts are owned by uid/gid from `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID`
 
 Reverse proxy options:
 

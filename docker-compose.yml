@@ -69,6 +69,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    user: "${LIFEOS_RUNTIME_UID:-1000}:${LIFEOS_RUNTIME_GID:-1000}"
     depends_on:
       tts-worker:
         condition: service_healthy
