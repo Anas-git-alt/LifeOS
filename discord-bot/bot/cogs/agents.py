@@ -34,6 +34,116 @@ class AgentsCog(commands.Cog, name="Agents"):
             return
         self.active_sessions[key] = int(session_id)
 
+    @staticmethod
+    def _embed_value(text: str) -> str:
+        value = str(text or "none").strip() or "none"
+        if len(value) <= 1024:
+            return value
+        return value[:1021].rstrip() + "..."
+
+    @staticmethod
+    def _format_today_items(items: list[dict], *, include_priority: bool = False) -> str:
+        if not items:
+            return "none"
+        lines = []
+        for item in items[:5]:
+            line = f"#{item.get('id', '?')} {item.get('title', 'Untitled')}"
+            if include_priority and item.get("priority"):
+                line += f" ({item['priority']})"
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_today_scorecard(scorecard: dict | None) -> str:
+        if not scorecard:
+            return "none"
+        sleep_hours = scorecard.get("sleep_hours")
+        training_status = scorecard.get("training_status") or "unset"
+        return "\n".join(
+            [
+                f"Sleep: {sleep_hours if sleep_hours is not None else 'unset'}h | Meals: {scorecard.get('meals_count', 0)} | Water: {scorecard.get('hydration_count', 0)}",
+                f"Train: {training_status} | Protein: {'yes' if scorecard.get('protein_hit') else 'no'} | Family: {'yes' if scorecard.get('family_action_done') else 'no'}",
+                f"Priorities: {scorecard.get('top_priority_completed_count', 0)} | Shutdown: {'yes' if scorecard.get('shutdown_done') else 'no'} | Rescue: {scorecard.get('rescue_status', 'unknown')}",
+            ]
+        )
+
+    @staticmethod
+    def _format_today_next_prayer(next_prayer: dict | None) -> str:
+        if not next_prayer:
+            return "none"
+        starts_at = str(next_prayer.get("starts_at") or "n/a").replace("T", " ")[:16]
+        ends_at = str(next_prayer.get("ends_at") or "n/a").replace("T", " ")[:16]
+        return f"{next_prayer.get('name', '?')}\n{starts_at} -> {ends_at}"
+
+    @staticmethod
+    def _format_today_rescue_plan(rescue_plan: dict | None) -> str:
+        if not rescue_plan:
+            return "none"
+        actions = rescue_plan.get("actions") or []
+        return "\n".join(
+            [
+                f"Status: {rescue_plan.get('status', 'unknown')}",
+                f"Headline: {rescue_plan.get('headline') or 'none'}",
+                f"Actions: {' | '.join(actions[:3]) if actions else 'none'}",
+            ]
+        )
+
+    @staticmethod
+    def _format_today_sleep_protocol(sleep_protocol: dict | None) -> str:
+        if not sleep_protocol:
+            return "none"
+        logged_bits = []
+        if sleep_protocol.get("sleep_hours_logged") is not None:
+            logged_bits.append(f"{sleep_protocol['sleep_hours_logged']}h")
+        if sleep_protocol.get("bedtime_logged"):
+            logged_bits.append(f"bed {sleep_protocol['bedtime_logged']}")
+        if sleep_protocol.get("wake_time_logged"):
+            logged_bits.append(f"wake {sleep_protocol['wake_time_logged']}")
+        checklist = sleep_protocol.get("wind_down_checklist") or []
+        return "\n".join(
+            [
+                f"Target: {sleep_protocol.get('bedtime_target', 'n/a')} -> {sleep_protocol.get('wake_target', 'n/a')}",
+                f"Cutoff: {sleep_protocol.get('caffeine_cutoff', 'n/a')}",
+                f"Logged: {' | '.join(logged_bits) if logged_bits else 'none'}",
+                f"Wind-down: {'; '.join(checklist[:2]) if checklist else 'none'}",
+            ]
+        )
+
+    @staticmethod
+    def _format_today_streaks(streaks: list[dict]) -> str:
+        if not streaks:
+            return "none"
+        lines = []
+        for item in streaks[:7]:
+            lines.append(
+                f"{item.get('label', item.get('key', '?'))}: {item.get('current_streak', 0)} streak | "
+                f"today {item.get('today_status', 'unknown')} | 7d {item.get('hits_last_7', 0)}/7"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_today_trend(trend_summary: dict | None) -> str:
+        if not trend_summary:
+            return "none"
+        best_day = trend_summary.get("best_day") or {}
+        recent_days = trend_summary.get("recent_days") or []
+        recent_text = ", ".join(
+            [f"{item.get('date')} {item.get('completion_pct', 0)}%" for item in recent_days[-3:]]
+        )
+        if not recent_text:
+            recent_text = "none"
+        best_text = "none"
+        if best_day:
+            best_text = f"{best_day.get('date')} ({best_day.get('completion_pct', 0)}%)"
+        return "\n".join(
+            [
+                f"Window: {trend_summary.get('window_days', 7)} days",
+                f"Average: {trend_summary.get('average_completion_pct', 0)}%",
+                f"Best: {best_text}",
+                f"Recent: {recent_text}",
+            ]
+        )
+
     async def _send_agent_chat(self, agent_name: str, message: str, session_id: int | None = None) -> dict:
         approval_policy = "never" if agent_name in NO_APPROVAL_AGENTS else "auto"
         payload = {"agent_name": agent_name, "message": message, "approval_policy": approval_policy}
@@ -307,27 +417,51 @@ class AgentsCog(commands.Cog, name="Agents"):
                 description=f"Now: {agenda.get('now')}",
                 color=0x059669,
             )
-            top_focus = agenda.get("top_focus", [])
-            if top_focus:
-                embed.add_field(
-                    name="Top Focus",
-                    value="\n".join([f"#{item['id']} {item['title']} ({item['priority']})" for item in top_focus]),
-                    inline=False,
-                )
-            due_today = agenda.get("due_today", [])
-            if due_today:
-                embed.add_field(
-                    name="Due Today",
-                    value="\n".join([f"#{item['id']} {item['title']}" for item in due_today[:5]]),
-                    inline=False,
-                )
-            overdue = agenda.get("overdue", [])
-            if overdue:
-                embed.add_field(
-                    name="Overdue",
-                    value="\n".join([f"#{item['id']} {item['title']}" for item in overdue[:5]]),
-                    inline=False,
-                )
+            embed.add_field(
+                name="Scorecard",
+                value=self._embed_value(self._format_today_scorecard(agenda.get("scorecard"))),
+                inline=False,
+            )
+            embed.add_field(
+                name="Next Prayer",
+                value=self._embed_value(self._format_today_next_prayer(agenda.get("next_prayer"))),
+                inline=True,
+            )
+            embed.add_field(
+                name="Rescue Plan",
+                value=self._embed_value(self._format_today_rescue_plan(agenda.get("rescue_plan"))),
+                inline=False,
+            )
+            embed.add_field(
+                name="Sleep Protocol",
+                value=self._embed_value(self._format_today_sleep_protocol(agenda.get("sleep_protocol"))),
+                inline=False,
+            )
+            embed.add_field(
+                name="Streaks",
+                value=self._embed_value(self._format_today_streaks(agenda.get("streaks", []))),
+                inline=False,
+            )
+            embed.add_field(
+                name="7-Day Trend",
+                value=self._embed_value(self._format_today_trend(agenda.get("trend_summary"))),
+                inline=False,
+            )
+            embed.add_field(
+                name="Top Focus",
+                value=self._embed_value(self._format_today_items(agenda.get("top_focus", []), include_priority=True)),
+                inline=False,
+            )
+            embed.add_field(
+                name="Due Today",
+                value=self._embed_value(self._format_today_items(agenda.get("due_today", []))),
+                inline=False,
+            )
+            embed.add_field(
+                name="Overdue",
+                value=self._embed_value(self._format_today_items(agenda.get("overdue", []))),
+                inline=False,
+            )
             await ctx.send(embed=embed)
         except Exception as exc:
             await ctx.send(f"Failed to load agenda: {self._trim_error(exc)}")
