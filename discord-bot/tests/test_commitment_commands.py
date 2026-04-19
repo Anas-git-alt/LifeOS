@@ -48,6 +48,7 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
         return {
             "response": "Ready to promote",
             "session_id": 77,
+            "needs_follow_up": False,
             "entry": {
                 "id": 9,
                 "title": "Send invoice",
@@ -87,10 +88,40 @@ async def test_snooze_command_parses_one_time_schedule(monkeypatch):
     cog = AgentsCog(bot=object())
     ctx = _Ctx()
 
-    await cog.snooze.callback(cog, ctx, 12, when="tomorrow at 9am")
+    await cog.snooze.callback(cog, ctx, "12", when="tomorrow at 9am")
 
     assert ctx.sent_messages
     assert "Snoozed #12" in ctx.sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/life/commitments/capture"
+        assert payload["session_id"] == 9
+        return {
+            "response": "Need one more detail",
+            "session_id": 9,
+            "needs_follow_up": True,
+            "entry": {
+                "id": 9,
+                "title": "Fix bedtime routine",
+                "status": "clarifying",
+                "domain": "health",
+                "kind": "habit",
+                "follow_up_questions": ["What bedtime is realistic most nights?"],
+            },
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.commit_follow.callback(cog, ctx, message="#9 realistic bedtime is 11:30pm")
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Need Follow-up" in {field.name for field in ctx.sent_embeds[0].fields}
 
 
 @pytest.mark.asyncio

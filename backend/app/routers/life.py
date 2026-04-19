@@ -57,6 +57,23 @@ from app.services.life import (
 from app.services.orchestrator import handle_message
 
 router = APIRouter()
+COMMITMENT_AGENT_NAME = "commitment-capture"
+
+
+def _should_promote_commitment_entry(entry, *, due_at) -> bool:
+    if not entry or entry.linked_life_item_id:
+        return False
+    if entry.status == "ready":
+        return True
+    if entry.status != "clarifying" or due_at is None:
+        return False
+    payload = dict(entry.promotion_payload_json or {})
+    title = str(payload.get("title") or entry.title or "").strip()
+    kind = str(payload.get("kind") or entry.kind or "").strip().lower()
+    domain = str(payload.get("domain") or entry.domain or "").strip().lower()
+    if len(title) < 3:
+        return False
+    return kind in {"commitment", "task", "habit", "routine"} and bool(domain)
 
 
 @router.get("/items", response_model=list[LifeItemResponse], dependencies=[Depends(require_api_token)])
@@ -218,11 +235,11 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     session_id = data.session_id
     if data.new_session:
         title = generate_title_from_prompts([message])
-        session = await create_session(agent_name="intake-inbox", title=title)
+        session = await create_session(agent_name=COMMITMENT_AGENT_NAME, title=title)
         session_id = session.id
 
     result = await handle_message(
-        agent_name="intake-inbox",
+        agent_name=COMMITMENT_AGENT_NAME,
         user_message=message,
         approval_policy="never",
         source=data.source or "api",
@@ -238,7 +255,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     if result.get("session_id"):
         entry = await get_latest_intake_entry_for_session(
             result["session_id"],
-            source_agent="intake-inbox",
+            source_agent=COMMITMENT_AGENT_NAME,
         )
 
     life_item = None
@@ -264,7 +281,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             async with async_session() as db:
                 refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
                 life_item = refreshed.scalar_one_or_none()
-    elif entry and entry.status == "ready":
+    elif entry and _should_promote_commitment_entry(entry, due_at=data.due_at):
         overrides = {}
         if data.due_at is not None:
             overrides["due_at"] = data.due_at
@@ -281,7 +298,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
                 refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
                 life_item = refreshed.scalar_one_or_none()
 
-    needs_follow_up = bool(entry and (entry.status == "clarifying" or (entry.follow_up_questions_json or [])))
+    needs_follow_up = bool(entry and entry.status == "clarifying")
     return CommitmentCaptureResponse(
         response=result["response"],
         session_id=result.get("session_id"),

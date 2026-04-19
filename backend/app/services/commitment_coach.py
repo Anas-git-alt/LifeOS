@@ -61,7 +61,6 @@ def _fallback_daily_focus(agenda: dict) -> dict:
             "nudge_copy": "No commitment radar item yet. Capture one promise before opening new loops.",
             "fallback_used": True,
         }
-
     primary = shortlist[0]
     defer_ids = [item["id"] for item in shortlist[1:3]]
     reason = primary.get("focus_reason") or "This is the top-ranked open commitment right now."
@@ -73,6 +72,14 @@ def _fallback_daily_focus(agenda: dict) -> dict:
         "nudge_copy": f"Before opening anything new, move '{primary['title']}' one visible step forward.",
         "fallback_used": True,
     }
+
+
+def _as_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def get_daily_focus_coach() -> dict:
@@ -258,14 +265,19 @@ async def get_weekly_commitment_review() -> dict:
         for item in commitments
         if item.status == "open"
         and (
-            (item.due_at is not None and item.due_at.replace(tzinfo=timezone.utc) < now_utc)
-            or item.updated_at <= now_utc - timedelta(days=7)
+            (_as_aware_utc(item.due_at) is not None and _as_aware_utc(item.due_at) < now_utc)
+            or (_as_aware_utc(item.updated_at) is not None and _as_aware_utc(item.updated_at) <= now_utc - timedelta(days=7))
         )
     ][:5]
     at_risk_titles = [
         item.title
         for item in commitments
-        if item.status == "open" and item.priority == "high" and (item.due_at is not None or item.updated_at <= now_utc - timedelta(days=3))
+        if item.status == "open"
+        and item.priority == "high"
+        and (
+            _as_aware_utc(item.due_at) is not None
+            or (_as_aware_utc(item.updated_at) is not None and _as_aware_utc(item.updated_at) <= now_utc - timedelta(days=3))
+        )
     ][:5]
 
     summary = {

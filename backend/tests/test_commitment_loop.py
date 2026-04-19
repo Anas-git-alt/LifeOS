@@ -15,11 +15,18 @@ def _headers() -> dict:
     return {"X-LifeOS-Token": settings.api_secret_key}
 
 
-async def _insert_intake_entry(*, session_id: int, status: str, raw_text: str, follow_up_questions: list[str] | None = None):
+async def _insert_intake_entry(
+    *,
+    session_id: int,
+    status: str,
+    raw_text: str,
+    follow_up_questions: list[str] | None = None,
+    source_agent: str = "commitment-capture",
+):
     async with async_session() as db:
         entry = IntakeEntry(
             source="agent_capture",
-            source_agent="intake-inbox",
+            source_agent=source_agent,
             source_session_id=session_id,
             raw_text=raw_text,
             title=raw_text,
@@ -47,7 +54,7 @@ def test_commitment_capture_ready_auto_promotes_and_creates_follow_up(monkeypatc
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
 
     async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
-        assert agent_name == "intake-inbox"
+        assert agent_name == "commitment-capture"
         await _insert_intake_entry(session_id=session_id or 1, status="ready", raw_text=user_message)
         return {
             "response": "Ready to promote",
@@ -84,7 +91,7 @@ def test_commitment_capture_clarifying_stays_in_inbox(monkeypatch):
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
 
     async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
-        assert agent_name == "intake-inbox"
+        assert agent_name == "commitment-capture"
         await _insert_intake_entry(
             session_id=session_id or 1,
             status="clarifying",
@@ -112,6 +119,44 @@ def test_commitment_capture_clarifying_stays_in_inbox(monkeypatch):
     assert payload["needs_follow_up"] is True
     assert payload["life_item"] is None
     assert payload["entry"]["status"] == "clarifying"
+
+
+def test_commitment_capture_deadlined_clarifying_entry_auto_promotes(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        assert agent_name == "commitment-capture"
+        await _insert_intake_entry(
+            session_id=session_id or 1,
+            status="clarifying",
+            raw_text=user_message,
+            follow_up_questions=["Who is the invoice for?"],
+        )
+        return {
+            "response": "Need one more detail",
+            "session_id": session_id,
+            "session_title": "Commitment",
+        }
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/commitments/capture",
+            headers=_headers(),
+            json={
+                "message": "Send invoice",
+                "new_session": True,
+                "source": "test",
+                "due_at": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["auto_promoted"] is True
+    assert payload["needs_follow_up"] is False
+    assert payload["life_item"]["title"] == "Send invoice"
 
 
 def test_snooze_item_updates_due_at_and_returns_linked_job(monkeypatch):
@@ -214,3 +259,32 @@ def test_weekly_commitment_review_fallback_aggregates_activity(monkeypatch):
     assert payload["fallback_used"] is True
     assert payload["wins"]
     assert payload["repeat_blockers"]
+
+
+def test_weekly_commitment_review_handles_old_naive_updated_at(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _seed_stale_commitment():
+        async with async_session() as db:
+            item = LifeItem(
+                domain="work",
+                kind="task",
+                title="Draft presentation",
+                priority="high",
+                status="open",
+                follow_up_job_id=92,
+                due_at=None,
+                updated_at=(datetime.now(timezone.utc) - timedelta(days=8)).replace(tzinfo=None),
+            )
+            db.add(item)
+            await db.commit()
+
+    with TestClient(app) as client:
+        import asyncio
+
+        asyncio.run(_seed_stale_commitment())
+        response = client.get("/api/life/coach/weekly-review", headers=_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["wins"] or payload["stale_commitments"]

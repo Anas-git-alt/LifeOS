@@ -1,6 +1,7 @@
 """Agent and life workflow commands."""
 
 from datetime import datetime, timezone
+import re
 
 import discord
 from discord.ext import commands
@@ -22,7 +23,18 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @staticmethod
     def _trim_error(exc: Exception, max_len: int = 220) -> str:
-        return str(exc).strip()[:max_len]
+        text = str(exc).strip() or exc.__class__.__name__
+        return text[:max_len]
+
+    @staticmethod
+    def _parse_commitfollow_target(raw_message: str) -> tuple[int | None, str]:
+        text = str(raw_message or "").strip()
+        pattern = re.compile(r"^(?:#(\d+)|session\s+#?(\d+))\s+(.+)$", re.IGNORECASE)
+        match = pattern.match(text)
+        if not match:
+            return None, text
+        session_id = match.group(1) or match.group(2)
+        return int(session_id), match.group(3).strip()
 
     def _session_key(self, ctx, agent_name: str) -> tuple[int, int, int, str]:
         guild_id = ctx.guild.id if ctx.guild else 0
@@ -213,8 +225,13 @@ class AgentsCog(commands.Cog, name="Agents"):
                 value="\n".join([f"• {question}" for question in followups[:3]]),
                 inline=False,
             )
-        if result.get("session_id"):
-            embed.set_footer(text=f"Session #{result['session_id']} · continue with !commitfollow")
+        if result.get("session_id") and result.get("needs_follow_up"):
+            embed.set_footer(
+                text=(
+                    f"Session #{result['session_id']} · continue with !commitfollow "
+                    f"or !commitfollow #{result['session_id']}"
+                )
+            )
         await ctx.send(embed=embed)
 
     @staticmethod
@@ -482,20 +499,23 @@ class AgentsCog(commands.Cog, name="Agents"):
         async with ctx.typing():
             try:
                 result = await api_post("/life/commitments/capture", payload)
-                if result.get("session_id"):
+                if result.get("session_id") and result.get("needs_follow_up"):
                     self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
+                else:
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, None)
                 await self._send_commitment_embed(ctx, result, heading="Commitment Capture")
             except Exception as exc:
                 await ctx.send(f"Failed to capture commitment: {self._trim_error(exc)}")
 
     @commands.command(name="commitfollow")
     async def commit_follow(self, ctx, *, message: str):
-        session_id = self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
+        explicit_session_id, cleaned_message = self._parse_commitfollow_target(message)
+        session_id = explicit_session_id or self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
         if not session_id:
-            await ctx.send("No active commitment session. Start with `!commit ...`.")
+            await ctx.send("No active commitment session. Use `!commit ...` or `!commitfollow #<session_id> ...`.")
             return
         parsed = parse_commitment_prompt(
-            message,
+            cleaned_message,
             now=datetime.now(timezone.utc),
         )
         if parsed["errors"]:
@@ -515,12 +535,21 @@ class AgentsCog(commands.Cog, name="Agents"):
                         **self._current_channel_payload(ctx),
                     },
                 )
+                if result.get("session_id") and result.get("needs_follow_up"):
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
+                elif self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME) == session_id:
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, None)
                 await self._send_commitment_embed(ctx, result, heading="Commitment Follow-up")
             except Exception as exc:
                 await ctx.send(f"Failed to continue commitment capture: {self._trim_error(exc)}")
 
     @commands.command(name="snooze")
-    async def snooze(self, ctx, item_id: int, *, when: str):
+    async def snooze(self, ctx, item_ref: str = "", *, when: str = ""):
+        item_token = str(item_ref or "").strip().lstrip("#")
+        if not item_token.isdigit() or not str(when or "").strip():
+            await ctx.send("Usage: `!snooze <item_id> <when>` for example `!snooze 12 in 2 hours`.")
+            return
+        item_id = int(item_token)
         parsed = parse_schedule_value(when, now=datetime.now(timezone.utc))
         if parsed["errors"]:
             await ctx.send(parsed["errors"][0])
