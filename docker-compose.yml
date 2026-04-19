@@ -35,7 +35,7 @@ services:
     expose:
       - "1933"
     env_file:
-      - .venv/.env
+      - ${LIFEOS_SERVICE_ENV_FILE:-.venv/.env}
     environment:
       - OPENVIKING_CONFIG_OUTPUT=/app/ov.conf
       - OPENVIKING_EMBEDDING_PROVIDER=openai
@@ -83,7 +83,7 @@ services:
       - ./skills:/app/skills
       - ./:/workspace
     env_file:
-      - .venv/.env
+      - ${LIFEOS_SERVICE_ENV_FILE:-.venv/.env}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -102,7 +102,7 @@ services:
       backend:
         condition: service_healthy
     env_file:
-      - .venv/.env
+      - ${LIFEOS_SERVICE_ENV_FILE:-.venv/.env}
     environment:
       - BACKEND_URL=http://127.0.0.1:${BACKEND_PUBLIC_PORT:-8100}
     network_mode: host

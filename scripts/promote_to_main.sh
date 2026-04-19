@@ -42,6 +42,6 @@ git merge --ff-only "$source_branch"
 "${git_push_cmd[@]}" main
 
 echo "Deploying main to the VPS..."
-"$REPO_ROOT/scripts/deploy_vps.sh" main
+"$REPO_ROOT/scripts/deploy_vps_prod.sh" main
 
 echo "main now includes $source_branch and the VPS is synced to main."
