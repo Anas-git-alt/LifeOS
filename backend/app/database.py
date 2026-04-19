@@ -218,6 +218,13 @@ def run_migrations() -> None:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+                life_cols.add("start_date")
+            if "follow_up_job_id" not in life_cols:
+                cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
+                life_cols.add("follow_up_job_id")
+            if "202604190001_commitment_loop" not in applied and "follow_up_job_id" in life_cols:
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", ("202604190001_commitment_loop",))
+                applied.add("202604190001_commitment_loop")
         sleep_protocol_version = "202604180002_sleep_protocol_profile"
         sleep_protocol_columns = {
             "sleep_bedtime_target",
@@ -291,6 +298,10 @@ def run_migrations() -> None:
             # table-rebuild migrations should be skipped when the legacy table
             # does not exist yet.
             if version == "202603250001_job_schedule_modes" and "scheduled_jobs" not in existing_tables:
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                applied.add(version)
+                continue
+            if version == "202604190001_commitment_loop" and "life_items" not in existing_tables:
                 cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
                 applied.add(version)
                 continue

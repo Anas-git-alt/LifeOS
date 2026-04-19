@@ -426,6 +426,7 @@ class LifeItem(Base):
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(20), default="low")
+    follow_up_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -1133,6 +1134,7 @@ class LifeItemUpdate(BaseModel):
     due_at: Optional[datetime] = None
     recurrence_rule: Optional[str] = None
     risk_level: Optional[str] = None
+    follow_up_job_id: Optional[int] = None
 
 
 class LifeItemResponse(BaseModel):
@@ -1148,8 +1150,37 @@ class LifeItemResponse(BaseModel):
     recurrence_rule: Optional[str]
     source_agent: Optional[str]
     risk_level: str
+    follow_up_job_id: Optional[int] = None
+    focus_reason: Optional[str] = None
+    follow_up_due_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_life_item_fields(cls, value: Any):
+        if isinstance(value, dict):
+            return dict(value)
+
+        return {
+            "id": value.id,
+            "domain": value.domain,
+            "kind": value.kind,
+            "title": value.title,
+            "notes": value.notes,
+            "priority": value.priority,
+            "status": value.status,
+            "due_at": value.due_at,
+            "start_date": value.start_date.isoformat() if getattr(value, "start_date", None) else None,
+            "recurrence_rule": value.recurrence_rule,
+            "source_agent": value.source_agent,
+            "risk_level": value.risk_level,
+            "follow_up_job_id": getattr(value, "follow_up_job_id", None),
+            "focus_reason": getattr(value, "focus_reason", None),
+            "follow_up_due_at": getattr(value, "follow_up_due_at", None),
+            "created_at": value.created_at,
+            "updated_at": value.updated_at,
+        }
 
     class Config:
         from_attributes = True
@@ -1244,6 +1275,28 @@ class IntakeCaptureResponse(BaseModel):
     entry: Optional[IntakeEntryResponse] = None
 
 
+class CommitmentCaptureRequest(BaseModel):
+    message: str
+    session_id: Optional[int] = None
+    new_session: bool = False
+    source: str = "api"
+    due_at: Optional[datetime] = None
+    timezone: Optional[str] = None
+    target_channel: Optional[str] = None
+    target_channel_id: Optional[str] = None
+
+
+class CommitmentCaptureResponse(BaseModel):
+    response: str
+    session_id: Optional[int] = None
+    session_title: Optional[str] = None
+    entry: Optional[IntakeEntryResponse] = None
+    life_item: Optional[LifeItemResponse] = None
+    follow_up_job: Optional[ScheduledJobResponse] = None
+    auto_promoted: bool = False
+    needs_follow_up: bool = False
+
+
 class IntakePromoteRequest(BaseModel):
     title: Optional[str] = None
     kind: Optional[str] = None
@@ -1273,6 +1326,13 @@ class LifeCheckinResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LifeItemSnoozeRequest(BaseModel):
+    due_at: datetime
+    timezone: Optional[str] = None
+    source: str = "api"
+    note: Optional[str] = None
 
 
 class DailyScorecardResponse(BaseModel):
@@ -1369,6 +1429,24 @@ class AccountabilityTrendSummaryResponse(BaseModel):
     average_completion_pct: int
     best_day: Optional[AccountabilityTrendDayResponse] = None
     recent_days: list[AccountabilityTrendDayResponse] = Field(default_factory=list)
+
+
+class DailyFocusCoachResponse(BaseModel):
+    primary_item_id: Optional[int] = None
+    why_now: str
+    first_step: str
+    defer_ids: list[int] = Field(default_factory=list)
+    nudge_copy: str
+    fallback_used: bool = False
+
+
+class WeeklyCommitmentReviewResponse(BaseModel):
+    wins: list[str] = Field(default_factory=list)
+    stale_commitments: list[str] = Field(default_factory=list)
+    repeat_blockers: list[str] = Field(default_factory=list)
+    promises_at_risk: list[str] = Field(default_factory=list)
+    simplify_next_week: list[str] = Field(default_factory=list)
+    fallback_used: bool = False
 
 
 class DailyLogCreate(BaseModel):

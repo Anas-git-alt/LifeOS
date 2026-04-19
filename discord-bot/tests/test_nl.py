@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from bot.nl import parse_agent_prompt, parse_schedule_prompt, parse_schedule_value
+from bot.nl import parse_agent_prompt, parse_commitment_prompt, parse_schedule_prompt, parse_schedule_value
 
 
 def test_parse_schedule_prompt_extracts_cron_and_channel():
@@ -87,3 +87,19 @@ def test_parse_agent_prompt_extracts_mandatory_fields():
     assert parsed["data"]["discord_channel"] == "planning"
     assert parsed["data"]["cadence"] == "0 8 *"
     assert parsed["data"]["config_json"]["approval_policy"] == "auto"
+
+
+def test_parse_commitment_prompt_extracts_one_time_due_at():
+    parsed = parse_commitment_prompt(
+        "Send invoice tomorrow at 9am Africa/Casablanca",
+        now=datetime(2026, 3, 25, 8, 0, tzinfo=timezone.utc),
+    )
+    assert parsed["errors"] == []
+    assert parsed["data"]["timezone"] == "Africa/Casablanca"
+    assert parsed["data"]["message"] == "Send invoice"
+    assert parsed["data"]["due_at"] == datetime(2026, 3, 26, 8, 0)
+
+
+def test_parse_commitment_prompt_rejects_recurring_schedule():
+    parsed = parse_commitment_prompt("Stretch every day at 8:00")
+    assert parsed["errors"]

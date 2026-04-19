@@ -64,6 +64,22 @@ const apiMocks = vi.hoisted(() => ({
       ],
     },
   })),
+  getDailyFocusCoach: vi.fn(async () => ({
+    primary_item_id: 1,
+    why_now: "Overdue high-priority commitment.",
+    first_step: "Open the deep work doc and finish the first paragraph.",
+    defer_ids: [2],
+    nudge_copy: "Move Deep work block one visible step before opening anything new.",
+    fallback_used: false,
+  })),
+  getWeeklyCommitmentReview: vi.fn(async () => ({
+    wins: ["Closed 2 commitments this week."],
+    stale_commitments: ["Send invoice"],
+    repeat_blockers: ["Snoozed commitments 2 times."],
+    promises_at_risk: ["Call family"],
+    simplify_next_week: ["Keep only 3 active commitments."],
+    fallback_used: false,
+  })),
   logDailySignal: vi.fn(async (payload) => ({
     kind: payload.kind,
     message: payload.kind === "sleep"
@@ -134,6 +150,9 @@ describe("TodayView", () => {
     await screen.findByText("Hydration is behind.");
     expect(screen.getAllByText("Asr").length).toBeGreaterThan(0);
     expect(screen.getByText("7.5h")).toBeInTheDocument();
+    expect(screen.getByText("Commitment Radar")).toBeInTheDocument();
+    expect(screen.getByText("AI Focus Coach")).toBeInTheDocument();
+    expect(screen.getByText("Deep work block")).toBeInTheDocument();
     expect(screen.getByText("Caffeine cutoff 15:00")).toBeInTheDocument();
     expect(screen.getByText("Sleep 7h+")).toBeInTheDocument();
     expect(screen.getByText("71%")).toBeInTheDocument();

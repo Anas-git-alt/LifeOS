@@ -280,11 +280,15 @@ export const getLifeItems = (params = {}) => {
 };
 export const createLifeItem = (data) => request("/life/items", { method: "POST", body: JSON.stringify(data) });
 export const updateLifeItem = (id, data) => request(`/life/items/${id}`, { method: "PUT", body: JSON.stringify(data) });
+export const snoozeLifeItem = (id, data) =>
+  request(`/life/items/${id}/snooze`, { method: "POST", body: JSON.stringify(data) });
 export const checkinLifeItem = (id, result, note = "") =>
   request(`/life/items/${id}/checkin`, { method: "POST", body: JSON.stringify({ result, note }) });
 export const logDailySignal = (data) =>
   request("/life/daily-log", { method: "POST", body: JSON.stringify(data) });
 export const getTodayAgenda = () => request("/life/today");
+export const getDailyFocusCoach = () => request("/life/coach/daily-focus");
+export const getWeeklyCommitmentReview = () => request("/life/coach/weekly-review");
 export const getGoalProgress = (itemId) => request(`/life/items/${itemId}/progress`);
 export const getIntakeInbox = (params = {}) => {
   const query = new URLSearchParams(params).toString();
@@ -302,6 +306,12 @@ export const captureIntake = (message, sessionId = null, newSession = false, sou
       new_session: newSession,
       source,
     }),
+    timeoutMs: 30000,
+  });
+export const captureCommitment = (data) =>
+  request("/life/commitments/capture", {
+    method: "POST",
+    body: JSON.stringify(data),
     timeoutMs: 30000,
   });
 export const promoteIntakeEntry = (entryId, data = {}) =>

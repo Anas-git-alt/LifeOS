@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.database import async_session
 from app.models import (
+    AuditLog,
     DailyLogCreate,
     DailyScorecard,
     IntakeEntry,
@@ -15,8 +16,10 @@ from app.models import (
     LifeItem,
     LifeItemCreate,
     LifeItemUpdate,
+    ScheduledJob,
     UserProfile,
 )
+from app.services.commitments import disable_follow_up_job, resolve_job_follow_up_due_at, upsert_follow_up_job
 from app.services.prayer_service import get_today_schedule
 from app.services.system_settings import get_data_start_date
 
@@ -84,11 +87,26 @@ async def update_life_item(item_id: int, data: LifeItemUpdate) -> LifeItem | Non
         item = result.scalar_one_or_none()
         if not item:
             return None
+        previous_status = item.status
+        previous_due_at = item.due_at
         for key, value in data.model_dump(exclude_unset=True).items():
             setattr(item, key, value)
+        if item.status == "open" and previous_status != "open":
+            db.add(
+                AuditLog(
+                    agent_name="commitment-loop",
+                    action="life_item_reopened",
+                    details=f"item_id={item.id}",
+                    status="completed",
+                )
+            )
         await db.commit()
         await db.refresh(item)
-        return item
+    if item.status in {"done", "missed"}:
+        await disable_follow_up_job(item.id, reason=f"status_changed:{item.status}")
+    elif item.follow_up_job_id and (previous_status != item.status or previous_due_at != item.due_at):
+        await upsert_follow_up_job(item.id)
+    return item
 
 
 async def add_checkin(item_id: int, data: LifeCheckinCreate) -> tuple[LifeCheckin | None, LifeItem | None]:
@@ -110,7 +128,53 @@ async def add_checkin(item_id: int, data: LifeCheckinCreate) -> tuple[LifeChecki
         await db.commit()
         await db.refresh(checkin)
         await db.refresh(item)
-        return checkin, item
+    if data.result in {"done", "missed"}:
+        await disable_follow_up_job(item_id, reason=f"checkin:{data.result}")
+    return checkin, item
+
+
+async def snooze_life_item(
+    item_id: int,
+    *,
+    due_at: datetime,
+    timezone_name: str | None = None,
+    source: str = "api",
+    note: str | None = None,
+) -> LifeItem | None:
+    async with async_session() as db:
+        result = await db.execute(select(LifeItem).where(LifeItem.id == item_id))
+        item = result.scalar_one_or_none()
+        if not item:
+            return None
+        previous_status = item.status
+        item.due_at = due_at.replace(tzinfo=None) if due_at.tzinfo else due_at
+        item.status = "open"
+        details = f"item_id={item.id} due_at={item.due_at.isoformat()} source={source}"
+        if note:
+            details = f"{details} note={note.strip()[:200]}"
+        db.add(
+            AuditLog(
+                agent_name="commitment-loop",
+                action="life_item_snoozed",
+                details=details,
+                status="completed",
+            )
+        )
+        if previous_status != "open":
+            db.add(
+                AuditLog(
+                    agent_name="commitment-loop",
+                    action="life_item_reopened",
+                    details=f"item_id={item.id} source=snooze",
+                    status="completed",
+                )
+            )
+        await db.commit()
+        await db.refresh(item)
+    await upsert_follow_up_job(item.id, timezone_name=timezone_name)
+    async with async_session() as db:
+        refreshed = await db.execute(select(LifeItem).where(LifeItem.id == item_id))
+        return refreshed.scalar_one_or_none()
 
 
 def _coerce_due_to_local_date(item: LifeItem, tz: ZoneInfo):
@@ -122,6 +186,96 @@ def _coerce_due_to_local_date(item: LifeItem, tz: ZoneInfo):
     else:
         due_dt = due_dt.astimezone(timezone.utc)
     return due_dt.astimezone(tz).date()
+
+
+def _coerce_local_date(value: datetime | None, tz: ZoneInfo) -> date | None:
+    if not value:
+        return None
+    dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz).date()
+
+
+def _coerce_aware_utc(value: datetime | None) -> datetime | None:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _serialize_life_item(
+    item: LifeItem,
+    *,
+    focus_reason: str | None = None,
+    follow_up_due_at: datetime | None = None,
+) -> dict:
+    return {
+        "id": item.id,
+        "domain": item.domain,
+        "kind": item.kind,
+        "title": item.title,
+        "notes": item.notes,
+        "priority": item.priority,
+        "status": item.status,
+        "due_at": item.due_at,
+        "start_date": item.start_date.isoformat() if item.start_date else None,
+        "recurrence_rule": item.recurrence_rule,
+        "source_agent": item.source_agent,
+        "risk_level": item.risk_level,
+        "follow_up_job_id": item.follow_up_job_id,
+        "focus_reason": focus_reason,
+        "follow_up_due_at": follow_up_due_at,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+ 
+
+def _focus_rank_details(
+    item: LifeItem,
+    *,
+    tz: ZoneInfo,
+    today_date: date,
+    now_local: datetime,
+    follow_up_due_at: datetime | None,
+) -> dict:
+    due_local = _coerce_due_to_local_date(item, tz)
+    follow_up_local_date = _coerce_local_date(follow_up_due_at, tz)
+    follow_up_local = (_coerce_aware_utc(follow_up_due_at) or now_local.astimezone(timezone.utc)).astimezone(tz) if follow_up_due_at else None
+    due_utc = _coerce_aware_utc(item.due_at)
+
+    if due_local is not None and due_local < today_date and item.priority == "high":
+        category = 0
+        reason = "Overdue high-priority commitment."
+        secondary = due_utc.timestamp() if due_utc else 0
+    elif follow_up_local_date is not None and follow_up_local_date <= today_date:
+        category = 1
+        reason = "Follow-up overdue." if follow_up_local and follow_up_local <= now_local else "Follow-up due today."
+        secondary = (_coerce_aware_utc(follow_up_due_at) or now_local.astimezone(timezone.utc)).timestamp()
+    elif due_local == today_date:
+        category = 2
+        reason = "Due today."
+        secondary = due_utc.timestamp() if due_utc else 0
+    elif item.priority == "high":
+        category = 3
+        reason = "High-priority open commitment."
+        secondary = due_utc.timestamp() if due_utc else (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
+    elif due_utc is not None:
+        category = 4
+        reason = "Upcoming deadline."
+        secondary = due_utc.timestamp()
+    else:
+        category = 5
+        reason = "Oldest untouched open commitment."
+        secondary = (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
+
+    tertiary = (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
+    return {
+        "raw": item,
+        "due_local": due_local,
+        "focus_reason": reason,
+        "follow_up_due_at": follow_up_due_at,
+        "sort_key": (category, secondary, tertiary, item.id),
+    }
 
 
 async def _get_profile_context(db) -> tuple[UserProfile | None, str, ZoneInfo, datetime]:
@@ -379,25 +533,58 @@ async def _load_open_items_snapshot(db, *, tz: ZoneInfo, today_date) -> dict:
         select(LifeItem).where(LifeItem.status == "open").order_by(LifeItem.updated_at.desc())
     )
     open_items = list(open_items_result.scalars().all())
+    now_local = datetime.now(timezone.utc).astimezone(tz)
 
-    top_focus = sorted(
-        open_items,
-        key=lambda item: (
-            PRIORITY_ORDER.get(item.priority, 1),
-            item.due_at.timestamp() if item.due_at else 9999999999,
-        ),
-    )[:3]
+    follow_up_ids = [item.follow_up_job_id for item in open_items if item.follow_up_job_id]
+    job_rows: list[ScheduledJob] = []
+    if follow_up_ids:
+        jobs_result = await db.execute(select(ScheduledJob).where(ScheduledJob.id.in_(follow_up_ids)))
+        job_rows = list(jobs_result.scalars().all())
+    jobs_by_id = {row.id: row for row in job_rows}
 
-    due_today = []
-    overdue = []
+    ranked = []
     for item in open_items:
-        due_local = _coerce_due_to_local_date(item, tz)
-        if due_local is None:
-            continue
-        if due_local == today_date:
-            due_today.append(item)
-        elif due_local < today_date:
-            overdue.append(item)
+        follow_up_due_at = resolve_job_follow_up_due_at(jobs_by_id.get(item.follow_up_job_id))
+        ranked.append(
+            _focus_rank_details(
+                item,
+                tz=tz,
+                today_date=today_date,
+                now_local=now_local,
+                follow_up_due_at=follow_up_due_at,
+            )
+        )
+
+    ranked.sort(key=lambda row: row["sort_key"])
+    top_focus = [row["raw"] for row in ranked[:3]]
+    top_focus_display = [
+        _serialize_life_item(
+            row["raw"],
+            focus_reason=row["focus_reason"],
+            follow_up_due_at=row["follow_up_due_at"],
+        )
+        for row in ranked[:3]
+    ]
+    due_today = [row["raw"] for row in ranked if row["due_local"] == today_date]
+    due_today_display = [
+        _serialize_life_item(
+            row["raw"],
+            focus_reason=row["focus_reason"],
+            follow_up_due_at=row["follow_up_due_at"],
+        )
+        for row in ranked
+        if row["due_local"] == today_date
+    ]
+    overdue = [row["raw"] for row in ranked if row["due_local"] is not None and row["due_local"] < today_date]
+    overdue_display = [
+        _serialize_life_item(
+            row["raw"],
+            focus_reason=row["focus_reason"],
+            follow_up_due_at=row["follow_up_due_at"],
+        )
+        for row in ranked
+        if row["due_local"] is not None and row["due_local"] < today_date
+    ]
 
     domain_counts_result = await db.execute(
         select(LifeItem.domain, func.count(LifeItem.id))
@@ -408,8 +595,11 @@ async def _load_open_items_snapshot(db, *, tz: ZoneInfo, today_date) -> dict:
     return {
         "open_items": open_items,
         "top_focus": top_focus,
+        "top_focus_display": top_focus_display,
         "due_today": due_today,
+        "due_today_display": due_today_display,
         "overdue": overdue,
+        "overdue_display": overdue_display,
         "domain_summary": domain_summary,
     }
 
@@ -630,9 +820,9 @@ async def get_today_agenda() -> dict:
         return {
             "timezone": timezone_name,
             "now": now_local,
-            "top_focus": agenda_snapshot["top_focus"],
-            "due_today": agenda_snapshot["due_today"],
-            "overdue": agenda_snapshot["overdue"],
+            "top_focus": agenda_snapshot.get("top_focus_display", agenda_snapshot["top_focus"]),
+            "due_today": agenda_snapshot.get("due_today_display", agenda_snapshot["due_today"]),
+            "overdue": agenda_snapshot.get("overdue_display", agenda_snapshot["overdue"]),
             "domain_summary": agenda_snapshot["domain_summary"],
             "intake_summary": intake_snapshot["intake_summary"],
             "ready_intake": intake_snapshot["ready_intake"],

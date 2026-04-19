@@ -1,14 +1,18 @@
 """Agent and life workflow commands."""
 
+from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands
 
+from bot.nl import parse_commitment_prompt, parse_schedule_value
 from bot.utils import api_get, api_post, api_put
 
 VALID_DOMAINS = {"deen", "family", "work", "health", "planning"}
 VALID_ITEM_STATUSES = {"open", "done", "missed"}
 NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
 INTAKE_AGENT_NAME = "intake-inbox"
+COMMITMENT_SESSION_NAME = "commitment-capture"
 
 
 class AgentsCog(commands.Cog, name="Agents"):
@@ -42,7 +46,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         return value[:1021].rstrip() + "..."
 
     @staticmethod
-    def _format_today_items(items: list[dict], *, include_priority: bool = False) -> str:
+    def _format_today_items(items: list[dict], *, include_priority: bool = False, include_reason: bool = False) -> str:
         if not items:
             return "none"
         lines = []
@@ -50,6 +54,8 @@ class AgentsCog(commands.Cog, name="Agents"):
             line = f"#{item.get('id', '?')} {item.get('title', 'Untitled')}"
             if include_priority and item.get("priority"):
                 line += f" ({item['priority']})"
+            if include_reason and item.get("focus_reason"):
+                line += f" — {item['focus_reason']}"
             lines.append(line)
         return "\n".join(lines)
 
@@ -174,6 +180,88 @@ class AgentsCog(commands.Cog, name="Agents"):
         if result.get("session_id"):
             embed.set_footer(text=f"Session #{result['session_id']} · continue with !capturefollow")
         await ctx.send(embed=embed)
+
+    async def _send_commitment_embed(self, ctx, result: dict, *, heading: str) -> None:
+        entry = result.get("entry") or {}
+        life_item = result.get("life_item") or {}
+        follow_up_job = result.get("follow_up_job") or {}
+        description = result.get("response", "Captured.")
+        embed = discord.Embed(title=heading, description=description[:4000], color=0x059669)
+        if entry.get("id"):
+            embed.add_field(
+                name="Inbox",
+                value=(
+                    f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
+                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}"
+                ),
+                inline=False,
+            )
+        if life_item.get("id"):
+            reminder = follow_up_job.get("next_run_at") or follow_up_job.get("run_at") or "n/a"
+            embed.add_field(
+                name="Tracked Commitment",
+                value=(
+                    f"Life item #{life_item['id']} · {life_item.get('title', 'Untitled')}\n"
+                    f"Reminder: {str(reminder).replace('T', ' ')[:16]} UTC"
+                ),
+                inline=False,
+            )
+        followups = entry.get("follow_up_questions") or []
+        if followups:
+            embed.add_field(
+                name="Need Follow-up",
+                value="\n".join([f"• {question}" for question in followups[:3]]),
+                inline=False,
+            )
+        if result.get("session_id"):
+            embed.set_footer(text=f"Session #{result['session_id']} · continue with !commitfollow")
+        await ctx.send(embed=embed)
+
+    @staticmethod
+    def _current_channel_payload(ctx) -> dict:
+        channel_name = getattr(ctx.channel, "name", None)
+        channel_id = getattr(ctx.channel, "id", None)
+        return {
+            "target_channel": channel_name,
+            "target_channel_id": str(channel_id) if channel_id is not None else None,
+        }
+
+    @staticmethod
+    def _format_focus_coach_response(result: dict, agenda: dict | None = None) -> str:
+        agenda = agenda or {}
+        item_lookup = {item.get("id"): item for item in agenda.get("top_focus", [])}
+        primary_id = result.get("primary_item_id")
+        primary = item_lookup.get(primary_id, {})
+        title = primary.get("title") or (f"#{primary_id}" if primary_id is not None else "none")
+        defer_labels = []
+        for item_id in result.get("defer_ids", []):
+            item = item_lookup.get(item_id, {})
+            defer_labels.append(item.get("title") or f"#{item_id}")
+        return "\n".join(
+            [
+                f"Primary: {title}",
+                f"Why now: {result.get('why_now', 'none')}",
+                f"First step: {result.get('first_step', 'none')}",
+                f"Defer: {', '.join(defer_labels) if defer_labels else 'none'}",
+                f"Nudge: {result.get('nudge_copy', 'none')}",
+                f"Mode: {'fallback' if result.get('fallback_used') else 'ai'}",
+            ]
+        )
+
+    @staticmethod
+    def _format_commitment_review(result: dict) -> str:
+        sections = []
+        for key, label in [
+            ("wins", "Wins"),
+            ("stale_commitments", "Stale"),
+            ("repeat_blockers", "Blockers"),
+            ("promises_at_risk", "At Risk"),
+            ("simplify_next_week", "Next Week"),
+        ]:
+            values = result.get(key) or []
+            sections.append(f"{label}: {' | '.join(values[:3]) if values else 'none'}")
+        sections.append(f"Mode: {'fallback' if result.get('fallback_used') else 'ai'}")
+        return "\n".join(sections)
 
     @commands.command(name="ask")
     async def ask_agent(self, ctx, agent_name: str, *, message: str):
@@ -374,6 +462,86 @@ class AgentsCog(commands.Cog, name="Agents"):
             except Exception as exc:
                 await ctx.send(f"Failed to continue capture: {self._trim_error(exc)}")
 
+    @commands.command(name="commit")
+    async def commit(self, ctx, *, message: str):
+        parsed = parse_commitment_prompt(
+            message,
+            now=datetime.now(timezone.utc),
+        )
+        if parsed["errors"]:
+            await ctx.send(parsed["errors"][0])
+            return
+        payload = {
+            "message": parsed["data"]["message"],
+            "new_session": True,
+            "source": "discord_commitment_capture",
+            "due_at": parsed["data"]["due_at"].isoformat() if parsed["data"].get("due_at") else None,
+            "timezone": parsed["data"].get("timezone"),
+            **self._current_channel_payload(ctx),
+        }
+        async with ctx.typing():
+            try:
+                result = await api_post("/life/commitments/capture", payload)
+                if result.get("session_id"):
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
+                await self._send_commitment_embed(ctx, result, heading="Commitment Capture")
+            except Exception as exc:
+                await ctx.send(f"Failed to capture commitment: {self._trim_error(exc)}")
+
+    @commands.command(name="commitfollow")
+    async def commit_follow(self, ctx, *, message: str):
+        session_id = self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
+        if not session_id:
+            await ctx.send("No active commitment session. Start with `!commit ...`.")
+            return
+        parsed = parse_commitment_prompt(
+            message,
+            now=datetime.now(timezone.utc),
+        )
+        if parsed["errors"]:
+            await ctx.send(parsed["errors"][0])
+            return
+        async with ctx.typing():
+            try:
+                result = await api_post(
+                    "/life/commitments/capture",
+                    {
+                        "message": parsed["data"]["message"],
+                        "session_id": session_id,
+                        "new_session": False,
+                        "source": "discord_commitment_followup",
+                        "due_at": parsed["data"]["due_at"].isoformat() if parsed["data"].get("due_at") else None,
+                        "timezone": parsed["data"].get("timezone"),
+                        **self._current_channel_payload(ctx),
+                    },
+                )
+                await self._send_commitment_embed(ctx, result, heading="Commitment Follow-up")
+            except Exception as exc:
+                await ctx.send(f"Failed to continue commitment capture: {self._trim_error(exc)}")
+
+    @commands.command(name="snooze")
+    async def snooze(self, ctx, item_id: int, *, when: str):
+        parsed = parse_schedule_value(when, now=datetime.now(timezone.utc))
+        if parsed["errors"]:
+            await ctx.send(parsed["errors"][0])
+            return
+        if parsed["data"].get("schedule_type") != "once" or not parsed["data"].get("run_at"):
+            await ctx.send("Snooze needs a one-time time like `tomorrow at 9am` or `in 2 hours`.")
+            return
+        try:
+            item = await api_post(
+                f"/life/items/{item_id}/snooze",
+                {
+                    "due_at": parsed["data"]["run_at"].isoformat(),
+                    "timezone": "Africa/Casablanca",
+                    "source": "discord",
+                },
+            )
+            due_at = str(item.get("due_at") or "").replace("T", " ")[:16]
+            await ctx.send(f"Snoozed #{item['id']} to {due_at} UTC: {item['title']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to snooze item: {self._trim_error(exc)}")
+
     @commands.command(name="inbox")
     async def inbox(self, ctx, status: str = "", limit: int = 10):
         try:
@@ -448,6 +616,11 @@ class AgentsCog(commands.Cog, name="Agents"):
                 inline=False,
             )
             embed.add_field(
+                name="Commitment Radar",
+                value=self._embed_value(self._format_today_items(agenda.get("top_focus", []), include_priority=True, include_reason=True)),
+                inline=False,
+            )
+            embed.add_field(
                 name="Top Focus",
                 value=self._embed_value(self._format_today_items(agenda.get("top_focus", []), include_priority=True)),
                 inline=False,
@@ -474,10 +647,30 @@ class AgentsCog(commands.Cog, name="Agents"):
             if not top_focus:
                 await ctx.send("No open focus items yet. Use `!add` to create one.")
                 return
-            lines = [f"1) #{item['id']} {item['title']} [{item['domain']}/{item['priority']}]" for item in top_focus]
+            lines = [
+                f"1) #{item['id']} {item['title']} [{item['domain']}/{item['priority']}] — {item.get('focus_reason', 'focus now')}"
+                for item in top_focus
+            ]
             await ctx.send("Top 3 focus items:\n" + "\n".join(lines))
         except Exception as exc:
             await ctx.send(f"Failed to load focus: {self._trim_error(exc)}")
+
+    @commands.command(name="focuscoach")
+    async def focus_coach(self, ctx):
+        try:
+            agenda = await api_get("/life/today")
+            result = await api_get("/life/coach/daily-focus")
+            await ctx.send(self._format_focus_coach_response(result, agenda))
+        except Exception as exc:
+            await ctx.send(f"Failed to load focus coach: {self._trim_error(exc)}")
+
+    @commands.command(name="commitreview")
+    async def commitment_review(self, ctx):
+        try:
+            result = await api_get("/life/coach/weekly-review")
+            await ctx.send(self._format_commitment_review(result))
+        except Exception as exc:
+            await ctx.send(f"Failed to load commitment review: {self._trim_error(exc)}")
 
     @commands.command(name="add")
     async def add_item(self, ctx, domain: str, *, text: str):

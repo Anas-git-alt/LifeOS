@@ -1,8 +1,14 @@
 """Life items and agenda router."""
 
+from sqlalchemy import select
+
+from app.database import async_session
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models import (
+    CommitmentCaptureRequest,
+    CommitmentCaptureResponse,
+    DailyFocusCoachResponse,
     DailyLogCreate,
     DailyLogResponse,
     DailyScorecardResponse,
@@ -17,14 +23,20 @@ from app.models import (
     LifeCheckinResponse,
     LifeItemCreate,
     LifeItemResponse,
+    LifeItemSnoozeRequest,
     NextPrayerResponse,
     RescuePlanResponse,
     SleepProtocolResponse,
     LifeItemUpdate,
     TodayAgendaResponse,
+    WeeklyCommitmentReviewResponse,
+    LifeItem,
+    ScheduledJobResponse,
 )
 from app.security import require_api_token
 from app.services.chat_sessions import create_session, generate_title_from_prompts
+from app.services.commitment_coach import get_daily_focus_coach, get_weekly_commitment_review
+from app.services.commitments import get_commitment_timezone, upsert_follow_up_job
 from app.services.intake import (
     get_intake_entry,
     get_latest_intake_entry_for_session,
@@ -39,6 +51,7 @@ from app.services.life import (
     get_today_agenda,
     list_life_items,
     log_daily_signal,
+    snooze_life_item,
     update_life_item,
 )
 from app.services.orchestrator import handle_message
@@ -64,6 +77,20 @@ async def post_item(data: LifeItemCreate):
 @router.put("/items/{item_id}", response_model=LifeItemResponse, dependencies=[Depends(require_api_token)])
 async def put_item(item_id: int, data: LifeItemUpdate):
     item = await update_life_item(item_id, data)
+    if not item:
+        raise HTTPException(status_code=404, detail="Life item not found")
+    return LifeItemResponse.model_validate(item)
+
+
+@router.post("/items/{item_id}/snooze", response_model=LifeItemResponse, dependencies=[Depends(require_api_token)])
+async def post_snooze_item(item_id: int, data: LifeItemSnoozeRequest):
+    item = await snooze_life_item(
+        item_id,
+        due_at=data.due_at,
+        timezone_name=data.timezone,
+        source=data.source,
+        note=data.note,
+    )
     if not item:
         raise HTTPException(status_code=404, detail="Life item not found")
     return LifeItemResponse.model_validate(item)
@@ -182,6 +209,91 @@ async def capture_inbox(data: IntakeCaptureRequest):
     )
 
 
+@router.post("/commitments/capture", response_model=CommitmentCaptureResponse, dependencies=[Depends(require_api_token)])
+async def capture_commitment(data: CommitmentCaptureRequest):
+    message = (data.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    session_id = data.session_id
+    if data.new_session:
+        title = generate_title_from_prompts([message])
+        session = await create_session(agent_name="intake-inbox", title=title)
+        session_id = session.id
+
+    result = await handle_message(
+        agent_name="intake-inbox",
+        user_message=message,
+        approval_policy="never",
+        source=data.source or "api",
+        session_id=session_id,
+        session_enabled=True,
+    )
+    if result.get("error_code") == "session_not_found":
+        raise HTTPException(status_code=404, detail=result["response"])
+    if result.get("error_code") == "memory_unavailable":
+        raise HTTPException(status_code=503, detail=result["response"])
+
+    entry = None
+    if result.get("session_id"):
+        entry = await get_latest_intake_entry_for_session(
+            result["session_id"],
+            source_agent="intake-inbox",
+        )
+
+    life_item = None
+    follow_up_job = None
+    auto_promoted = False
+    effective_timezone = await get_commitment_timezone(data.timezone)
+    if entry and entry.linked_life_item_id:
+        if data.due_at is not None:
+            await update_life_item(
+                entry.linked_life_item_id,
+                LifeItemUpdate(due_at=data.due_at, status="open"),
+            )
+        async with async_session() as db:
+            item_result = await db.execute(select(LifeItem).where(LifeItem.id == entry.linked_life_item_id))
+            life_item = item_result.scalar_one_or_none()
+        if life_item:
+            follow_up_job = await upsert_follow_up_job(
+                life_item.id,
+                timezone_name=effective_timezone,
+                target_channel=data.target_channel,
+                target_channel_id=data.target_channel_id,
+            )
+            async with async_session() as db:
+                refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
+                life_item = refreshed.scalar_one_or_none()
+    elif entry and entry.status == "ready":
+        overrides = {}
+        if data.due_at is not None:
+            overrides["due_at"] = data.due_at
+        entry, life_item = await promote_intake_entry(entry.id, overrides=overrides)
+        auto_promoted = bool(life_item)
+        if life_item:
+            follow_up_job = await upsert_follow_up_job(
+                life_item.id,
+                timezone_name=effective_timezone,
+                target_channel=data.target_channel,
+                target_channel_id=data.target_channel_id,
+            )
+            async with async_session() as db:
+                refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
+                life_item = refreshed.scalar_one_or_none()
+
+    needs_follow_up = bool(entry and (entry.status == "clarifying" or (entry.follow_up_questions_json or [])))
+    return CommitmentCaptureResponse(
+        response=result["response"],
+        session_id=result.get("session_id"),
+        session_title=result.get("session_title"),
+        entry=IntakeEntryResponse.model_validate(entry) if entry else None,
+        life_item=LifeItemResponse.model_validate(life_item) if life_item else None,
+        follow_up_job=ScheduledJobResponse.model_validate(follow_up_job) if follow_up_job else None,
+        auto_promoted=auto_promoted,
+        needs_follow_up=needs_follow_up,
+    )
+
+
 @router.get("/inbox/{entry_id}", response_model=IntakeEntryResponse, dependencies=[Depends(require_api_token)])
 async def get_inbox_entry(entry_id: int):
     entry = await get_intake_entry(entry_id)
@@ -211,3 +323,13 @@ async def promote_inbox_entry(entry_id: int, data: IntakePromoteRequest):
         entry=IntakeEntryResponse.model_validate(entry),
         life_item=LifeItemResponse.model_validate(item),
     )
+
+
+@router.get("/coach/daily-focus", response_model=DailyFocusCoachResponse, dependencies=[Depends(require_api_token)])
+async def get_daily_focus():
+    return DailyFocusCoachResponse.model_validate(await get_daily_focus_coach())
+
+
+@router.get("/coach/weekly-review", response_model=WeeklyCommitmentReviewResponse, dependencies=[Depends(require_api_token)])
+async def get_weekly_review():
+    return WeeklyCommitmentReviewResponse.model_validate(await get_weekly_commitment_review())

@@ -348,6 +348,40 @@ def parse_schedule_prompt(
     return {"data": data, "missing": list(dict.fromkeys(missing)), "errors": list(dict.fromkeys(errors))}
 
 
+def parse_commitment_prompt(
+    text: str,
+    *,
+    now: datetime | None = None,
+    default_timezone: str = DEFAULT_TIMEZONE,
+) -> dict:
+    normalized_text = _normalize_whitespace(text)
+    data: dict = {"timezone": default_timezone}
+    errors: list[str] = []
+    remove_spans: list[tuple[int, int]] = []
+
+    timezone_match = _TIMEZONE_PATTERN.search(normalized_text)
+    timezone_name = timezone_match.group(1) if timezone_match else default_timezone
+    if _validate_timezone_name(timezone_name):
+        data["timezone"] = timezone_name
+    elif timezone_match:
+        errors.append(f"Invalid timezone. Try something like `{DEFAULT_TIMEZONE}`.")
+    if timezone_match:
+        remove_spans.append(timezone_match.span())
+
+    schedule = parse_schedule_value(normalized_text, now=now, default_timezone=data["timezone"])
+    errors.extend(schedule["errors"])
+    remove_spans.extend(schedule["spans"])
+    schedule_type = schedule["data"].get("schedule_type")
+    if schedule_type == "once":
+        data["due_at"] = schedule["data"].get("run_at")
+    elif schedule_type == "cron":
+        errors.append("Commitments need a one-time deadline like `tomorrow at 9am` or `in 2 hours`.")
+
+    cleaned_message = _strip_spans(normalized_text, remove_spans)
+    data["message"] = cleaned_message or normalized_text
+    return {"data": data, "errors": list(dict.fromkeys(errors))}
+
+
 def parse_agent_prompt(text: str) -> dict:
     lowered = _normalize_whitespace(text).lower()
     data: dict = {}

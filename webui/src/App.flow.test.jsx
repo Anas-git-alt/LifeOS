@@ -62,6 +62,22 @@ const apiMocks = vi.hoisted(() => ({
       actions: ["Log water twice in the next hour."],
     },
   })),
+  getDailyFocusCoach: vi.fn(async () => ({
+    primary_item_id: 1,
+    why_now: "High-priority open commitment.",
+    first_step: "Start the first visible step now.",
+    defer_ids: [2],
+    nudge_copy: "Move Deep work one step before opening new loops.",
+    fallback_used: false,
+  })),
+  getWeeklyCommitmentReview: vi.fn(async () => ({
+    wins: ["Closed 1 commitment."],
+    stale_commitments: ["none"],
+    repeat_blockers: ["none"],
+    promises_at_risk: ["none"],
+    simplify_next_week: ["Keep only 3 active commitments."],
+    fallback_used: false,
+  })),
   getTodayAgenda: vi.fn(async () => ({
     timezone: "Africa/Casablanca",
     now: "2026-03-03T12:00:00Z",

@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { getTodayAgenda, logDailySignal } from "../api";
+import { getDailyFocusCoach, getTodayAgenda, getWeeklyCommitmentReview, logDailySignal } from "../api";
 
 export default function TodayView() {
   const [agenda, setAgenda] = useState(null);
+  const [focusCoach, setFocusCoach] = useState(null);
+  const [weeklyReview, setWeeklyReview] = useState(null);
+  const [weeklyReviewLoading, setWeeklyReviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [activeLog, setActiveLog] = useState("");
@@ -17,7 +20,12 @@ export default function TodayView() {
 
   async function load() {
     try {
-      setAgenda(await getTodayAgenda());
+      const [nextAgenda, nextCoach] = await Promise.all([
+        getTodayAgenda(),
+        getDailyFocusCoach().catch(() => null),
+      ]);
+      setAgenda(nextAgenda);
+      setFocusCoach(nextCoach);
       setError("");
     } catch (err) {
       setError(err.message);
@@ -40,6 +48,7 @@ export default function TodayView() {
             }
           : current
       ));
+      setFocusCoach(await getDailyFocusCoach().catch(() => focusCoach));
       setStatus(result.message);
       setError("");
       if (kind === "sleep") {
@@ -52,6 +61,18 @@ export default function TodayView() {
       setError(err.message);
     } finally {
       setActiveLog("");
+    }
+  }
+
+  async function loadWeeklyReview() {
+    try {
+      setWeeklyReviewLoading(true);
+      setWeeklyReview(await getWeeklyCommitmentReview());
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWeeklyReviewLoading(false);
     }
   }
 
@@ -130,6 +151,17 @@ export default function TodayView() {
           <div className="grid grid-2" style={{ marginBottom: 20 }}>
             <StreaksBlock streaks={streaks} />
             <TrendBlock trendSummary={trendSummary} />
+          </div>
+
+          <div className="grid grid-2" style={{ marginBottom: 20 }}>
+            <CommitmentRadarBlock items={agenda.top_focus || []} />
+            <FocusCoachBlock
+              focusCoach={focusCoach}
+              weeklyReview={weeklyReview}
+              weeklyReviewLoading={weeklyReviewLoading}
+              onLoadWeeklyReview={loadWeeklyReview}
+              topFocus={agenda.top_focus || []}
+            />
           </div>
 
           <div className="grid grid-2" style={{ marginBottom: 20 }}>
@@ -395,6 +427,92 @@ function SleepProtocolBlock({ sleepProtocol }) {
   );
 }
 
+function CommitmentRadarBlock({ items }) {
+  return (
+    <div className="glass-card today-highlight-card">
+      <div className="panel-card-head">
+        <h2>Commitment Radar</h2>
+        <span>{items.length} ranked</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="today-highlight-meta">No tracked commitments surfaced yet.</p>
+      ) : (
+        <ul className="today-checklist">
+          {items.map((item) => (
+            <li key={item.id}>
+              <strong>#{item.id} {item.title}</strong>
+              <div className="today-highlight-meta">{item.focus_reason || `${item.domain} / ${item.priority}`}</div>
+              {(item.follow_up_due_at || item.due_at) && (
+                <div className="meta-tag" style={{ marginTop: 6 }}>
+                  Follow-up {formatDateTime(item.follow_up_due_at || item.due_at)}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function FocusCoachBlock({ focusCoach, weeklyReview, weeklyReviewLoading, onLoadWeeklyReview, topFocus }) {
+  const topById = Object.fromEntries((topFocus || []).map((item) => [item.id, item]));
+  const primary = focusCoach?.primary_item_id ? topById[focusCoach.primary_item_id] : null;
+  const deferTitles = (focusCoach?.defer_ids || []).map((itemId) => topById[itemId]?.title || `#${itemId}`);
+
+  return (
+    <div className="glass-card today-highlight-card">
+      <div className="panel-card-head">
+        <h2>AI Focus Coach</h2>
+        <span>{focusCoach?.fallback_used ? "fallback" : "ai"}</span>
+      </div>
+      {focusCoach ? (
+        <>
+          <p className="today-highlight-value">{primary ? primary.title : "No primary item selected"}</p>
+          <ul className="today-checklist">
+            <li>{focusCoach.why_now}</li>
+            <li>{focusCoach.first_step}</li>
+            <li>{focusCoach.nudge_copy}</li>
+          </ul>
+          <p className="today-highlight-meta">Defer: {deferTitles.length ? deferTitles.join(", ") : "none"}</p>
+        </>
+      ) : (
+        <p className="today-highlight-meta">Coach unavailable right now.</p>
+      )}
+
+      <div className="action-row" style={{ marginTop: 16 }}>
+        <button className="btn btn-ghost" type="button" onClick={onLoadWeeklyReview} disabled={weeklyReviewLoading}>
+          {weeklyReviewLoading ? "Running..." : "Run Weekly Review"}
+        </button>
+      </div>
+
+      {weeklyReview && (
+        <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+          <div className="meta-tag">Weekly review · {weeklyReview.fallback_used ? "fallback" : "ai"}</div>
+          <ReviewList title="Wins" items={weeklyReview.wins} />
+          <ReviewList title="Stale" items={weeklyReview.stale_commitments} />
+          <ReviewList title="Blockers" items={weeklyReview.repeat_blockers} />
+          <ReviewList title="At Risk" items={weeklyReview.promises_at_risk} />
+          <ReviewList title="Next Week" items={weeklyReview.simplify_next_week} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewList({ title, items }) {
+  return (
+    <div>
+      <strong>{title}</strong>
+      <ul style={{ marginTop: 6, paddingLeft: 18, display: "grid", gap: 4 }}>
+        {(items || []).slice(0, 3).map((item) => (
+          <li key={`${title}-${item}`}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function CompletionBar({ value }) {
   return (
     <div className="score-bar-wrap" aria-label={`${value}% completion`}>
@@ -433,6 +551,16 @@ function AgendaBlock({ title, items, emptyLabel }) {
               <div className="meta-tag" style={{ marginTop: 4 }}>
                 {item.domain} / {item.priority}
               </div>
+              {item.focus_reason && (
+                <div style={{ marginTop: 6, color: "var(--text-secondary)", fontSize: 13 }}>
+                  {item.focus_reason}
+                </div>
+              )}
+              {(item.follow_up_due_at || item.due_at) && (
+                <div className="meta-tag" style={{ marginTop: 6 }}>
+                  Follow-up {formatDateTime(item.follow_up_due_at || item.due_at)}
+                </div>
+              )}
             </li>
           ))}
         </ul>
