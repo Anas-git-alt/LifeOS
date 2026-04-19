@@ -84,11 +84,18 @@ Valid status filters:
 Examples:
 
 - `!profile`
+- `!today`
 - `!add work Ship weekly KPI update`
 - `!items planning open`
 - `!done 42 finished before Dhuhr`
 - `!goal health regain mobility consistency`
 - `!goalprogress 77`
+
+`!today` behavior:
+
+- returns a richer embed with `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Top Focus`, `Due Today`, and `Overdue`
+- empty sections now render as `none` instead of disappearing
+- this command is read-only and reflects the current `Today` API state
 
 ## Prayer, Quran, Habits, And Quick Logs
 
@@ -144,6 +151,7 @@ Examples:
 Quick-log behavior:
 
 - `!sleep` accepts leading float hours or note-only text.
+- `!sleep` does not currently accept bedtime or wake time; use WebUI `Today` or `Profile` for sleep protocol details.
 - `!meal` and `!water` accept leading integer count, default `1`.
 - `!train` accepts optional first token `done`, `rest`, or `missed`; default is `done`.
 - `!shutdown` marks shutdown complete for today and stores optional note.

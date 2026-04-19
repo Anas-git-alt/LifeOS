@@ -41,6 +41,13 @@ Manual redeploy is also available:
 ./scripts/deploy_vps.sh some-branch
 ```
 
+If you are invoking scripts from a Windows/UNC-mounted shell and execute bits are not honored, use:
+
+```bash
+bash scripts/deploy_vps.sh
+bash scripts/promote_to_main.sh
+```
+
 ## 4. Promote stable work to `main`
 
 Once the branch is stable:

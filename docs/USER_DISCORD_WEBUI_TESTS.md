@@ -1,8 +1,8 @@
 # User-Side Discord and WebUI Test Guide
 
-Date: 2026-04-18
+Date: 2026-04-19
 
-Purpose: manual user acceptance checks for the current `codex/obsidian-shared-memory-runtime` branch before promoting wider.
+Purpose: manual user acceptance checks for the current `codex/next-feature` branch before promoting to `main`.
 
 ## Status Of This Checklist
 
@@ -44,16 +44,29 @@ Latest automated verification now also includes VPS-side test runs:
 
 ## Branch Under Test
 
-- Branch: `codex/obsidian-shared-memory-runtime`
+- Branch: `codex/next-feature`
 - Main user-visible areas touched by this validation pass:
-  - agent chat warning plumbing
-  - longer WebUI chat timeout for slow replies
-  - WebUI pending reply state with elapsed timer
-  - expanded top-level navigation coverage
-  - Discord display of backend warnings
-  - workspace file-list parsing fix for prompts like "list of files in docs/"
-  - Today accountability board with scorecard, next prayer, rescue plan, and quick logs
+  - Today accountability board with scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, and quick logs
   - Discord quick-log commands for sleep, meals, training, water, and shutdown
+  - richer Discord `!today` output with explicit empty-state fields
+  - existing agent/session/navigation coverage that remains part of release confidence
+
+## Latest Manual Pass Notes
+
+Validated live by user on 2026-04-19:
+
+- `!status`
+- `!today`
+- `!sleep`
+- `!meal`
+- `!train`
+- `!water`
+- `!shutdown`
+- WebUI Today/Profile flows related to the new accountability features
+
+Follow-up change landed after that pass:
+
+- Discord `!today` now prints scorecard, rescue plan, sleep protocol, streaks, trend summary, and explicit `none` empty states
 
 ## Discord Tests
 
@@ -162,6 +175,27 @@ Expected:
 - `!meal protein shake` marks protein context without extra prompt.
 - `!train rest ...` keeps training state explicit as `rest`.
 
+### 6. Discord `!today` summary
+
+Status:
+
+- Implemented in app
+- Covered locally by Discord bot automated tests
+- Still useful to sanity-check manually after deploy
+
+Command:
+
+```text
+!today
+```
+
+Expected:
+
+- Embed title is `Today (<timezone>)`
+- Embed includes `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Top Focus`, `Due Today`, and `Overdue`
+- Empty sections render `none` instead of vanishing
+- If you have open focus or overdue items, they appear in the relevant fields
+
 ## WebUI Tests
 
 ### 1. Navigation smoke
@@ -209,8 +243,11 @@ Expected:
 - Page renders scorecard stats for sleep, meals, water, training, shutdown, protein, family, priorities, and inbox-ready count.
 - `Next Prayer` card renders prayer name plus start/end window, or clean fallback text.
 - `Rescue Plan` card renders status badge and action list or on-track text.
+- `Sleep Protocol` card renders bedtime target, wake target, caffeine cutoff, checklist, and latest logged sleep data.
+- `Streaks` card renders hit/pending/miss state and current streak counts.
+- `7-Day Trend` card renders average completion, best day, and recent day summaries.
 - `Quick Logs` buttons render for meal, protein meal, water, training, rest day, family action, priority done, and shutdown.
-- `Sleep Log` form renders with hours and note fields.
+- `Sleep Log` form renders with hours, bedtime, wake time, and note fields.
 - Due today, overdue, top focus, and inbox-ready sections still render below new accountability cards.
 
 ### 3. Today quick-log interaction
@@ -353,7 +390,8 @@ Expected:
 - Discord basic reply works
 - Discord warning note appears when backend sends warnings
 - Discord quick-log commands update scorecard state and return summary text
-- WebUI Today page shows scorecard, next prayer, rescue plan, and quick logs
+- Discord `!today` shows richer summary fields and explicit empty states
+- WebUI Today page shows scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, and quick logs
 - WebUI quick logs update counts without reload
 - WebUI agent chat waits beyond the old short timeout and eventually returns
 - WebUI shows `Thinking...` and elapsed timer during slow requests

@@ -1,6 +1,6 @@
 # Accountability Upgrade Roadmap
 
-Status date: 2026-04-18
+Status date: 2026-04-19
 Purpose: permanent product and implementation roadmap for making LifeOS a stronger accountability system
 
 ## Vision
@@ -88,16 +88,18 @@ Status: not done yet
 
 ### Phase 2: Daily Accountability Layer
 
-Status: v1 implemented locally, pending live UAT and deployment
+Status: completed and live-validated on VPS branch
 
-Implemented in v1:
+Implemented:
 
 - Added `daily_scorecards` data model with one row per local date
 - Added deterministic `POST /api/life/daily-log`
-- Extended `GET /api/life/today` with `scorecard`, `next_prayer`, and `rescue_plan`
+- Extended `GET /api/life/today` with `scorecard`, `next_prayer`, `rescue_plan`, `sleep_protocol`, `streaks`, and `trend_summary`
 - Redesigned WebUI `Today` around scorecard first, quick logs second, then next prayer, due work, and inbox-ready items
 - Added Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Added accountability streaks and a 7-day trend summary
 - Added rule-based rescue plan for missing anchors and overdue high-priority work
+- Upgraded Discord `!today` to show scorecard, rescue state, sleep protocol, streaks, trend summary, and explicit empty states
 
 Concrete implementation areas:
 
@@ -105,6 +107,7 @@ Concrete implementation areas:
 - life/accountability logic in `backend/app/services/life.py`
 - API routes in `backend/app/routers/life.py`
 - Discord quick-log commands in `discord-bot/bot/cogs/reminders.py`
+- Discord Today summary in `discord-bot/bot/cogs/agents.py`
 - Today board UI in `webui/src/components/TodayView.jsx`
 - automated coverage in backend, Discord bot, WebUI unit, and Playwright tests
 
@@ -112,15 +115,15 @@ Phase 2 user-facing result:
 
 - one screen now shows spiritual timing, anchor metrics, rescue state, and most urgent commitments
 - daily anchors can be logged from WebUI buttons or short Discord commands
+- streak momentum and 7-day completion shape are visible without asking an agent
 - rescue status changes without LLM dependency
 
 ### Phase 2 Open Gaps
 
 Status: not done yet
 
-- no live VPS/UAT promotion recorded yet for this branch
-- no streak or trend summaries yet
-- no deeper food/cooking/sleep protocol layer yet
+- Discord quick logs still do not capture bedtime and wake time directly
+- Discord still has no dedicated quick commands for `family` and `priority` anchor logging
 - no calendar/email accountability integrations yet
 - no LLM-generated rescue plans by design
 
@@ -128,7 +131,7 @@ Status: not done yet
 
 ### Phase 3: Food, Cooking, Sleep, and Training Systems
 
-Status: planned
+Status: in progress
 
 Goal:
 
@@ -136,6 +139,13 @@ Goal:
 
 Build:
 
+- Already landed from this phase:
+  - bedtime target
+  - wake target
+  - caffeine cutoff
+  - wind-down checklist
+  - sleep protocol card in WebUI Today
+  - sleep log capture of bedtime and wake time in WebUI
 - meal rotation
 - grocery planning
 - pantry staples and emergency fallback meals
@@ -195,10 +205,9 @@ Target outcome:
 
 Recommended execution order:
 
-1. finish live UAT and promotion for Phase 2 branch
-2. Phase 3: food, cooking, sleep, and training systems
-3. Phase 4: pattern detection and reviews
-4. Phase 5: full life operating system
+1. Phase 3: meal rotation, fallback meals, grocery planning, and training-system follow-through
+2. Phase 4: pattern detection and reviews
+3. Phase 5: full life operating system
 
 ## Core Principles
 
@@ -226,14 +235,15 @@ Start with these before expanding:
 
 ## Recommended Next Build
 
-Finish Phase 2 live validation next, then start Phase 3.
+Continue Phase 3 from the now-shipped accountability base.
 
 Most valuable concrete pieces:
 
-- live Discord and WebUI UAT on deployed stack
-- deploy/promotion of current shared-memory plus accountability branch
-- simple streak and trend summaries after ship
-- deeper food, sleep, meal rotation, and training-system flows
+- meal rotation with fallback meals
+- grocery and pantry support
+- family and priority quick-log shortcuts in Discord
+- training block planner and 15-minute fallback mode
+- protocol adjustments driven by the new streak and trend data
 
 ## Definition Of Success
 

@@ -10,30 +10,31 @@
 
 ## Stack Readiness
 
-- [ ] `docker compose ps` shows `backend`, `discord-bot`, `webui`, `openviking`, and `tts-worker` up.
-- [ ] `GET /api/health` returns backend status plus OpenViking health details.
-- [ ] `GET /api/readiness` returns `ready`.
-- [ ] `GET /api/life/today` returns legacy agenda fields plus `scorecard`, `next_prayer`, and `rescue_plan`.
-- [ ] The VPS has been tested on the feature branch that is about to be promoted.
+- [x] `docker compose ps` shows `backend`, `discord-bot`, `webui`, `openviking`, and `tts-worker` up.
+- [x] `GET /api/health` returns backend status plus OpenViking health details.
+- [x] `GET /api/readiness` returns `ready`.
+- [x] `GET /api/life/today` returns legacy agenda fields plus `scorecard`, `next_prayer`, `rescue_plan`, `sleep_protocol`, `streaks`, and `trend_summary`.
+- [x] The VPS has been tested on the feature branch that is about to be promoted.
 - [ ] OpenViking legacy memory import and workspace sync complete without startup errors.
-- [ ] `GET /api/tts/health` succeeds with a valid API token.
+- [x] `GET /api/tts/health` succeeds with a valid API token.
 
 ## Core Product Flows
 
-- [ ] `!status`, `!agents`, `!today`, and `!prayertoday` work in Discord.
-  Implemented in app. This checkbox remains for live Discord verification.
+- [ ] `!agents` and `!prayertoday` work in Discord.
+- [x] `!status` works in Discord on the live server.
+- [x] `!today` works in Discord on the live server.
 - [x] Local/VPS automated coverage exists for Discord smoke commands `!status`, `!agents`, `!today`, plus warning-note handling.
 - [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` are implemented and covered locally.
-- [ ] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` work and return updated summary text on the live server.
+- [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` work and return updated summary text on the live server.
 - [ ] Agent chat works through Discord and WebUI.
 - [ ] Session flows work end to end: create, switch, rename, clear, and history restore.
 - [ ] Approvals work through both commands and emoji reactions for owner users only.
-- [ ] WebUI token banner accepts the API token and protected pages load correctly.
+- [x] WebUI token banner accepts the API token and protected pages load correctly.
 - [ ] Mission Control shows health, approvals, jobs, today agenda, and recent agent activity.
-- [x] WebUI `Today` scorecard, next prayer, rescue plan, quick logs, due work, focus items, and inbox-ready layout are implemented and covered locally.
-- [ ] WebUI `Today` shows scorecard, next prayer, rescue plan, quick logs, due work, focus items, and inbox-ready items on the live stack.
+- [x] WebUI `Today` scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, quick logs, due work, focus items, and inbox-ready layout are implemented and covered locally.
+- [x] WebUI `Today` shows scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, quick logs, due work, focus items, and inbox-ready items on the live stack.
 - [x] WebUI quick-log buttons update same-day scorecard state without reload in local automated coverage.
-- [ ] WebUI quick-log buttons update same-day scorecard state without reload on the live stack.
+- [x] WebUI quick-log buttons update same-day scorecard state without reload on the live stack.
 - [ ] SSE updates reach the WebUI after token exchange without manual refresh.
 - [ ] Jobs can be created, edited, paused, resumed, deleted, and inspected for run logs.
 - [ ] Discord natural-language job creation works with follow-up prompts when fields are missing.
@@ -57,11 +58,12 @@
 ## Quality
 
 - [x] Backend tests pass in the target environment.
+- [x] Discord bot tests pass in the target environment.
 - [x] WebUI tests pass in the target environment.
 - [x] Docker images build successfully.
 - [x] Local automated coverage exists for daily accountability API, Discord smoke commands, Discord quick logs, WebUI Today board, pending chat state, nav smoke, and Playwright Today quick-log flow.
-- [ ] Manual Discord smoke test completed.
-- [ ] Manual WebUI smoke test completed.
-- [ ] Manual Today accountability smoke test completed in both Discord and WebUI.
+- [x] Manual Discord smoke test completed.
+- [x] Manual WebUI smoke test completed.
+- [x] Manual Today accountability smoke test completed in both Discord and WebUI.
 - [ ] `./scripts/promote_to_main.sh` completed and redeployed the VPS to `main`.
-- [ ] Docs reviewed for the current stack and operator workflow.
+- [x] Docs reviewed for the current stack and operator workflow.

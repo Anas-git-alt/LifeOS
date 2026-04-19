@@ -90,6 +90,7 @@ Healthy deployment signs:
 4. In `Settings`, set `data_start_date` and confirm autonomy and approval rules.
 5. In `Providers`, confirm your intended providers show as configured.
 6. In `Today`, confirm scorecard, next prayer, rescue plan, and quick-log controls render for local day.
+7. In `Today`, confirm sleep protocol, streaks, and 7-day trend summary also render.
 
 ### Discord
 
@@ -104,6 +105,8 @@ Run a short smoke test:
 !sleep 7.5 baseline check
 !water 1 startup smoke
 ```
+
+`!today` should now return a fuller embed, not only title/time. Empty sections should show `none`.
 
 Optional workflow smoke tests:
 
@@ -126,6 +129,9 @@ Check:
 - scorecard metrics for sleep, meals, water, training, shutdown, protein, family, and priorities
 - next-prayer window
 - rescue-plan headline and actions
+- sleep protocol targets and latest logged sleep timing
+- streak summary across anchor metrics
+- 7-day completion trend summary
 - due today, overdue, top focus, and inbox-ready panels
 
 Quick actions:
@@ -133,6 +139,7 @@ Quick actions:
 - WebUI buttons for `Meal +1`, `Protein Meal`, `Water +1`, `Train`, `Rest Day`, `Family Action`, `Priority Done`, and `Shutdown`
 - sleep form in `Today`
 - Discord quick logs: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Discord `!today` for compact remote status when you are away from the browser
 
 Important:
 
