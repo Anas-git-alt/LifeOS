@@ -51,7 +51,7 @@ _RELATIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _TODAY_TOMORROW_PATTERN = re.compile(
-    rf"\b(today|tomorrow)\s+at\s+{_TIME_PATTERN}\b",
+    rf"\b(today|tomorrow)\s+(?:at|by|before)\s+{_TIME_PATTERN}\b",
     re.IGNORECASE,
 )
 _EOD_PATTERN = re.compile(

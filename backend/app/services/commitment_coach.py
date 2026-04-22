@@ -283,7 +283,7 @@ async def get_weekly_commitment_review() -> dict:
         for item in commitments
         if item.status == "open"
         and (
-            (_as_aware_utc(item.due_at) is not None and _as_aware_utc(item.due_at) < now_utc)
+            (_as_aware_utc(item.due_at) is not None and _as_aware_utc(item.due_at) < now_utc - timedelta(days=1))
             or (_as_aware_utc(item.updated_at) is not None and _as_aware_utc(item.updated_at) <= now_utc - timedelta(days=7))
         )
     ][:5]
@@ -361,9 +361,15 @@ async def get_weekly_commitment_review() -> dict:
             max_tokens_cap=700,
         )
         parsed = json.loads(_clean_json_response(response))
+        allowed_stale = set(summary["stale_titles"])
+        parsed_stale = [str(item).strip() for item in parsed.get("stale_commitments") or [] if str(item).strip()]
+        if allowed_stale:
+            parsed_stale = [item for item in parsed_stale if item in allowed_stale]
+        else:
+            parsed_stale = []
         return {
             "wins": [str(item).strip() for item in parsed.get("wins") or [] if str(item).strip()][:5] or fallback["wins"],
-            "stale_commitments": [str(item).strip() for item in parsed.get("stale_commitments") or [] if str(item).strip()][:5] or fallback["stale_commitments"],
+            "stale_commitments": parsed_stale[:5] or fallback["stale_commitments"],
             "repeat_blockers": [str(item).strip() for item in parsed.get("repeat_blockers") or [] if str(item).strip()][:5] or fallback["repeat_blockers"],
             "promises_at_risk": [str(item).strip() for item in parsed.get("promises_at_risk") or [] if str(item).strip()][:5] or fallback["promises_at_risk"],
             "simplify_next_week": [str(item).strip() for item in parsed.get("simplify_next_week") or [] if str(item).strip()][:5] or fallback["simplify_next_week"],

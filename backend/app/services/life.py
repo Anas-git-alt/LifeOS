@@ -203,6 +203,13 @@ def _coerce_aware_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _format_local_clock(value: datetime | None, tz: ZoneInfo) -> str:
+    aware = _coerce_aware_utc(value)
+    if not aware:
+        return "unknown time"
+    return aware.astimezone(tz).strftime("%H:%M")
+
+
 def _serialize_life_item(
     item: LifeItem,
     *,
@@ -240,31 +247,41 @@ def _focus_rank_details(
 ) -> dict:
     due_local = _coerce_due_to_local_date(item, tz)
     follow_up_local_date = _coerce_local_date(follow_up_due_at, tz)
-    follow_up_local = (_coerce_aware_utc(follow_up_due_at) or now_local.astimezone(timezone.utc)).astimezone(tz) if follow_up_due_at else None
+    now_utc = now_local.astimezone(timezone.utc)
+    follow_up_utc = _coerce_aware_utc(follow_up_due_at)
+    follow_up_local = follow_up_utc.astimezone(tz) if follow_up_utc else None
     due_utc = _coerce_aware_utc(item.due_at)
 
-    if due_local is not None and due_local < today_date and item.priority == "high":
+    if due_utc is not None and due_utc <= now_utc:
         category = 0
-        reason = "Overdue high-priority commitment."
-        secondary = due_utc.timestamp() if due_utc else 0
-    elif follow_up_local_date is not None and follow_up_local_date <= today_date:
+        reason = f"Deadline overdue since {_format_local_clock(due_utc, tz)}."
+        secondary = due_utc.timestamp()
+    elif due_utc is not None and due_utc <= now_utc + timedelta(hours=2):
         category = 1
-        reason = "Follow-up overdue." if follow_up_local and follow_up_local <= now_local else "Follow-up due today."
-        secondary = (_coerce_aware_utc(follow_up_due_at) or now_local.astimezone(timezone.utc)).timestamp()
-    elif due_local == today_date:
+        reason = f"Due soon at {_format_local_clock(due_utc, tz)}."
+        secondary = due_utc.timestamp()
+    elif follow_up_utc is not None and follow_up_utc <= now_utc:
         category = 2
-        reason = "Due today."
+        reason = f"Follow-up overdue since {_format_local_clock(follow_up_utc, tz)}."
+        secondary = follow_up_utc.timestamp()
+    elif follow_up_local_date is not None and follow_up_local_date <= today_date:
+        category = 3
+        reason = f"Follow-up due today at {_format_local_clock(follow_up_utc, tz)}."
+        secondary = follow_up_utc.timestamp() if follow_up_utc else now_utc.timestamp()
+    elif due_local == today_date:
+        category = 4
+        reason = f"Due today at {_format_local_clock(due_utc, tz)}."
         secondary = due_utc.timestamp() if due_utc else 0
     elif item.priority == "high":
-        category = 3
+        category = 5
         reason = "High-priority open commitment."
         secondary = due_utc.timestamp() if due_utc else (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
     elif due_utc is not None:
-        category = 4
+        category = 6
         reason = "Upcoming deadline."
         secondary = due_utc.timestamp()
     else:
-        category = 5
+        category = 7
         reason = "Oldest untouched open commitment."
         secondary = (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
 

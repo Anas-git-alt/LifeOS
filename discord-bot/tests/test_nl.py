@@ -101,6 +101,21 @@ def test_parse_commitment_prompt_extracts_one_time_due_at():
     assert parsed["data"]["due_at"] == datetime(2026, 3, 26, 8, 0)
 
 
+def test_parse_commitment_prompt_extracts_before_time_due_at():
+    parsed = parse_commitment_prompt(
+        "request papers from HR about tax reimbursement today before 5pm",
+        now=datetime(2026, 4, 22, 11, 15, tzinfo=timezone.utc),
+    )
+    expected = (
+        datetime(2026, 4, 22, 17, 0, tzinfo=ZoneInfo("Africa/Casablanca"))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "request papers from HR about tax reimbursement"
+    assert parsed["data"]["due_at"] == expected
+
+
 def test_parse_commitment_prompt_extracts_today_eod_due_at():
     parsed = parse_commitment_prompt(
         "specific action is to create the canva file and add a few elements, deadline is today eod",

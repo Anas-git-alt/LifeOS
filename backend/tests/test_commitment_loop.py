@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from app.config import settings
 from app.database import async_session
 from app.models import AuditLog, IntakeEntry, LifeCheckin, LifeItem
 from app.services.intake import upsert_fallback_intake_entry
+from app.services.life import _focus_rank_details
 
 
 def _headers() -> dict:
@@ -438,6 +440,55 @@ def test_snooze_item_updates_due_at_and_returns_linked_job(monkeypatch):
     assert payload["due_at"] is not None
 
 
+def test_focus_rank_due_soon_beats_later_follow_up():
+    tz = ZoneInfo("Africa/Casablanca")
+    now_local = datetime(2026, 4, 22, 12, 15, tzinfo=tz)
+    now_utc = now_local.astimezone(timezone.utc)
+    due_soon_at = (now_utc + timedelta(minutes=45)).replace(tzinfo=None)
+    later_due_at = (now_utc + timedelta(hours=5)).replace(tzinfo=None)
+    later_follow_up_at = (now_utc + timedelta(hours=3)).replace(tzinfo=None)
+    updated_at = (now_utc - timedelta(hours=1)).replace(tzinfo=None)
+
+    due_soon = LifeItem(
+        id=501,
+        domain="family",
+        kind="task",
+        title="Send a message to your wife",
+        priority="high",
+        status="open",
+        due_at=due_soon_at,
+        updated_at=updated_at,
+    )
+    later_follow_up = LifeItem(
+        id=502,
+        domain="work",
+        kind="task",
+        title="Request papers from HR",
+        priority="high",
+        status="open",
+        due_at=later_due_at,
+        updated_at=updated_at,
+    )
+
+    due_soon_rank = _focus_rank_details(
+        due_soon,
+        tz=tz,
+        today_date=now_local.date(),
+        now_local=now_local,
+        follow_up_due_at=None,
+    )
+    later_rank = _focus_rank_details(
+        later_follow_up,
+        tz=tz,
+        today_date=now_local.date(),
+        now_local=now_local,
+        follow_up_due_at=later_follow_up_at,
+    )
+
+    assert due_soon_rank["sort_key"] < later_rank["sort_key"]
+    assert due_soon_rank["focus_reason"].startswith("Due soon")
+
+
 def test_daily_focus_coach_falls_back_to_ranked_item(monkeypatch):
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
 
@@ -509,6 +560,35 @@ def test_weekly_commitment_review_fallback_aggregates_activity(monkeypatch):
     assert payload["fallback_used"] is True
     assert payload["wins"]
     assert payload["repeat_blockers"]
+
+
+def test_weekly_commitment_review_does_not_mark_fresh_due_items_stale(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _seed_fresh_due_commitment():
+        async with async_session() as db:
+            item = LifeItem(
+                domain="family",
+                kind="task",
+                title="Fresh due commitment",
+                priority="high",
+                status="open",
+                follow_up_job_id=93,
+                due_at=(datetime.now(timezone.utc) - timedelta(hours=1)).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.add(item)
+            await db.commit()
+
+    with TestClient(app) as client:
+        import asyncio
+
+        asyncio.run(_seed_fresh_due_commitment())
+        response = client.get("/api/life/coach/weekly-review", headers=_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Fresh due commitment" not in payload["stale_commitments"]
 
 
 def test_weekly_commitment_review_handles_old_naive_updated_at(monkeypatch):
