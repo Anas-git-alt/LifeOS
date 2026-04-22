@@ -1,6 +1,7 @@
 """NL parser tests for Discord automation commands."""
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from bot.nl import parse_agent_prompt, parse_commitment_prompt, parse_schedule_prompt, parse_schedule_value
 
@@ -98,6 +99,36 @@ def test_parse_commitment_prompt_extracts_one_time_due_at():
     assert parsed["data"]["timezone"] == "Africa/Casablanca"
     assert parsed["data"]["message"] == "Send invoice"
     assert parsed["data"]["due_at"] == datetime(2026, 3, 26, 8, 0)
+
+
+def test_parse_commitment_prompt_extracts_today_eod_due_at():
+    parsed = parse_commitment_prompt(
+        "specific action is to create the canva file and add a few elements, deadline is today eod",
+        now=datetime(2026, 4, 22, 10, 44, tzinfo=timezone.utc),
+    )
+    expected = (
+        datetime(2026, 4, 22, 23, 59, tzinfo=ZoneInfo("Africa/Casablanca"))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "specific action is to create the canva file and add a few elements"
+    assert parsed["data"]["due_at"] == expected
+
+
+def test_parse_commitment_prompt_extracts_tomorrow_end_of_day_due_at():
+    parsed = parse_commitment_prompt(
+        "finish the video by tomorrow end of day",
+        now=datetime(2026, 4, 22, 10, 44, tzinfo=timezone.utc),
+    )
+    expected = (
+        datetime(2026, 4, 23, 23, 59, tzinfo=ZoneInfo("Africa/Casablanca"))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "finish the video"
+    assert parsed["data"]["due_at"] == expected
 
 
 def test_parse_commitment_prompt_rejects_recurring_schedule():

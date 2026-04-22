@@ -54,12 +54,18 @@ _TODAY_TOMORROW_PATTERN = re.compile(
     rf"\b(today|tomorrow)\s+at\s+{_TIME_PATTERN}\b",
     re.IGNORECASE,
 )
+_EOD_PATTERN = re.compile(
+    r"\b(?:(?:deadline|due)(?:\s+(?:is|by))?\s+|by\s+)?"
+    r"(?:(today|tomorrow)\s+(?:eod|end\s+of\s+day)|"
+    r"(?:eod|end\s+of\s+day)(?:\s+(today|tomorrow))?)\b",
+    re.IGNORECASE,
+)
 _DATE_PATTERN = re.compile(
     rf"\bon\s+(\d{{4}}-\d{{2}}-\d{{2}})\s+at\s+{_TIME_PATTERN}\b",
     re.IGNORECASE,
 )
 _SCHEDULE_KEYWORD_PATTERN = re.compile(
-    r"\b(every|daily|weekday|weekdays|weekend|today|tomorrow|on\s+\d{4}-\d{2}-\d{2}|in\s+\d+)\b",
+    r"\b(every|daily|weekday|weekdays|weekend|today|tomorrow|eod|end\s+of\s+day|on\s+\d{4}-\d{2}-\d{2}|in\s+\d+)\b",
     re.IGNORECASE,
 )
 
@@ -220,6 +226,27 @@ def parse_schedule_value(
                 "run_at": run_local.astimezone(timezone.utc).replace(tzinfo=None),
             },
             "spans": [day_match.span()],
+            "errors": [],
+        }
+
+    eod_match = _EOD_PATTERN.search(normalized_text)
+    if eod_match:
+        day_text = (eod_match.group(1) or eod_match.group(2) or "today").lower()
+        offset_days = 1 if day_text == "tomorrow" else 0
+        run_local = local_now.replace(hour=23, minute=59, second=0, microsecond=0) + timedelta(days=offset_days)
+        if run_local <= local_now:
+            return {
+                "data": {},
+                "spans": [],
+                "errors": ["That end-of-day schedule is in the past. Try `tomorrow eod` or `in 10 min`."],
+            }
+        return {
+            "data": {
+                "schedule_type": "once",
+                "cron_expression": None,
+                "run_at": run_local.astimezone(timezone.utc).replace(tzinfo=None),
+            },
+            "spans": [eod_match.span()],
             "errors": [],
         }
 
