@@ -136,7 +136,10 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
     await cog.commit_follow.callback(cog, ctx, message="#9 realistic bedtime is 11:30pm")
 
     assert len(ctx.sent_embeds) == 1
-    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    embed = ctx.sent_embeds[0]
+    assert "`!commitfollow #9 <answer>`" not in embed.description
+    assert "`!commitfollow 9 <answer>`" in embed.description
+    fields = {field.name: field.value for field in embed.fields}
     assert "Need Follow-up" in fields
     assert "`!commitfollow 9 <answer>`" in fields["Continue"]
     assert "`!commitfollow session #9 <answer>`" in fields["Continue"]

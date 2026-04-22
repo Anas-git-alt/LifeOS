@@ -44,6 +44,44 @@ def _extract_questions_from_response(value: Any) -> list[str]:
     return questions[:3]
 
 
+def _looks_ready_to_track(value: Any) -> bool:
+    text = str(value or "").lower()
+    ready_phrases = [
+        "ready to track",
+        "ready to promote",
+        "ready for tracking",
+        "ready to create",
+        "ready. reminder",
+    ]
+    if any(phrase in text for phrase in ready_phrases):
+        return True
+    return "ready" in text and "need clarification" not in text and "not ready" not in text
+
+
+def _infer_domain_from_text(value: Any) -> str:
+    text = str(value or "").lower()
+    if any(token in text for token in ["invoice", "payment", "client", "presentation", "one pager", "video", "mockup", "canva", "work"]):
+        return "work"
+    if any(token in text for token in ["pray", "quran", "deen", "salah"]):
+        return "deen"
+    if any(token in text for token in ["wife", "family", "kids", "home"]):
+        return "family"
+    if any(token in text for token in ["sleep", "workout", "gym", "health", "meal"]):
+        return "health"
+    return "planning"
+
+
+def _extract_commitment_title(response_text: Any, user_message: str) -> str:
+    for line in str(response_text or "").splitlines():
+        text = line.strip().lstrip("-*• ").strip()
+        if text.lower().startswith("commitment:"):
+            title = text.split(":", 1)[1].strip()
+            title = title.removesuffix(".").strip()
+            if title:
+                return title[:300]
+    return (_clean_text(user_message) or "Captured commitment")[:300]
+
+
 def _safe_domain(value: Any) -> str:
     candidate = str(value or "planning").strip().lower()
     if "|" in candidate:
@@ -253,6 +291,18 @@ async def upsert_fallback_intake_entry(
                 .limit(1)
             )
             entry = result.scalar_one_or_none()
+            if not entry:
+                result = await db.execute(
+                    select(IntakeEntry)
+                    .where(
+                        IntakeEntry.source_session_id == session_id,
+                        IntakeEntry.source_agent == agent_name,
+                        IntakeEntry.linked_life_item_id.is_not(None),
+                    )
+                    .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+                    .limit(1)
+                )
+                entry = result.scalar_one_or_none()
 
         if not entry:
             entry = IntakeEntry(
@@ -264,18 +314,44 @@ async def upsert_fallback_intake_entry(
             db.add(entry)
 
         cleaned_response = _clean_text(response_text)
+        if entry.linked_life_item_id:
+            entry.last_agent_response = cleaned_response
+            entry.structured_data_json = {"fallback_reason": reason, "reused_linked_entry": True}
+            await db.commit()
+            await db.refresh(entry)
+            return entry
+
         if not entry.raw_text:
             entry.raw_text = _clean_text(user_message) or "Captured idea"
-        entry.title = (entry.title or _clean_text(user_message) or "Captured idea")[:300]
+        ready_commitment = agent_name == "commitment-capture" and _looks_ready_to_track(cleaned_response)
+        entry.title = (
+            _extract_commitment_title(cleaned_response, user_message)
+            if ready_commitment
+            else (entry.title or _clean_text(user_message) or "Captured idea")[:300]
+        )
         if cleaned_response and not entry.summary:
             entry.summary = cleaned_response[:500]
-        entry.domain = entry.domain or "planning"
-        entry.kind = entry.kind or "idea"
-        entry.status = "clarifying"
-        entry.follow_up_questions_json = _extract_questions_from_response(cleaned_response)
+        if ready_commitment:
+            domain = _infer_domain_from_text(f"{entry.title} {user_message} {cleaned_response}")
+            entry.domain = domain
+            entry.kind = "commitment"
+            entry.status = "ready"
+            entry.follow_up_questions_json = []
+            entry.promotion_payload_json = {
+                "title": entry.title,
+                "kind": "task",
+                "domain": domain,
+                "priority": "medium",
+                "next_action": entry.title,
+            }
+        else:
+            entry.domain = entry.domain or "planning"
+            entry.kind = entry.kind or "idea"
+            entry.status = "clarifying"
+            entry.follow_up_questions_json = _extract_questions_from_response(cleaned_response)
         entry.last_agent_response = cleaned_response
         entry.structured_data_json = {"fallback_reason": reason}
-        if not entry.promotion_payload_json:
+        if not ready_commitment and not entry.promotion_payload_json:
             entry.promotion_payload_json = None
 
         await db.commit()

@@ -10,6 +10,7 @@ from app.main import app
 from app.config import settings
 from app.database import async_session
 from app.models import AuditLog, IntakeEntry, LifeCheckin, LifeItem
+from app.services.intake import upsert_fallback_intake_entry
 
 
 def _headers() -> dict:
@@ -207,6 +208,51 @@ def test_commitment_capture_deadlined_fallback_entry_auto_promotes(monkeypatch):
     assert payload["entry"]["status"] == "processed"
 
 
+def test_commitment_capture_ready_text_without_json_auto_promotes(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        response_text = (
+            "Commitment: Build the Canva file.\n"
+            "Timing is explicit; action is clear and ready to track.\n"
+            "Ready to track."
+        )
+        await upsert_fallback_intake_entry(
+            user_message=user_message,
+            response_text=response_text,
+            agent_name=agent_name,
+            session_id=session_id,
+        )
+        return {
+            "response": response_text,
+            "session_id": session_id,
+            "session_title": "Commitment",
+        }
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/commitments/capture",
+            headers=_headers(),
+            json={
+                "message": "build the canva file",
+                "raw_message": "build the canva file",
+                "session_id": 414,
+                "new_session": False,
+                "source": "test",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["auto_promoted"] is True
+    assert payload["needs_follow_up"] is False
+    assert payload["entry"]["status"] == "processed"
+    assert payload["life_item"]["title"] == "Build the Canva file"
+    assert payload["life_item"]["domain"] == "work"
+
+
 def test_commitment_followup_reuses_processed_linked_entry(monkeypatch):
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
 
@@ -283,6 +329,82 @@ def test_commitment_followup_reuses_processed_linked_entry(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["entry"]["id"] == entry_id
+    assert payload["life_item"]["id"] == item_id
+    assert entry_count == 1
+
+
+def test_commitment_followup_fallback_reuses_processed_linked_entry(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _seed_processed_entry():
+        async with async_session() as db:
+            item = LifeItem(
+                domain="work",
+                kind="task",
+                title="Create mockup",
+                priority="medium",
+                status="open",
+            )
+            db.add(item)
+            await db.flush()
+            entry = IntakeEntry(
+                source="agent_capture",
+                source_agent="commitment-capture",
+                source_session_id=515,
+                raw_text="create a one pager",
+                title="Create mockup",
+                summary="Create mockup",
+                domain="work",
+                kind="commitment",
+                status="processed",
+                linked_life_item_id=item.id,
+            )
+            db.add(entry)
+            await db.commit()
+            return entry.id, item.id
+
+    async def _count_session_entries():
+        async with async_session() as db:
+            result = await db.execute(select(IntakeEntry).where(IntakeEntry.source_session_id == 515))
+            return len(list(result.scalars().all()))
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        response_text = "Commitment: Create the mockup today.\nReady to track."
+        await upsert_fallback_intake_entry(
+            user_message=user_message,
+            response_text=response_text,
+            agent_name=agent_name,
+            session_id=session_id,
+        )
+        return {
+            "response": response_text,
+            "session_id": session_id,
+            "session_title": "Commitment",
+        }
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+
+    with TestClient(app) as client:
+        import asyncio
+
+        entry_id, item_id = asyncio.run(_seed_processed_entry())
+        response = client.post(
+            "/api/life/commitments/capture",
+            headers=_headers(),
+            json={
+                "message": "make the mockup today",
+                "raw_message": "make the mockup today",
+                "session_id": 515,
+                "new_session": False,
+                "source": "test",
+            },
+        )
+        entry_count = asyncio.run(_count_session_entries())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entry"]["id"] == entry_id
+    assert payload["entry"]["status"] == "processed"
     assert payload["life_item"]["id"] == item_id
     assert entry_count == 1
 

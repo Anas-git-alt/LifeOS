@@ -226,9 +226,13 @@ class AgentsCog(commands.Cog, name="Agents"):
         if life_item.get("id") and not result.get("needs_follow_up"):
             description = "Tracked. Reminder set. Use `!focus` to see where it ranks."
         elif result.get("session_id") and result.get("needs_follow_up"):
+            if entry.get("id"):
+                reply_hint = f"!commitfollow {entry['id']} <answer>"
+            else:
+                reply_hint = f"!commitfollow session #{result['session_id']} <answer>"
             description = (
                 f"{description}\n\n"
-                f"Reply: `!commitfollow #{result['session_id']} <answer>`"
+                f"Reply: `{reply_hint}`"
             )
         embed = discord.Embed(title=heading, description=description[:4000], color=0x059669)
         if entry.get("id"):
