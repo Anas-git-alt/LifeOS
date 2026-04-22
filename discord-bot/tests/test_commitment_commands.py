@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from bot.cogs.agents import AgentsCog
 
@@ -35,6 +36,14 @@ class _Ctx:
 
     def typing(self):
         return _Typing()
+
+
+def _not_found(path: str):
+    raise httpx.HTTPStatusError(
+        "not found",
+        request=httpx.Request("GET", f"http://test{path}"),
+        response=httpx.Response(404, request=httpx.Request("GET", f"http://test{path}")),
+    )
 
 
 @pytest.mark.asyncio
@@ -98,6 +107,9 @@ async def test_snooze_command_parses_one_time_schedule(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
+    async def _fake_api_get(path: str):
+        _not_found(path)
+
     async def _fake_api_post(path: str, payload: dict):
         assert path == "/life/commitments/capture"
         assert payload["session_id"] == 9
@@ -115,6 +127,7 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
             },
         }
 
+    monkeypatch.setattr("bot.cogs.agents.api_get", _fake_api_get)
     monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
 
     cog = AgentsCog(bot=object())
@@ -125,7 +138,8 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
     assert len(ctx.sent_embeds) == 1
     fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
     assert "Need Follow-up" in fields
-    assert "`!commitfollow #9 <answer>`" in fields["Continue"]
+    assert "`!commitfollow 9 <answer>`" in fields["Continue"]
+    assert "`!commitfollow session #9 <answer>`" in fields["Continue"]
 
 
 @pytest.mark.asyncio
@@ -156,10 +170,53 @@ async def test_commitfollow_allows_answer_with_loose_today(monkeypatch):
     cog = AgentsCog(bot=object())
     ctx = _Ctx()
 
-    await cog.commit_follow.callback(cog, ctx, message="#14 make the mockup today")
+    await cog.commit_follow.callback(cog, ctx, message="session #14 make the mockup today")
 
     assert not ctx.sent_messages
     assert len(ctx.sent_embeds) == 1
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "Life item #40" in fields["Tracked Commitment"]
+
+
+@pytest.mark.asyncio
+async def test_commitfollow_resolves_inbox_id_to_commitment_session(monkeypatch):
+    async def _fake_api_get(path: str):
+        assert path == "/life/inbox/3"
+        return {
+            "id": 3,
+            "source_agent": "commitment-capture",
+            "source_session_id": 14,
+        }
+
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/life/commitments/capture"
+        assert payload["session_id"] == 14
+        assert payload["message"] == "make the mockup today"
+        return {
+            "response": "Tracked.",
+            "session_id": 14,
+            "needs_follow_up": False,
+            "entry": {
+                "id": 3,
+                "title": "Create one pager",
+                "status": "processed",
+                "domain": "work",
+                "kind": "commitment",
+                "follow_up_questions": [],
+            },
+            "life_item": {"id": 40, "title": "Create one pager"},
+            "follow_up_job": {"id": 45, "run_at": "2026-03-26T08:00:00Z"},
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_get", _fake_api_get)
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.commit_follow.callback(cog, ctx, message="3 make the mockup today")
+
+    assert not ctx.sent_messages
     fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
     assert "Life item #40" in fields["Tracked Commitment"]
 

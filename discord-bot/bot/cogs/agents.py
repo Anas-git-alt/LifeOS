@@ -28,14 +28,15 @@ class AgentsCog(commands.Cog, name="Agents"):
         return text[:max_len]
 
     @staticmethod
-    def _parse_commitfollow_target(raw_message: str) -> tuple[int | None, str]:
+    def _parse_commitfollow_target(raw_message: str) -> tuple[int | None, str, bool]:
         text = str(raw_message or "").strip()
-        pattern = re.compile(r"^(?:#(\d+)|session\s+#?(\d+))\s+(.+)$", re.IGNORECASE)
+        pattern = re.compile(r"^(?:#(\d+)|session\s+#?(\d+)|(\d+))\s+(.+)$", re.IGNORECASE)
         match = pattern.match(text)
         if not match:
-            return None, text
-        session_id = match.group(1) or match.group(2)
-        return int(session_id), match.group(3).strip()
+            return None, text, False
+        target_id = match.group(1) or match.group(2) or match.group(3)
+        force_session = bool(match.group(2))
+        return int(target_id), match.group(4).strip(), force_session
 
     def _session_key(self, ctx, agent_name: str) -> tuple[int, int, int, str]:
         guild_id = ctx.guild.id if ctx.guild else 0
@@ -175,6 +176,24 @@ class AgentsCog(commands.Cog, name="Agents"):
             payload["session_id"] = session_id
         return await api_post("/agents/chat", payload)
 
+    async def _resolve_commitment_session_from_inbox(self, inbox_id: int) -> tuple[int | None, str | None, bool]:
+        try:
+            entry = await api_get(f"/life/inbox/{inbox_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None, None, False
+            raise
+        source_agent = entry.get("source_agent") or "unknown"
+        session_id = entry.get("source_session_id")
+        if source_agent != COMMITMENT_SESSION_NAME or not session_id:
+            return (
+                None,
+                f"Inbox #{inbox_id} is from `{source_agent}`, not commitment capture. "
+                "Use the Inbox id shown under a `!commit` message, or `!commitfollow session #<session_id> <answer>`.",
+                True,
+            )
+        return int(session_id), None, True
+
     async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
         description = self._clean_visible_response(result.get("response", "Captured."))
@@ -239,9 +258,11 @@ class AgentsCog(commands.Cog, name="Agents"):
                 inline=False,
             )
         if result.get("session_id") and result.get("needs_follow_up"):
+            inbox_hint = f"`!commitfollow {entry['id']} <answer>`" if entry.get("id") else ""
+            session_hint = f"`!commitfollow session #{result['session_id']} <answer>`"
             embed.add_field(
                 name="Continue",
-                value=f"`!commitfollow #{result['session_id']} <answer>`",
+                value=" or ".join([part for part in [inbox_hint, session_hint] if part]),
                 inline=False,
             )
             embed.set_footer(
@@ -533,10 +554,21 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @commands.command(name="commitfollow")
     async def commit_follow(self, ctx, *, message: str):
-        explicit_session_id, cleaned_message = self._parse_commitfollow_target(message)
-        session_id = explicit_session_id or self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
+        explicit_target_id, cleaned_message, force_session = self._parse_commitfollow_target(message)
+        session_id = self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
+        if explicit_target_id is not None:
+            if force_session:
+                session_id = explicit_target_id
+            else:
+                resolved_session_id, resolve_error, found_inbox = await self._resolve_commitment_session_from_inbox(explicit_target_id)
+                if resolve_error:
+                    await ctx.send(resolve_error)
+                    return
+                session_id = resolved_session_id or explicit_target_id
+                if found_inbox and resolved_session_id:
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, resolved_session_id)
         if not session_id:
-            await ctx.send("No active commitment session. Use `!commit ...` or `!commitfollow #<session_id> ...`.")
+            await ctx.send("No active commitment session. Use `!commit ...`, `!commitfollow <inbox_id> ...`, or `!commitfollow session #<session_id> ...`.")
             return
         parsed = parse_commitment_prompt(
             cleaned_message,
@@ -545,26 +577,32 @@ class AgentsCog(commands.Cog, name="Agents"):
         parsed_message = parsed["data"].get("message") or cleaned_message
         due_at = parsed["data"].get("due_at") if not parsed["errors"] else None
         timezone_name = parsed["data"].get("timezone") or "Africa/Casablanca"
+        payload = {
+            "message": parsed_message,
+            "raw_message": cleaned_message,
+            "session_id": session_id,
+            "new_session": False,
+            "source": "discord_commitment_followup",
+            "due_at": due_at.isoformat() if due_at else None,
+            "timezone": timezone_name,
+            **self._current_channel_payload(ctx),
+        }
         async with ctx.typing():
             try:
-                result = await api_post(
-                    "/life/commitments/capture",
-                    {
-                        "message": parsed_message,
-                        "raw_message": cleaned_message,
-                        "session_id": session_id,
-                        "new_session": False,
-                        "source": "discord_commitment_followup",
-                        "due_at": due_at.isoformat() if due_at else None,
-                        "timezone": timezone_name,
-                        **self._current_channel_payload(ctx),
-                    },
-                )
+                result = await api_post("/life/commitments/capture", payload)
                 if result.get("session_id") and result.get("needs_follow_up"):
                     self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
                 elif self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME) == session_id:
                     self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, None)
                 await self._send_commitment_embed(ctx, result, heading="Commitment Follow-up")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    await ctx.send(
+                        f"No commitment session found for #{explicit_target_id or session_id}. "
+                        "Use the Inbox id from the `Inbox` field, or `!commitfollow session #<session_id> <answer>`."
+                    )
+                    return
+                await ctx.send(f"Failed to continue commitment capture: {self._trim_error(exc)}")
             except Exception as exc:
                 await ctx.send(f"Failed to continue commitment capture: {self._trim_error(exc)}")
 
