@@ -58,6 +58,7 @@ Session behavior:
 
 - `!today`
 - `!focus`
+- `!focuscoach`
 - `!profile`
 - `!add <domain> <text>`
 - `!items [domain] [status]`
@@ -93,9 +94,48 @@ Examples:
 
 `!today` behavior:
 
-- returns a richer embed with `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Top Focus`, `Due Today`, and `Overdue`
+- returns a richer embed with `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Commitment Radar`, `Top Focus`, `Due Today`, and `Overdue`
 - empty sections now render as `none` instead of disappearing
 - this command is read-only and reflects the current `Today` API state
+
+## Commitments And Follow-Through
+
+Use these when you said you will do something and want LifeOS to keep the loop alive.
+
+- `!commit <message>`
+- `!commitfollow <inbox_id> <answer>`
+- `!commitfollow session #<session_id> <answer>`
+- `!snooze <life_item_id> <time phrase>`
+- `!focuscoach`
+- `!commitreview`
+
+Examples:
+
+- `!commit send invoice tomorrow at 9am`
+- `!commit create a one pager tomorrow at 10pm`
+- `!commit build the Canva file deadline is today eod`
+- `!commitfollow 8 specific action is to create the Canva file and add a few elements, deadline is today eod`
+- `!commitfollow session #14 deadline is today end of day`
+- `!snooze 10 in 2 hours`
+- `!focus`
+- `!focuscoach`
+- `!commitreview`
+
+Commitment behavior:
+
+- `!commit` starts a fresh commitment-capture session.
+- Clear commitments auto-promote into a tracked Life item and create one linked reminder job.
+- If the AI needs more detail, use the inbox id shown in the bot message, for example `!commitfollow 8 <answer>`.
+- Use `!commitfollow session #<session_id> <answer>` only when you explicitly want to continue by session id.
+- Repeating follow-up on the same inbox/session reuses the same linked Life item instead of creating duplicates.
+- `today eod`, `today end of day`, `tomorrow eod`, and `tomorrow end of day` are accepted commitment deadlines.
+- A commitment with an explicit due time gets a reminder at `due_at - 2h`, clamped if the due time is too close.
+- A commitment without a due time gets a default next-local-day 09:00 reminder.
+- Marking a Life item `done` or `missed` disables its linked follow-up reminder.
+- Snoozing or reopening a Life item resyncs its linked reminder.
+- `!focus` is deterministic priority ranking.
+- `!focuscoach` uses the commitment coach AI when available, and falls back to deterministic ranking if providers fail.
+- `!commitreview` gives an on-demand weekly commitment review. It is not auto-scheduled yet.
 
 ## Prayer, Quran, Habits, And Quick Logs
 

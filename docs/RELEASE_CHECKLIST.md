@@ -26,6 +26,11 @@
 - [x] Local/VPS automated coverage exists for Discord smoke commands `!status`, `!agents`, `!today`, plus warning-note handling.
 - [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` are implemented and covered locally.
 - [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` work and return updated summary text on the live server.
+- [x] Discord commitment capture `!commit` and `!commitfollow` are implemented and covered locally.
+- [x] Discord commitment capture promotes ready commitments, keeps clarifying commitments in Inbox, and creates linked reminders.
+- [x] Discord commitment follow-up by inbox id works on staging and avoids duplicate Life items for the same inbox/session.
+- [x] Discord commitment deadlines support `today eod` and `tomorrow end of day`.
+- [x] Discord `!snooze`, `!focuscoach`, and `!commitreview` are implemented and covered locally.
 - [ ] Agent chat works through Discord and WebUI.
 - [ ] Session flows work end to end: create, switch, rename, clear, and history restore.
 - [ ] Approvals work through both commands and emoji reactions for owner users only.
@@ -33,6 +38,7 @@
 - [ ] Mission Control shows health, approvals, jobs, today agenda, and recent agent activity.
 - [x] WebUI `Today` scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, quick logs, due work, focus items, and inbox-ready layout are implemented and covered locally.
 - [x] WebUI `Today` shows scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, quick logs, due work, focus items, and inbox-ready items on the live stack.
+- [x] WebUI `Today` includes Commitment Radar and AI Focus Coach.
 - [x] WebUI quick-log buttons update same-day scorecard state without reload in local automated coverage.
 - [x] WebUI quick-log buttons update same-day scorecard state without reload on the live stack.
 - [ ] SSE updates reach the WebUI after token exchange without manual refresh.
@@ -61,7 +67,7 @@
 - [x] Discord bot tests pass in the target environment.
 - [x] WebUI tests pass in the target environment.
 - [x] Docker images build successfully.
-- [x] Local automated coverage exists for daily accountability API, Discord smoke commands, Discord quick logs, WebUI Today board, pending chat state, nav smoke, and Playwright Today quick-log flow.
+- [x] Local automated coverage exists for daily accountability API, commitment capture/follow-up, Discord smoke commands, Discord quick logs, WebUI Today board, pending chat state, nav smoke, and Playwright Today quick-log flow.
 - [x] Manual Discord smoke test completed.
 - [x] Manual WebUI smoke test completed.
 - [x] Manual Today accountability smoke test completed in both Discord and WebUI.

@@ -104,9 +104,12 @@ Run a short smoke test:
 !pending
 !sleep 7.5 baseline check
 !water 1 startup smoke
+!commit send invoice tomorrow at 9am
+!focus
 ```
 
 `!today` should now return a fuller embed, not only title/time. Empty sections should show `none`.
+`!commit` should either create a tracked commitment with a reminder, or clearly show an inbox id and a copyable `!commitfollow <inbox_id> <answer>` command.
 
 Optional workflow smoke tests:
 
@@ -132,7 +135,7 @@ Check:
 - sleep protocol targets and latest logged sleep timing
 - streak summary across anchor metrics
 - 7-day completion trend summary
-- due today, overdue, top focus, and inbox-ready panels
+- commitment radar, AI focus coach, due today, overdue, top focus, and inbox-ready panels
 
 Quick actions:
 
@@ -140,6 +143,35 @@ Quick actions:
 - sleep form in `Today`
 - Discord quick logs: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
 - Discord `!today` for compact remote status when you are away from the browser
+
+### Commitment Loop
+
+Use Discord as the fastest capture surface for promises and follow-through:
+
+- `!commit <message>` starts a fresh AI commitment-capture session.
+- `!commitfollow <inbox_id> <answer>` continues a clarifying commitment using the inbox id shown by the bot.
+- `!commitfollow session #<session_id> <answer>` is available when you explicitly want session-id mode.
+- `!snooze <life_item_id> <time phrase>` moves a commitment and resyncs its linked reminder.
+- `!focus` shows deterministic ranking.
+- `!focuscoach` asks the commitment coach AI to choose from the backend-provided shortlist.
+- `!commitreview` runs an on-demand weekly commitment review.
+
+Deadline examples:
+
+- `tomorrow at 9am`
+- `today at 18:00`
+- `in 2 hours`
+- `today eod`
+- `tomorrow end of day`
+
+Expected behavior:
+
+- clear commitments auto-promote to Life items
+- vague commitments remain in Inbox with follow-up questions
+- one linked reminder job is created per tracked commitment
+- repeated follow-up on the same inbox/session does not create duplicate Life items
+- `done` and `missed` disable the linked reminder
+- `snooze` and `reopen` resync the linked reminder
 
 Important:
 

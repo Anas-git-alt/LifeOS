@@ -39,6 +39,8 @@ LIFEOS_OBSIDIAN_VAULT_DIR=/srv/lifeos/staging/data/obsidian-vault
 
 Staging default: do not run `discord-bot`.
 
+If staging temporarily uses the same Discord bot token as prod for manual testing, pause the prod Discord bot first and start only one bot at a time. Two running bots with the same token will fight over the gateway session and make test results noisy.
+
 ## Every New Feature
 
 ### 1. Work local in feature worktree
@@ -105,6 +107,24 @@ ssh -L 13100:127.0.0.1:13100 ubuntu@84.8.221.51
 Then open:
 
 - `http://127.0.0.1:13100`
+
+If testing Discord on staging with the shared prod token:
+
+```bash
+cd /srv/lifeos/prod/app
+docker compose --env-file /srv/lifeos/prod/.env stop discord-bot
+cd /srv/lifeos/staging/app
+docker compose --env-file /srv/lifeos/staging/.env up -d discord-bot
+```
+
+After testing, return to prod:
+
+```bash
+cd /srv/lifeos/staging/app
+docker compose --env-file /srv/lifeos/staging/.env stop discord-bot
+cd /srv/lifeos/prod/app
+docker compose --env-file /srv/lifeos/prod/.env up -d discord-bot
+```
 
 ### 5. Run smoke checks
 

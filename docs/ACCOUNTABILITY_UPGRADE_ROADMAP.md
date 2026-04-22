@@ -1,6 +1,6 @@
 # Accountability Upgrade Roadmap
 
-Status date: 2026-04-19
+Status date: 2026-04-22
 Purpose: permanent product and implementation roadmap for making LifeOS a stronger accountability system
 
 ## Vision
@@ -127,6 +127,57 @@ Status: not done yet
 - no calendar/email accountability integrations yet
 - no LLM-generated rescue plans by design
 
+### AI-Backed Commitment Loop
+
+Status: completed and live-validated on staging
+
+Why this shipped before broader Phase 3:
+
+- the biggest user value gap was promises disappearing after capture
+- the user needed help following up, remembering, and choosing priority under pressure
+- a generic action tracker was not enough; the feature needed to use AI for clarification and coaching while keeping reminders deterministic
+
+Implemented:
+
+- Added Discord `!commit`, `!commitfollow`, `!snooze`, `!focuscoach`, and `!commitreview`
+- Added backend `POST /api/life/commitments/capture`
+- Added backend `POST /api/life/items/{id}/snooze`
+- Added backend `GET /api/life/coach/daily-focus`
+- Added backend `GET /api/life/coach/weekly-review`
+- Added `follow_up_job_id` on Life items
+- Added one linked reminder job per promoted commitment
+- Added deterministic reminder rules:
+  - explicit `due_at` nudges at `due_at - 2h`, clamped if too close
+  - no `due_at` nudges next local day at 09:00
+- Added deterministic Today ranking with `focus_reason` and `follow_up_due_at`
+- Added WebUI `Commitment Radar` and `AI Focus Coach`
+- Added seeded `commitment-capture` and `commitment-coach` agents using free provider defaults
+- Added on-demand weekly commitment review
+- Hardened AI failure modes:
+  - ready prose without `[INTAKE_JSON]` can still promote
+  - AI coach endpoints fall back cleanly
+  - coach can only pick from backend-provided shortlist
+- Hardened Discord UX:
+  - follow-up messages show copyable inbox-id commands
+  - `!commitfollow <inbox_id>` resolves to the right session
+  - repeat follow-up reuses the same linked Life item
+  - `today eod` and `tomorrow end of day` parse as real deadlines
+
+Phase result:
+
+- say the thing once
+- AI clarifies only when useful
+- system tracks it as durable state
+- deterministic reminders keep it alive
+- AI helps pick what matters now without inventing tasks
+
+Open gaps:
+
+- weekly commitment review is on-demand only; no scheduled weekly AI review yet
+- no calendar/email import for promises yet
+- commitment de-duplication is scoped to same inbox/session, not semantic duplicates across all history
+- WebUI is review/coaching first; Discord remains primary capture surface
+
 ## Roadmap
 
 ### Phase 3: Food, Cooking, Sleep, and Training Systems
@@ -206,8 +257,9 @@ Target outcome:
 Recommended execution order:
 
 1. Phase 3: meal rotation, fallback meals, grocery planning, and training-system follow-through
-2. Phase 4: pattern detection and reviews
-3. Phase 5: full life operating system
+2. Scheduled weekly commitment review and broader pattern detection
+3. Phase 4: pattern detection and reviews across all anchors
+4. Phase 5: full life operating system
 
 ## Core Principles
 
@@ -235,7 +287,7 @@ Start with these before expanding:
 
 ## Recommended Next Build
 
-Continue Phase 3 from the now-shipped accountability base.
+Continue Phase 3 from the now-shipped accountability and commitment-loop base.
 
 Most valuable concrete pieces:
 
@@ -244,6 +296,7 @@ Most valuable concrete pieces:
 - family and priority quick-log shortcuts in Discord
 - training block planner and 15-minute fallback mode
 - protocol adjustments driven by the new streak and trend data
+- scheduled weekly commitment review after on-demand review stays reliable
 
 ## Definition Of Success
 

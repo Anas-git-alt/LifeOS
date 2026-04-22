@@ -41,6 +41,7 @@ Rules:
 - staging and prod use different Compose project names
 - staging and prod use different localhost ports
 - staging defaults to no Discord bot deploy unless you explicitly opt in with a separate token
+- if staging must temporarily use the prod Discord token for manual testing, stop prod `discord-bot` before starting staging `discord-bot`, then stop staging and restart prod when testing is done
 - `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` should match `id -u ubuntu` and `id -g ubuntu` on the VPS
 
 ## 3. Required VPS Env Files

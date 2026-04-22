@@ -1,8 +1,8 @@
 # User-Side Discord and WebUI Test Guide
 
-Date: 2026-04-19
+Date: 2026-04-22
 
-Purpose: manual user acceptance checks for the current `codex/next-feature` branch before promoting to `main`.
+Purpose: manual user acceptance checks for the current `codex/commitment-loop-ai` branch before promoting to `main`.
 
 ## Status Of This Checklist
 
@@ -21,6 +21,8 @@ Already implemented and covered locally before this manual pass:
 - Discord warning follow-up line starting with `Note:`
 - top-level WebUI navigation coverage
 - Jobs page heading `Scheduled Jobs`
+- AI-backed commitment capture and follow-up commands
+- deterministic commitment ranking and AI focus coach fallback
 
 Still manual in this checklist:
 
@@ -44,11 +46,13 @@ Latest automated verification now also includes VPS-side test runs:
 
 ## Branch Under Test
 
-- Branch: `codex/next-feature`
+- Branch: `codex/commitment-loop-ai`
 - Main user-visible areas touched by this validation pass:
   - Today accountability board with scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, and quick logs
   - Discord quick-log commands for sleep, meals, training, water, and shutdown
   - richer Discord `!today` output with explicit empty-state fields
+  - Discord commitment commands: `!commit`, `!commitfollow`, `!snooze`, `!focuscoach`, `!commitreview`
+  - WebUI Today commitment radar and AI focus coach card
   - existing agent/session/navigation coverage that remains part of release confidence
 
 ## Latest Manual Pass Notes
@@ -67,6 +71,16 @@ Validated live by user on 2026-04-19:
 Follow-up change landed after that pass:
 
 - Discord `!today` now prints scorecard, rescue plan, sleep protocol, streaks, trend summary, and explicit `none` empty states
+
+Validated live by user on staging on 2026-04-22:
+
+- `!commit` can create clarifying entries with copyable follow-up commands.
+- `!commitfollow <inbox_id> <answer>` can promote a clarifying entry into a tracked commitment.
+- Repeating follow-up on the same inbox/session no longer creates duplicate Life items.
+- `deadline is today eod` is parsed as local end of day and sets a real due time.
+- Linked reminder time is derived from due time minus 2 hours.
+- `!items` shows the promoted commitment and due time.
+- `!focus` ranks open commitments with focus reasons.
 
 ## Discord Tests
 
@@ -195,6 +209,57 @@ Expected:
 - Embed includes `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Top Focus`, `Due Today`, and `Overdue`
 - Empty sections render `none` instead of vanishing
 - If you have open focus or overdue items, they appear in the relevant fields
+
+### 7. Commitment capture and follow-up
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Live-validated on staging
+
+Commands:
+
+```text
+!commit create a one pager tomorrow at 10pm
+!commitfollow <inbox_id> specific action is to create the Canva file and add a few elements, deadline is today eod
+!items
+!focus
+```
+
+Expected:
+
+- `!commit` either creates a tracked Life item immediately, or returns an Inbox id with a copyable `!commitfollow <inbox_id> <answer>` command.
+- `!commitfollow <inbox_id> ...` processes the same inbox item instead of creating a new unrelated session.
+- If the AI says the commitment is ready, backend promotes it even when the model omits the machine JSON block.
+- The promoted Inbox item becomes `processed`.
+- The Life item appears in `!items`.
+- `today eod` or `today end of day` sets due time to local end of day.
+- Linked reminder is due time minus 2 hours, unless the deadline is too close.
+- Repeating follow-up on the same inbox/session reuses the same linked Life item instead of duplicating it.
+
+### 8. AI focus coach and weekly commitment review
+
+Status:
+
+- Implemented in app
+- Covered locally by automated tests
+- Still useful to sanity-check manually after deploy
+
+Commands:
+
+```text
+!focuscoach
+!commitreview
+```
+
+Expected:
+
+- `!focuscoach` returns `Primary`, `Why now`, `First step`, `Defer`, `Nudge`, and `Mode`.
+- `Mode: ai` appears when provider call succeeds.
+- `Mode: fallback` appears with a useful deterministic response when providers are unavailable or time out.
+- The primary item is chosen only from existing ranked commitments.
+- `!commitreview` returns wins, stale commitments, repeat blockers, promises at risk, next-week simplification, and mode.
 
 ## WebUI Tests
 
@@ -392,7 +457,11 @@ Expected:
 - Discord quick-log commands update scorecard state and return summary text
 - Discord `!today` shows richer summary fields and explicit empty states
 - WebUI Today page shows scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, and quick logs
+- WebUI Today page shows commitment radar and AI focus coach without blank-screen failures
 - WebUI quick logs update counts without reload
+- Discord commitment capture/follow-up creates one tracked Life item and linked reminder
+- Discord commitment EOD deadlines become real due times
+- `!focuscoach` and `!commitreview` degrade cleanly if AI providers are unavailable
 - WebUI agent chat waits beyond the old short timeout and eventually returns
 - WebUI shows `Thinking...` and elapsed timer during slow requests
 - Inbox and Experiments pages load
@@ -404,6 +473,9 @@ Expected:
 - Discord `503 Service Unavailable`
 - Missing `Note:` line when backend warnings exist
 - Missing Today scorecard, next prayer, or rescue plan sections
+- Commitment says `Ready to track` but remains `clarifying`
+- `!commitfollow <inbox_id>` creates duplicate Life items
+- `today eod` does not show a due time in `!items`
 - Today quick-log buttons do nothing or never leave `Saving...`
 - Quick-log reply does not include updated summary
 - Pending bubble never resolves
@@ -418,6 +490,7 @@ Expected:
 - Screenshot of quick-log success state after button click
 - Screenshot or Discord message link for warning note
 - Discord message links for at least one quick-log command
+- Discord message links for `!commit`, `!commitfollow`, `!items`, `!focus`, `!focuscoach`, and `!commitreview`
 - Exact prompt used
 - Agent name
 - Timestamp

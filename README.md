@@ -1,6 +1,6 @@
 # LifeOS
 
-LifeOS is a self-hosted AI agent system for personal operations. Current project state is Discord-first workflow backed by FastAPI API, token-gated WebUI, OpenViking runtime memory and workspace search, optional Obsidian-based shared-memory vault, scheduled jobs, approval gates, prayer and Quran tracking, daily accountability scorecards with quick logs, and optional voice/TTS playback.
+LifeOS is a self-hosted AI agent system for personal operations. Current project state is Discord-first workflow backed by FastAPI API, token-gated WebUI, OpenViking runtime memory and workspace search, optional Obsidian-based shared-memory vault, scheduled jobs, approval gates, prayer and Quran tracking, daily accountability scorecards with quick logs, AI-backed commitment capture/follow-up, and optional voice/TTS playback.
 
 The recommended way to run it today is Docker Compose on Linux or WSL2.
 
@@ -95,9 +95,13 @@ After the stack is up, do this once before relying on automations:
 5. In WebUI `Agents`, inspect the seeded agents and adjust prompts, cadence, fallback models, voice settings, or workspace access as needed.
 6. In WebUI `Today`, confirm scorecard, next prayer, rescue plan, and quick-log buttons render for your local day.
 7. In Discord, try one quick accountability log such as `!sleep 7.5 solid night` or `!water 2 after walk`.
+8. In Discord, try one commitment loop such as `!commit send invoice tomorrow at 9am`, then check `!focus`.
 
 Seeded by default:
 
+- `intake-inbox`
+- `commitment-capture`
+- `commitment-coach`
 - `prayer-deen`
 - `marriage-family`
 - `work-ai-influencer`
@@ -116,7 +120,9 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 
 - Use Discord for capture and lightweight execution. It is the fastest place to ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
 - Use WebUI for configuration and review. `Mission Control`, `Today`, `Jobs`, `Approvals`, `Agents`, `Profile`, and `Settings` are main operator surfaces.
-- Use `Today` as daily control board. It now shows scorecard, rescue plan, next prayer, due commitments, focus items, and inbox-ready work in one place.
+- Use `Today` as daily control board. It now shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, and inbox-ready work in one place.
+- Use `!commit` when you say you will do something. Clear commitments become tracked Life items with linked reminders; fuzzy ones ask for follow-up through `!commitfollow <inbox_id> <answer>`.
+- Use `!focus` for deterministic priority and `!focuscoach` when you want AI help choosing the next visible step.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
 - Use the Obsidian vault for durable shared knowledge. Session chat stays transient; promoted facts live in the vault and become available cross-agent by scope/domain.
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
@@ -130,6 +136,9 @@ Useful example workflows:
 
 - Daily planning: `!daily`, then refine in a dedicated `daily-planner` session.
 - Quick accountability log: `!meal protein shake`, `!water 2 after walk`, `!train rest sore today`, `!shutdown inbox zero`.
+- Commitment capture: `!commit create the Canva file deadline is today eod`, then `!focuscoach`.
+- Commitment follow-up: `!commitfollow 8 specific action is to create the mockup, deadline is today eod`.
+- Commitment review: `!commitreview`.
 - New reminder job: `!schedule every weekday at 7:30 remind me to stretch in #fitness-log using health-fitness`
 - One-time background job: `!schedule tomorrow at 9am remind me to review /workspace/docs/spec.md using sandbox silently`
 - One-time Discord post: `!schedule in 10 min remind me to post the recap notify in <#123456789012345678> using sandbox`
@@ -147,7 +156,8 @@ Job authoring tips:
 | Page | What it is for |
 | --- | --- |
 | `Mission Control` | Health, readiness, approvals, jobs, prayer summary, and recent agent activity with realtime updates |
-| `Today` | Daily accountability board with scorecard, next prayer, rescue plan, quick logs, focus items, due work, and inbox-ready items |
+| `Today` | Daily accountability board with scorecard, next prayer, rescue plan, quick logs, commitment radar, AI focus coach, focus items, due work, and inbox-ready items |
+| `Inbox` | Intake and commitment capture review, including clarifying/ready/processed entries |
 | `Prayer` | Weekly prayer dashboard with editable check-ins |
 | `Quran` | Page-based reading log and bookmark/progress |
 | `Life Items` | Tasks, goals, and habits across deen, family, work, health, and planning |
