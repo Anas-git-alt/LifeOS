@@ -15,7 +15,7 @@ from app.services.life import get_today_agenda
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 
 DEFAULT_TIMEZONE = "Africa/Casablanca"
-COACH_LLM_TIMEOUT_SECONDS = 8.0
+COACH_LLM_TIMEOUT_SECONDS = 24.0
 
 
 def _clean_json_response(text: str) -> str:

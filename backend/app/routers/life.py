@@ -60,6 +60,44 @@ router = APIRouter()
 COMMITMENT_AGENT_NAME = "commitment-capture"
 
 
+def _infer_commitment_domain(text: str) -> str:
+    lowered = str(text or "").lower()
+    if any(token in lowered for token in ["invoice", "payment", "client", "presentation", "one pager", "video", "mockup", "work"]):
+        return "work"
+    if any(token in lowered for token in ["pray", "quran", "deen", "salah"]):
+        return "deen"
+    if any(token in lowered for token in ["wife", "family", "kids", "home"]):
+        return "family"
+    if any(token in lowered for token in ["sleep", "workout", "gym", "health", "meal"]):
+        return "health"
+    return "planning"
+
+
+async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
+    clean_title = str(title or "").strip()[:300] or "Captured commitment"
+    domain = _infer_commitment_domain(clean_title)
+    return await update_intake_entry(
+        entry_id,
+        IntakeEntryUpdate(
+            title=clean_title,
+            summary=f"Follow through on: {clean_title}",
+            domain=domain,
+            kind="commitment",
+            status="ready",
+            desired_outcome=f"{clean_title} completed on time",
+            next_action=f"Start the first visible step for: {clean_title}",
+            follow_up_questions=[],
+            promotion_payload={
+                "title": clean_title,
+                "kind": "task",
+                "domain": domain,
+                "priority": "medium",
+                "next_action": f"Start the first visible step for: {clean_title}",
+            },
+        ),
+    )
+
+
 def _should_promote_commitment_entry(entry, *, due_at) -> bool:
     if not entry or entry.linked_life_item_id:
         return False
@@ -231,16 +269,17 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     message = (data.message or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
+    raw_message = (data.raw_message or message).strip()
 
     session_id = data.session_id
     if data.new_session:
-        title = generate_title_from_prompts([message])
+        title = generate_title_from_prompts([raw_message])
         session = await create_session(agent_name=COMMITMENT_AGENT_NAME, title=title)
         session_id = session.id
 
     result = await handle_message(
         agent_name=COMMITMENT_AGENT_NAME,
-        user_message=message,
+        user_message=raw_message,
         approval_policy="never",
         source=data.source or "api",
         session_id=session_id,
@@ -262,6 +301,8 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     follow_up_job = None
     auto_promoted = False
     effective_timezone = await get_commitment_timezone(data.timezone)
+    if entry and data.due_at is not None and not entry.linked_life_item_id and not _should_promote_commitment_entry(entry, due_at=data.due_at):
+        entry = await _force_ready_deadlined_commitment(entry.id, title=message)
     if entry and entry.linked_life_item_id:
         if data.due_at is not None:
             await update_life_item(

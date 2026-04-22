@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.main import app
 from app.config import settings
@@ -157,6 +158,53 @@ def test_commitment_capture_deadlined_clarifying_entry_auto_promotes(monkeypatch
     assert payload["auto_promoted"] is True
     assert payload["needs_follow_up"] is False
     assert payload["life_item"]["title"] == "Send invoice"
+
+
+def test_commitment_capture_deadlined_fallback_entry_auto_promotes(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        assert user_message == "create a one pager tomorrow at 10pm"
+        await _insert_intake_entry(
+            session_id=session_id or 1,
+            status="clarifying",
+            raw_text="create a one pager tomorrow at 10pm",
+            follow_up_questions=["What is the specific deliverable?"],
+        )
+        async with async_session() as db:
+            result = await db.execute(select(IntakeEntry).where(IntakeEntry.source_session_id == (session_id or 1)))
+            entry = result.scalar_one()
+            entry.domain = "planning"
+            entry.kind = "idea"
+            entry.promotion_payload_json = None
+            await db.commit()
+        return {
+            "response": "Need one more detail",
+            "session_id": session_id,
+            "session_title": "Commitment",
+        }
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/commitments/capture",
+            headers=_headers(),
+            json={
+                "message": "create a one pager",
+                "raw_message": "create a one pager tomorrow at 10pm",
+                "new_session": True,
+                "source": "test",
+                "due_at": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["auto_promoted"] is True
+    assert payload["needs_follow_up"] is False
+    assert payload["life_item"]["title"] == "create a one pager"
+    assert payload["entry"]["status"] == "processed"
 
 
 def test_snooze_item_updates_due_at_and_returns_linked_job(monkeypatch):

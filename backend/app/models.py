@@ -1277,6 +1277,7 @@ class IntakeCaptureResponse(BaseModel):
 
 class CommitmentCaptureRequest(BaseModel):
     message: str
+    raw_message: Optional[str] = None
     session_id: Optional[int] = None
     new_session: bool = False
     source: str = "api"

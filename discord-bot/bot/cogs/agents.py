@@ -513,6 +513,7 @@ class AgentsCog(commands.Cog, name="Agents"):
             return
         payload = {
             "message": parsed["data"]["message"],
+            "raw_message": message,
             "new_session": True,
             "source": "discord_commitment_capture",
             "due_at": parsed["data"]["due_at"].isoformat() if parsed["data"].get("due_at") else None,
@@ -541,20 +542,21 @@ class AgentsCog(commands.Cog, name="Agents"):
             cleaned_message,
             now=datetime.now(timezone.utc),
         )
-        if parsed["errors"]:
-            await ctx.send(parsed["errors"][0])
-            return
+        parsed_message = parsed["data"].get("message") or cleaned_message
+        due_at = parsed["data"].get("due_at") if not parsed["errors"] else None
+        timezone_name = parsed["data"].get("timezone") or "Africa/Casablanca"
         async with ctx.typing():
             try:
                 result = await api_post(
                     "/life/commitments/capture",
                     {
-                        "message": parsed["data"]["message"],
+                        "message": parsed_message,
+                        "raw_message": cleaned_message,
                         "session_id": session_id,
                         "new_session": False,
                         "source": "discord_commitment_followup",
-                        "due_at": parsed["data"]["due_at"].isoformat() if parsed["data"].get("due_at") else None,
-                        "timezone": parsed["data"].get("timezone"),
+                        "due_at": due_at.isoformat() if due_at else None,
+                        "timezone": timezone_name,
                         **self._current_channel_payload(ctx),
                     },
                 )

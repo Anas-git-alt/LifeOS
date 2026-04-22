@@ -287,8 +287,8 @@ export const checkinLifeItem = (id, result, note = "") =>
 export const logDailySignal = (data) =>
   request("/life/daily-log", { method: "POST", body: JSON.stringify(data) });
 export const getTodayAgenda = () => request("/life/today");
-export const getDailyFocusCoach = () => request("/life/coach/daily-focus");
-export const getWeeklyCommitmentReview = () => request("/life/coach/weekly-review");
+export const getDailyFocusCoach = () => request("/life/coach/daily-focus", { timeoutMs: 30000 });
+export const getWeeklyCommitmentReview = () => request("/life/coach/weekly-review", { timeoutMs: 30000 });
 export const getGoalProgress = (itemId) => request(`/life/items/${itemId}/progress`);
 export const getIntakeInbox = (params = {}) => {
   const query = new URLSearchParams(params).toString();

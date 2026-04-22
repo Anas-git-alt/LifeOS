@@ -42,6 +42,7 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
     async def _fake_api_post(path: str, payload: dict):
         assert path == "/life/commitments/capture"
         assert payload["message"] == "Send invoice"
+        assert payload["raw_message"] == "Send invoice tomorrow at 9am"
         assert payload["target_channel"] == "planning"
         assert payload["target_channel_id"] == "2"
         assert payload["due_at"]
@@ -125,6 +126,42 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
     fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
     assert "Need Follow-up" in fields
     assert "`!commitfollow #9 <answer>`" in fields["Continue"]
+
+
+@pytest.mark.asyncio
+async def test_commitfollow_allows_answer_with_loose_today(monkeypatch):
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/life/commitments/capture"
+        assert payload["session_id"] == 14
+        assert payload["message"] == "make the mockup today"
+        assert payload["due_at"] is None
+        return {
+            "response": "Tracked.",
+            "session_id": 14,
+            "needs_follow_up": False,
+            "entry": {
+                "id": 14,
+                "title": "Create one pager",
+                "status": "processed",
+                "domain": "work",
+                "kind": "commitment",
+                "follow_up_questions": [],
+            },
+            "life_item": {"id": 40, "title": "Create one pager"},
+            "follow_up_job": {"id": 45, "run_at": "2026-03-26T08:00:00Z"},
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.commit_follow.callback(cog, ctx, message="#14 make the mockup today")
+
+    assert not ctx.sent_messages
+    assert len(ctx.sent_embeds) == 1
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "Life item #40" in fields["Tracked Commitment"]
 
 
 @pytest.mark.asyncio
