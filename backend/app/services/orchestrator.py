@@ -127,6 +127,12 @@ def _should_search_web(agent: Agent, user_message: str, referenced_session_id: i
     return bool(_EXTERNAL_INFO_PATTERN.search(user_message or ""))
 
 
+def _should_fetch_shared_memory_context(agent_name: str, user_message: str, referenced_session_id: int | None) -> bool:
+    if agent_name in {"intake-inbox", "commitment-capture", "commitment-coach"}:
+        return False
+    return referenced_session_id is None and not _is_local_context_query(user_message)
+
+
 def _build_workspace_noop_response() -> str:
     return (
         "I haven't executed any workspace action yet. "
@@ -435,7 +441,7 @@ async def handle_message(
                     )
                 except Exception as exc:
                     logger.warning("Failed building weekly deen context: %s", exc)
-            if referenced_session_id is None and not _is_local_context_query(user_message):
+            if _should_fetch_shared_memory_context(agent_name, user_message, referenced_session_id):
                 try:
                     shared_memory_context = await build_shared_memory_context(
                         agent=agent,

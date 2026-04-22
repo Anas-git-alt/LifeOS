@@ -111,10 +111,10 @@ DEFAULT_AGENTS = [
     {
         "name": "commitment-capture",
         "description": "Turns spoken promises into tracked commitments with minimal friction and only asks clarifying questions when truly needed.",
-        "provider": "nvidia",
-        "model": "moonshotai/kimi-k2.5",
-        "fallback_provider": "openrouter",
-        "fallback_model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "provider": "openrouter",
+        "model": "inclusionai/ling-2.6-flash:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.3-70b-instruct",
         "config_json": {
             "use_web_search": False,
             "temperature": 0.1,
@@ -185,10 +185,10 @@ DEFAULT_AGENTS = [
     {
         "name": "commitment-coach",
         "description": "Helps close commitments with reminder nudges, daily focus picks, and weekly follow-through reviews.",
-        "provider": "nvidia",
-        "model": "moonshotai/kimi-k2.5",
-        "fallback_provider": "openrouter",
-        "fallback_model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "provider": "openrouter",
+        "model": "inclusionai/ling-2.6-flash:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.3-70b-instruct",
         "config_json": {
             "use_web_search": False,
             "temperature": 0.2,
