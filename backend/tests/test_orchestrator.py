@@ -9,7 +9,7 @@ import pytest
 
 from app.models import AuditLog, PendingAction
 from app.services.openviking_client import OpenVikingUnavailableError
-from app.services.orchestrator import _extract_intake_payload, handle_message
+from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message
 from app.services.risk_engine import (
     classify_risk,
     is_approval_eligible_action_type,
@@ -163,6 +163,46 @@ def test_extract_intake_payload_strips_partial_machine_block():
     assert cleaned == "Need 2 answers before this is ready."
     assert payload is None
     assert saw_machine_block is True
+
+
+def test_extract_intake_payload_parses_unclosed_complete_block():
+    cleaned, payload, saw_machine_block = _extract_intake_payload(
+        "Ready to track.\n\n"
+        "[INTAKE_JSON]\n"
+        '{"title":"Create one pager","kind":"commitment","domain":"work","status":"ready","summary":"Create one pager","desired_outcome":"One pager done","next_action":"Open draft","follow_up_questions":[],"life_item":{"title":"Create one pager","kind":"task","domain":"work","priority":"medium"}}'
+    )
+
+    assert cleaned == "Ready to track."
+    assert payload["title"] == "Create one pager"
+    assert payload["life_item"]["title"] == "Create one pager"
+    assert saw_machine_block is True
+
+
+@pytest.mark.asyncio
+async def test_commitment_capture_agent_creates_intake_entry(monkeypatch):
+    calls = {}
+
+    async def _fake_upsert(**kwargs):
+        calls.update(kwargs)
+        return SimpleNamespace(id=42)
+
+    monkeypatch.setattr("app.services.orchestrator.upsert_intake_entry_from_agent", _fake_upsert)
+
+    result = await _extract_and_upsert_intake_entry(
+        agent_name="commitment-capture",
+        response_text=(
+            "Ready to track.\n\n"
+            "[INTAKE_JSON]\n"
+            '{"title":"Create one pager","kind":"commitment","domain":"work","status":"ready","summary":"Create one pager","desired_outcome":"One pager done","next_action":"Open draft","follow_up_questions":[],"life_item":{"title":"Create one pager","kind":"task","domain":"work","priority":"medium"}}\n'
+            "[/INTAKE_JSON]"
+        ),
+        user_message="create a one pager tomorrow at 10pm",
+        session_id=9,
+    )
+
+    assert result == {"cleaned_text": "Ready to track.", "entry_id": 42}
+    assert calls["agent_name"] == "commitment-capture"
+    assert calls["payload"]["status"] == "ready"
 
 
 @pytest.mark.asyncio

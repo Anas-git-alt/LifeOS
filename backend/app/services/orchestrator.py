@@ -196,6 +196,11 @@ _INTAKE_JSON_PATTERN = re.compile(
     r"\[INTAKE_JSON\]\s*(\{.*?\})\s*\[/INTAKE_JSON\]",
     re.IGNORECASE | re.DOTALL,
 )
+_INTAKE_JSON_OPEN_PATTERN = re.compile(
+    r"\[INTAKE_JSON\]\s*(\{.*\})\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_INTAKE_AGENTS = {"intake-inbox", "commitment-capture"}
 
 
 async def _extract_and_create_goals(response_text: str, agent_name: str) -> list[dict]:
@@ -232,6 +237,15 @@ def _extract_intake_payload(response_text: str) -> tuple[str, dict | None, bool]
 
     match = _INTAKE_JSON_PATTERN.search(text)
     if not match:
+        open_match = _INTAKE_JSON_OPEN_PATTERN.search(text)
+        if open_match:
+            try:
+                payload = json.loads(open_match.group(1))
+            except json.JSONDecodeError:
+                logger.warning("Invalid unterminated INTAKE_JSON block; leaving response unstructured")
+                payload = None
+            cleaned = text.split("[INTAKE_JSON]", 1)[0].strip()
+            return cleaned, payload, True
         cleaned = text.split("[INTAKE_JSON]", 1)[0].strip()
         return cleaned, None, True
 
@@ -252,7 +266,7 @@ async def _extract_and_upsert_intake_entry(
     user_message: str,
     session_id: int | None,
 ) -> dict | None:
-    if agent_name != "intake-inbox":
+    if agent_name not in _INTAKE_AGENTS:
         return None
 
     cleaned_text, payload, saw_machine_block = _extract_intake_payload(response_text)

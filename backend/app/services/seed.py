@@ -488,7 +488,7 @@ async def seed_default_agents():
                     existing.workspace_enabled = True
                     existing.workspace_paths_json = default_workspace_paths
                     existing.workspace_delete_requires_approval = True
-                if existing.name == "intake-inbox":
+                if existing.name in {"intake-inbox", "commitment-capture"}:
                     desired_provider = agent_data.get("provider")
                     desired_model = agent_data.get("model")
                     if (
@@ -504,6 +504,8 @@ async def seed_default_agents():
                     if not existing.fallback_model and agent_data.get("fallback_model"):
                         existing.fallback_model = agent_data["fallback_model"]
                     if (
+                        existing.name == "commitment-capture"
+                        or
                         "[INTAKE_JSON]" not in (existing.system_prompt or "")
                         or "idea|task|goal|habit|commitment|routine|note" in (existing.system_prompt or "")
                         or "clarifying|ready|parked" in (existing.system_prompt or "")

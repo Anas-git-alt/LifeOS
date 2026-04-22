@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import re
 
 import discord
+import httpx
 from discord.ext import commands
 
 from bot.nl import parse_commitment_prompt, parse_schedule_value
@@ -56,6 +57,11 @@ class AgentsCog(commands.Cog, name="Agents"):
         if len(value) <= 1024:
             return value
         return value[:1021].rstrip() + "..."
+
+    @staticmethod
+    def _clean_visible_response(text: str) -> str:
+        cleaned = str(text or "Captured.").split("[INTAKE_JSON]", 1)[0].strip()
+        return cleaned or "Captured."
 
     @staticmethod
     def _format_today_items(items: list[dict], *, include_priority: bool = False, include_reason: bool = False) -> str:
@@ -171,7 +177,7 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
-        description = result.get("response", "Captured.")
+        description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x7C3AED)
         if entry.get("id"):
             embed.add_field(
@@ -197,7 +203,14 @@ class AgentsCog(commands.Cog, name="Agents"):
         entry = result.get("entry") or {}
         life_item = result.get("life_item") or {}
         follow_up_job = result.get("follow_up_job") or {}
-        description = result.get("response", "Captured.")
+        description = self._clean_visible_response(result.get("response", "Captured."))
+        if life_item.get("id") and not result.get("needs_follow_up"):
+            description = "Tracked. Reminder set. Use `!focus` to see where it ranks."
+        elif result.get("session_id") and result.get("needs_follow_up"):
+            description = (
+                f"{description}\n\n"
+                f"Reply: `!commitfollow #{result['session_id']} <answer>`"
+            )
         embed = discord.Embed(title=heading, description=description[:4000], color=0x059669)
         if entry.get("id"):
             embed.add_field(
@@ -226,11 +239,21 @@ class AgentsCog(commands.Cog, name="Agents"):
                 inline=False,
             )
         if result.get("session_id") and result.get("needs_follow_up"):
+            embed.add_field(
+                name="Continue",
+                value=f"`!commitfollow #{result['session_id']} <answer>`",
+                inline=False,
+            )
             embed.set_footer(
                 text=(
-                    f"Session #{result['session_id']} · continue with !commitfollow "
-                    f"or !commitfollow #{result['session_id']}"
+                    f"Session #{result['session_id']} · copy command above"
                 )
+            )
+        elif result.get("session_id"):
+            embed.add_field(
+                name="Session",
+                value=f"#{result['session_id']} · new `!commit ...` starts next capture",
+                inline=False,
             )
         await ctx.send(embed=embed)
 
@@ -568,6 +591,11 @@ class AgentsCog(commands.Cog, name="Agents"):
             )
             due_at = str(item.get("due_at") or "").replace("T", " ")[:16]
             await ctx.send(f"Snoozed #{item['id']} to {due_at} UTC: {item['title']}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                await ctx.send(f"No life item #{item_id}. Use `!focus` or `!items` to copy a real item id.")
+                return
+            await ctx.send(f"Failed to snooze item: {self._trim_error(exc)}")
         except Exception as exc:
             await ctx.send(f"Failed to snooze item: {self._trim_error(exc)}")
 
@@ -676,10 +704,12 @@ class AgentsCog(commands.Cog, name="Agents"):
             if not top_focus:
                 await ctx.send("No open focus items yet. Use `!add` to create one.")
                 return
-            lines = [
-                f"1) #{item['id']} {item['title']} [{item['domain']}/{item['priority']}] — {item.get('focus_reason', 'focus now')}"
-                for item in top_focus
-            ]
+            lines = []
+            for index, item in enumerate(top_focus[:3], start=1):
+                lines.append(
+                    f"{index}) #{item['id']} {item['title']} [{item['domain']}/{item['priority']}] — "
+                    f"{item.get('focus_reason', 'focus now')}"
+                )
             await ctx.send("Top 3 focus items:\n" + "\n".join(lines))
         except Exception as exc:
             await ctx.send(f"Failed to load focus: {self._trim_error(exc)}")

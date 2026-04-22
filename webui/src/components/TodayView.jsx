@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { getDailyFocusCoach, getTodayAgenda, getWeeklyCommitmentReview, logDailySignal } from "../api";
 
+const EMPTY_SCORECARD = {
+  sleep_hours: null,
+  meals_count: 0,
+  hydration_count: 0,
+  training_status: null,
+  shutdown_done: false,
+  protein_hit: false,
+  family_action_done: false,
+  top_priority_completed_count: 0,
+  rescue_status: "unknown",
+};
+
 export default function TodayView() {
   const [agenda, setAgenda] = useState(null);
   const [focusCoach, setFocusCoach] = useState(null);
@@ -20,13 +32,12 @@ export default function TodayView() {
 
   async function load() {
     try {
-      const [nextAgenda, nextCoach] = await Promise.all([
-        getTodayAgenda(),
-        getDailyFocusCoach().catch(() => null),
-      ]);
+      const nextAgenda = await getTodayAgenda();
       setAgenda(nextAgenda);
-      setFocusCoach(nextCoach);
       setError("");
+      getDailyFocusCoach()
+        .then(setFocusCoach)
+        .catch(() => setFocusCoach(null));
     } catch (err) {
       setError(err.message);
     }
@@ -76,7 +87,7 @@ export default function TodayView() {
     }
   }
 
-  const scorecard = agenda?.scorecard;
+  const scorecard = agenda?.scorecard || EMPTY_SCORECARD;
   const rescuePlan = agenda?.rescue_plan;
   const nextPrayer = agenda?.next_prayer;
   const sleepProtocol = agenda?.sleep_protocol;
@@ -93,7 +104,7 @@ export default function TodayView() {
       {error && <div className="glass-card status-message status-message-error">{error}</div>}
       {status && <div className="glass-card status-message status-message-success">{status}</div>}
 
-      {agenda && scorecard && (
+      {agenda && (
         <>
           <div className="grid grid-4 today-score-grid" style={{ marginBottom: 20 }}>
             <ScoreCardStat label="Timezone" value={agenda.timezone} />

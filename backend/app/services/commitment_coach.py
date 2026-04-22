@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,7 @@ from app.services.life import get_today_agenda
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 
 DEFAULT_TIMEZONE = "Africa/Casablanca"
+COACH_LLM_TIMEOUT_SECONDS = 8.0
 
 
 def _clean_json_response(text: str) -> str:
@@ -48,6 +50,26 @@ def _agent_max_tokens(agent: Agent | None) -> int:
         return max(256, min(int(raw), 2000))
     except (TypeError, ValueError):
         return 900
+
+
+async def _coach_chat_completion(
+    messages: list[dict],
+    *,
+    agent: Agent,
+    max_tokens_cap: int,
+) -> str:
+    return await asyncio.wait_for(
+        chat_completion(
+            messages,
+            provider=agent.provider,
+            model=agent.model,
+            fallback_provider=agent.fallback_provider,
+            fallback_model=agent.fallback_model,
+            temperature=_agent_temperature(agent),
+            max_tokens=min(_agent_max_tokens(agent), max_tokens_cap),
+        ),
+        timeout=COACH_LLM_TIMEOUT_SECONDS,
+    )
 
 
 def _fallback_daily_focus(agenda: dict) -> dict:
@@ -129,14 +151,10 @@ async def get_daily_focus_coach() -> dict:
         },
     ]
     try:
-        response = await chat_completion(
+        response = await _coach_chat_completion(
             messages,
-            provider=agent.provider,
-            model=agent.model,
-            fallback_provider=agent.fallback_provider,
-            fallback_model=agent.fallback_model,
-            temperature=_agent_temperature(agent),
-            max_tokens=_agent_max_tokens(agent),
+            agent=agent,
+            max_tokens_cap=500,
         )
         parsed = json.loads(_clean_json_response(response))
         primary_item_id = parsed.get("primary_item_id")
@@ -151,7 +169,7 @@ async def get_daily_focus_coach() -> dict:
             "nudge_copy": str(parsed.get("nudge_copy") or fallback["nudge_copy"]).strip(),
             "fallback_used": False,
         }
-    except (json.JSONDecodeError, ValueError, KeyError, LLMProvidersExhaustedError):
+    except (json.JSONDecodeError, ValueError, KeyError, LLMProvidersExhaustedError, asyncio.TimeoutError):
         return fallback
     except Exception:
         return fallback
@@ -337,14 +355,10 @@ async def get_weekly_commitment_review() -> dict:
         },
     ]
     try:
-        response = await chat_completion(
+        response = await _coach_chat_completion(
             messages,
-            provider=agent.provider,
-            model=agent.model,
-            fallback_provider=agent.fallback_provider,
-            fallback_model=agent.fallback_model,
-            temperature=_agent_temperature(agent),
-            max_tokens=_agent_max_tokens(agent),
+            agent=agent,
+            max_tokens_cap=700,
         )
         parsed = json.loads(_clean_json_response(response))
         return {
@@ -355,7 +369,7 @@ async def get_weekly_commitment_review() -> dict:
             "simplify_next_week": [str(item).strip() for item in parsed.get("simplify_next_week") or [] if str(item).strip()][:5] or fallback["simplify_next_week"],
             "fallback_used": False,
         }
-    except (json.JSONDecodeError, KeyError, ValueError, LLMProvidersExhaustedError):
+    except (json.JSONDecodeError, KeyError, ValueError, LLMProvidersExhaustedError, asyncio.TimeoutError):
         return fallback
     except Exception:
         return fallback

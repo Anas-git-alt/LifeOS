@@ -74,6 +74,7 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
     assert embed.title == "Commitment Capture"
     fields = {field.name: field.value for field in embed.fields}
     assert "Life item #31" in fields["Tracked Commitment"]
+    assert fields["Session"].startswith("#77")
 
 
 @pytest.mark.asyncio
@@ -121,7 +122,9 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
     await cog.commit_follow.callback(cog, ctx, message="#9 realistic bedtime is 11:30pm")
 
     assert len(ctx.sent_embeds) == 1
-    assert "Need Follow-up" in {field.name for field in ctx.sent_embeds[0].fields}
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "Need Follow-up" in fields
+    assert "`!commitfollow #9 <answer>`" in fields["Continue"]
 
 
 @pytest.mark.asyncio
