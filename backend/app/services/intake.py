@@ -189,6 +189,18 @@ async def upsert_intake_entry_from_agent(
                 .limit(1)
             )
             entry = result.scalar_one_or_none()
+            if not entry:
+                result = await db.execute(
+                    select(IntakeEntry)
+                    .where(
+                        IntakeEntry.source_session_id == session_id,
+                        IntakeEntry.source_agent == agent_name,
+                        IntakeEntry.linked_life_item_id.is_not(None),
+                    )
+                    .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+                    .limit(1)
+                )
+                entry = result.scalar_one_or_none()
 
         if not entry:
             entry = IntakeEntry(
