@@ -32,6 +32,8 @@ vi.mock("../api", () => ({
       enabled: true,
       paused: false,
       approval_required: true,
+      expect_reply: true,
+      follow_up_after_minutes: 120,
       source: "manual",
       created_by: "webui",
       config_json: null,
@@ -80,6 +82,28 @@ describe("JobsManager", () => {
           notification_mode: "silent",
           target_channel: null,
           target_channel_id: null,
+        }),
+      ),
+    );
+  });
+
+  test("submits reply follow-up policy", async () => {
+    const { createJob } = await import("../api");
+    render(<JobsManager />);
+
+    await screen.findByRole("heading", { name: /scheduled jobs/i });
+    fireEvent.change(screen.getByLabelText("Job Name"), { target: { value: "Check status" } });
+    fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "sandbox" } });
+    fireEvent.change(screen.getByLabelText("Cron"), { target: { value: "30 7 * * mon-fri" } });
+    fireEvent.click(screen.getByLabelText("Expect reply"));
+    fireEvent.change(screen.getByLabelText("Follow up after minutes"), { target: { value: "45" } });
+    fireEvent.click(screen.getByRole("button", { name: /create job/i }));
+
+    await waitFor(() =>
+      expect(createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expect_reply: true,
+          follow_up_after_minutes: 45,
         }),
       ),
     );

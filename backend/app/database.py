@@ -211,9 +211,29 @@ def run_migrations() -> None:
             job_cols = _table_columns(cur, "scheduled_jobs")
             if _scheduled_jobs_requires_upgrade(job_cols):
                 _upgrade_scheduled_jobs_table(cur, job_cols)
+                job_cols = _table_columns(cur, "scheduled_jobs")
+            if "expect_reply" not in job_cols:
+                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN expect_reply BOOLEAN NOT NULL DEFAULT 0")
+                job_cols = _table_columns(cur, "scheduled_jobs")
+            if "follow_up_after_minutes" not in job_cols:
+                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN follow_up_after_minutes INTEGER")
+                job_cols = _table_columns(cur, "scheduled_jobs")
             if "202603250001_job_schedule_modes" not in applied:
                 cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", ("202603250001_job_schedule_modes",))
                 applied.add("202603250001_job_schedule_modes")
+        if "job_run_logs" in existing_tables:
+            run_cols = {row[1] for row in cur.execute("PRAGMA table_info(job_run_logs)").fetchall()}
+            for column_name, ddl in {
+                "notification_channel": "ALTER TABLE job_run_logs ADD COLUMN notification_channel VARCHAR(100)",
+                "notification_channel_id": "ALTER TABLE job_run_logs ADD COLUMN notification_channel_id VARCHAR(32)",
+                "notification_message_id": "ALTER TABLE job_run_logs ADD COLUMN notification_message_id VARCHAR(50)",
+                "reply_count": "ALTER TABLE job_run_logs ADD COLUMN reply_count INTEGER NOT NULL DEFAULT 0",
+                "awaiting_reply_until": "ALTER TABLE job_run_logs ADD COLUMN awaiting_reply_until DATETIME",
+                "no_reply_follow_up_sent_at": "ALTER TABLE job_run_logs ADD COLUMN no_reply_follow_up_sent_at DATETIME",
+            }.items():
+                if column_name not in run_cols:
+                    cur.execute(ddl)
+                    run_cols.add(column_name)
         if "life_items" in existing_tables:
             life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
             if "start_date" not in life_cols:
@@ -315,6 +335,43 @@ def run_migrations() -> None:
             sql = file_path.read_text(encoding="utf-8")
             cur.executescript(sql)
             cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+
+        # Fresh databases can be partially created by old CREATE TABLE migrations
+        # before ORM create_all() runs. Re-check those tables after SQL migrations
+        # so latest ORM columns exist even when the table was first created above.
+        post_tables = {
+            row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "scheduled_jobs" in post_tables:
+            job_cols = _table_columns(cur, "scheduled_jobs")
+            if _scheduled_jobs_requires_upgrade(job_cols):
+                _upgrade_scheduled_jobs_table(cur, job_cols)
+                job_cols = _table_columns(cur, "scheduled_jobs")
+            if "expect_reply" not in job_cols:
+                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN expect_reply BOOLEAN NOT NULL DEFAULT 0")
+                job_cols = _table_columns(cur, "scheduled_jobs")
+            if "follow_up_after_minutes" not in job_cols:
+                cur.execute("ALTER TABLE scheduled_jobs ADD COLUMN follow_up_after_minutes INTEGER")
+        if "job_run_logs" in post_tables:
+            run_cols = {row[1] for row in cur.execute("PRAGMA table_info(job_run_logs)").fetchall()}
+            for column_name, ddl in {
+                "notification_channel": "ALTER TABLE job_run_logs ADD COLUMN notification_channel VARCHAR(100)",
+                "notification_channel_id": "ALTER TABLE job_run_logs ADD COLUMN notification_channel_id VARCHAR(32)",
+                "notification_message_id": "ALTER TABLE job_run_logs ADD COLUMN notification_message_id VARCHAR(50)",
+                "reply_count": "ALTER TABLE job_run_logs ADD COLUMN reply_count INTEGER NOT NULL DEFAULT 0",
+                "awaiting_reply_until": "ALTER TABLE job_run_logs ADD COLUMN awaiting_reply_until DATETIME",
+                "no_reply_follow_up_sent_at": "ALTER TABLE job_run_logs ADD COLUMN no_reply_follow_up_sent_at DATETIME",
+            }.items():
+                if column_name not in run_cols:
+                    cur.execute(ddl)
+                    run_cols.add(column_name)
+        if "life_items" in post_tables:
+            life_cols = {row[1] for row in cur.execute("PRAGMA table_info(life_items)").fetchall()}
+            if "start_date" not in life_cols:
+                cur.execute("ALTER TABLE life_items ADD COLUMN start_date DATE")
+                life_cols.add("start_date")
+            if "follow_up_job_id" not in life_cols:
+                cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -332,6 +389,7 @@ async def init_db():
         ChatSessionArchive,
         DailyScorecard,
         DeenHabit,
+        ContextEvent,
         IntakeEntry,
         LifeCheckin,
         LifeItem,

@@ -24,6 +24,8 @@ const DEFAULT_JOB = {
   prompt_template: "",
   enabled: true,
   approval_required: true,
+  expect_reply: false,
+  follow_up_after_minutes: 120,
 };
 
 function parseApiDate(value) {
@@ -175,6 +177,8 @@ export default function JobsManager() {
       prompt_template: selectedJob.prompt_template || "",
       enabled: Boolean(selectedJob.enabled),
       approval_required: Boolean(selectedJob.approval_required),
+      expect_reply: Boolean(selectedJob.expect_reply),
+      follow_up_after_minutes: selectedJob.follow_up_after_minutes || 120,
     });
   }, [selectedJob]);
 
@@ -205,6 +209,8 @@ export default function JobsManager() {
         prompt_template: form.prompt_template || null,
         enabled: form.enabled,
         approval_required: form.approval_required,
+        expect_reply: form.expect_reply,
+        follow_up_after_minutes: form.expect_reply ? Number(form.follow_up_after_minutes || 120) : null,
         source: editingJobId ? "webui_edit" : "webui_create",
         created_by: "webui",
       };
@@ -408,6 +414,27 @@ export default function JobsManager() {
             />
             Approval required
           </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.expect_reply}
+              onChange={(e) => setForm((prev) => ({ ...prev, expect_reply: e.target.checked }))}
+            />
+            Expect reply
+          </label>
+          {form.expect_reply && (
+            <div className="form-group" style={{ maxWidth: 220 }}>
+              <label htmlFor="job-follow-up-after">Follow up after minutes</label>
+              <input
+                id="job-follow-up-after"
+                type="number"
+                min="1"
+                max="10080"
+                value={form.follow_up_after_minutes}
+                onChange={(e) => setForm((prev) => ({ ...prev, follow_up_after_minutes: e.target.value }))}
+              />
+            </div>
+          )}
         </div>
         <div className="action-row">
           <button className="btn btn-primary" type="submit" disabled={saving}>
@@ -446,6 +473,9 @@ export default function JobsManager() {
                           <strong>{job.timezone}</strong>
                         </p>
                         <p className="job-card-meta">Notify: {jobNotifyText(job)}</p>
+                        <p className="job-card-meta">
+                          Replies: {job.expect_reply ? `expected; follow up after ${job.follow_up_after_minutes || 120} min` : "logged only"}
+                        </p>
                         {job.description && <p className="job-card-meta">Description: {job.description}</p>}
                         <p className="job-card-meta">
                           Last run: {job.last_run_at ? formatInTimezone(job.last_run_at, job.timezone) : "never"} · Next run:{" "}

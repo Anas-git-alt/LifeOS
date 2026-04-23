@@ -506,6 +506,65 @@ class AgentsCog(commands.Cog, name="Agents"):
             except Exception as exc:
                 await ctx.send(f"Failed to capture inbox item: {self._trim_error(exc)}")
 
+    @commands.command(name="meeting")
+    async def meeting(self, ctx, *, summary: str):
+        async with ctx.typing():
+            try:
+                result = await api_post(
+                    "/memory/intake/meeting",
+                    {
+                        "summary": summary,
+                        "source": "discord_meeting",
+                        "source_agent": "wiki-curator",
+                    },
+                )
+                event = result.get("event") or {}
+                proposals = result.get("proposals") or []
+                embed = discord.Embed(
+                    title="Meeting Intake",
+                    description=f"Captured context event #{event.get('id', '?')}.",
+                    color=0x7C3AED,
+                )
+                embed.add_field(name="Domain", value=event.get("domain", "planning"), inline=True)
+                embed.add_field(name="Wiki Proposals", value=str(len(proposals)), inline=True)
+                if result.get("intake_entry_ids"):
+                    embed.add_field(
+                        name="Action Intake",
+                        value=", ".join(f"#{item}" for item in result["intake_entry_ids"][:5]),
+                        inline=False,
+                    )
+                await ctx.send(embed=embed)
+            except Exception as exc:
+                await ctx.send(f"Failed to capture meeting summary: {self._trim_error(exc)}")
+
+    @commands.Cog.listener("on_message")
+    async def capture_notification_reply(self, message):
+        if getattr(message.author, "bot", False):
+            return
+        content = str(getattr(message, "content", "") or "").strip()
+        if not content or content.startswith("!"):
+            return
+        reference = getattr(message, "reference", None)
+        notification_message_id = getattr(reference, "message_id", None)
+        if not notification_message_id:
+            return
+        try:
+            await api_post(
+                "/memory/intake/job-reply",
+                {
+                    "notification_message_id": str(notification_message_id),
+                    "reply_text": content,
+                    "discord_channel_id": str(getattr(message.channel, "id", "")),
+                    "discord_reply_message_id": str(getattr(message, "id", "")),
+                    "discord_user_id": str(getattr(message.author, "id", "")),
+                    "source": "discord_reply",
+                },
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return
+            raise
+
     @commands.command(name="capturefollow")
     async def capture_follow(self, ctx, *, message: str):
         session_id = self._get_active_session_id(ctx, INTAKE_AGENT_NAME)

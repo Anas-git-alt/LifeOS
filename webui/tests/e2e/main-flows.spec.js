@@ -4,6 +4,7 @@ const NAV_PAGES = [
   { button: /^Mission Control$/i, heading: /Mission Control/i, slug: "mission-control" },
   { button: /^Today$/i, heading: /Today Focus/i, slug: "today" },
   { button: /^Inbox$/i, heading: /^Inbox$/i, slug: "inbox" },
+  { button: /^Wiki$/i, heading: /Wiki Context/i, slug: "wiki" },
   { button: /^Prayer$/i, heading: /Prayer Dashboard/i, slug: "prayer" },
   { button: /^Quran$/i, heading: /Quran Log/i, slug: "quran" },
   { button: /^Life Items$/i, heading: /Life Items/i, slug: "life-items" },
@@ -51,6 +52,8 @@ async function mockApi(page) {
       last_status: "success",
       last_error: null,
       approval_required: true,
+      expect_reply: false,
+      follow_up_after_minutes: null,
     },
   ];
   const todayAgenda = {
@@ -364,6 +367,8 @@ async function mockApi(page) {
         last_status: null,
         last_error: null,
         approval_required: payload.approval_required ?? true,
+        expect_reply: payload.expect_reply ?? false,
+        follow_up_after_minutes: payload.follow_up_after_minutes ?? null,
       };
       jobs.unshift(created);
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(created) });
@@ -374,6 +379,22 @@ async function mockApi(page) {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([{ id: 1, status: "success", created_at: "2026-03-03T07:30:00Z", error: null }]),
+      });
+      return;
+    }
+    if (path === "/memory/events" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+      return;
+    }
+    if (path === "/vault/conflicts" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+      return;
+    }
+    if (path === "/memory/intake/meeting" && method === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ event: { id: 1, domain: "planning", status: "curated" }, proposals: [], intake_entry_ids: [] }),
       });
       return;
     }

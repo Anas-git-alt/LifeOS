@@ -25,6 +25,7 @@ from app.services.vault import (
     obsidian_shared_root,
     obsidian_vault_enabled,
     obsidian_vault_root,
+    rebuild_obsidian_indexes,
     render_managed_note,
     slugify_note,
     sync_obsidian_vault_resources,
@@ -316,6 +317,7 @@ async def _create_proposal(
     source_uri: str | None,
     proposed_content: str,
     note_metadata_json: dict[str, Any],
+    conflict_reason: str = "checksum_mismatch",
 ) -> SharedMemoryProposal:
     async with async_session() as db:
         row = SharedMemoryProposal(
@@ -329,6 +331,7 @@ async def _create_proposal(
             expected_checksum=expected_checksum,
             current_checksum=current_checksum,
             source_uri=source_uri,
+            conflict_reason=conflict_reason,
             proposed_content=proposed_content,
             note_metadata_json=note_metadata_json,
         )
@@ -456,6 +459,77 @@ async def promote_to_shared_memory(payload) -> dict[str, Any]:
     }
 
 
+async def create_shared_memory_review_proposal(payload) -> SharedMemoryProposal:
+    """Create a review-required wiki proposal without changing the target note."""
+    if not obsidian_vault_enabled():
+        raise ValueError("OBSIDIAN_VAULT_ROOT must be configured before promoting shared memory")
+
+    ensure_obsidian_vault_layout()
+    metadata = {
+        "id": slugify_note(payload.title),
+        "scope": payload.scope,
+        "domain": payload.domain or ("global" if payload.scope == "shared_global" else "planning"),
+        "owners": payload.owners or ["lifeos"],
+        "status": payload.status,
+        "managed_by": payload.managed_by,
+        "source_session": payload.session_id,
+        "source_uri": payload.source_uri,
+        "verified_at": payload.verified_at or _now_utc(),
+        "confidence": payload.confidence or "medium",
+        "tags": payload.tags or ["lifeos", "shared-memory", "review-required"],
+    }
+    note_text = render_managed_note(payload.title, payload.content, metadata)
+    target_path = (
+        Path(payload.target_path).resolve(strict=False)
+        if payload.target_path
+        else classify_note_path(
+            scope=payload.scope,
+            domain=payload.domain,
+            agent_name=payload.agent_name,
+            title=payload.title,
+        )
+    )
+    current_checksum = note_checksum(await _read_text(target_path)) if target_path.exists() else None
+    proposal_path = (
+        obsidian_vault_root()
+        / "inbox"
+        / "proposals"
+        / f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{slugify_note(payload.title)}.md"
+    )
+    proposal_text = render_managed_note(
+        f"Review: {payload.title}",
+        (
+            f"Target path: `{target_path}`\n\n"
+            "Review-required wiki proposal generated from LifeOS context intake.\n\n"
+            f"{payload.content}"
+        ),
+        metadata,
+    )
+    await apply_workspace_actions(
+        agent_name=payload.agent_name,
+        workspace_paths=[str(obsidian_vault_root())],
+        envelope=WorkspaceActionEnvelope(
+            summary=f"Create review-required shared-memory proposal {proposal_path.name}",
+            actions=[WorkspaceAction(type="write_file", path=str(proposal_path), content=proposal_text)],
+        ),
+    )
+    return await _create_proposal(
+        source_agent=payload.agent_name,
+        source_session_id=payload.session_id,
+        scope=payload.scope,
+        domain=payload.domain,
+        title=payload.title,
+        target_path=target_path,
+        proposal_path=proposal_path,
+        expected_checksum=current_checksum,
+        current_checksum=current_checksum,
+        source_uri=payload.source_uri,
+        proposed_content=note_text,
+        note_metadata_json=metadata,
+        conflict_reason="review_required",
+    )
+
+
 async def list_shared_memory_proposals(*, status: str = "pending") -> list[SharedMemoryProposal]:
     async with async_session() as db:
         query = select(SharedMemoryProposal).order_by(SharedMemoryProposal.created_at.desc())
@@ -486,6 +560,7 @@ async def apply_shared_memory_proposal(proposal_id: int, *, source_agent: str) -
             row.status = "applied"
             row.applied_at = datetime.now(timezone.utc)
             await db.commit()
+    rebuild_obsidian_indexes()
 
     return {
         "status": "applied",

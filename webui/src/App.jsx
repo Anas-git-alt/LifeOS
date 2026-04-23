@@ -17,6 +17,7 @@ import ProviderConfig from "./components/ProviderConfig";
 import QuranLog from "./components/QuranLog";
 import TodayView from "./components/TodayView";
 import TokenBanner from "./components/TokenBanner";
+import WikiView from "./components/WikiView";
 
 const NAV_GROUPS = [
   {
@@ -25,6 +26,7 @@ const NAV_GROUPS = [
       { id: "dashboard", icon: "⊞", label: "Mission Control" },
       { id: "today", icon: "◈", label: "Today" },
       { id: "inbox", icon: "✦", label: "Inbox" },
+      { id: "wiki", icon: "◇", label: "Wiki" },
       { id: "prayer-dashboard", icon: "☽", label: "Prayer" },
       { id: "quran", icon: "◎", label: "Quran" },
       { id: "life", icon: "⋮", label: "Life Items" },
@@ -62,6 +64,10 @@ const PAGE_META = {
   inbox: {
     title: "Inbox",
     subtitle: "Capture ideas, promises, and life improvements before they get lost.",
+  },
+  wiki: {
+    title: "Wiki Context",
+    subtitle: "Review-first Obsidian memory from meetings, replies, and shared context.",
   },
   "prayer-dashboard": {
     title: "Prayer Dashboard",
@@ -207,6 +213,8 @@ export default function App() {
           return <TodayView />;
         case "inbox":
           return <InboxView />;
+        case "wiki":
+          return <WikiView />;
         case "prayer-dashboard":
           return <PrayerDashboard />;
         case "quran":

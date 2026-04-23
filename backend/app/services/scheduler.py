@@ -25,6 +25,7 @@ from app.services.chat_sessions import prune_expired_session_archives
 from app.services.memory import prune_old_data
 from app.services.orchestrator import run_scheduled_agent
 from app.services.prayer_service import auto_mark_unknown_expired, refresh_today_and_tomorrow_windows
+from app.services.context_events import run_no_reply_followups
 
 logger = logging.getLogger(__name__)
 ONCE_JOB_MISFIRE_GRACE_SECONDS = 600
@@ -185,6 +186,10 @@ async def run_persistent_job(job_id: int) -> None:
     status = "completed"
     message: str | None = None
     error: str | None = None
+    notification_channel: str | None = None
+    notification_channel_id: str | None = None
+    notification_message_id: str | None = None
+    awaiting_reply_until: datetime | None = None
     row = None
 
     try:
@@ -209,6 +214,9 @@ async def run_persistent_job(job_id: int) -> None:
                 )
                 status = str(result.get("status", "completed"))
                 message = str(result)
+                notification_channel = result.get("notification_channel")
+                notification_channel_id = result.get("notification_channel_id")
+                notification_message_id = result.get("notification_message_id")
         else:
             status = "failed"
             error = f"Unsupported job_type '{row.job_type}'"
@@ -222,6 +230,8 @@ async def run_persistent_job(job_id: int) -> None:
         next_run = _next_run_time(scheduled)
         once_completed_at = finished_at if row and row.schedule_type == "once" else None
         once_enabled = False if row and row.schedule_type == "once" else None
+        if row and getattr(row, "expect_reply", False) and notification_message_id:
+            awaiting_reply_until = finished_at + timedelta(minutes=getattr(row, "follow_up_after_minutes", None) or 120)
         await record_job_run(
             job_id=job_id,
             started_at=started_at,
@@ -233,6 +243,10 @@ async def run_persistent_job(job_id: int) -> None:
             next_run_at=_to_db_datetime(next_run),
             completed_at=once_completed_at,
             enabled=once_enabled,
+            notification_channel=notification_channel,
+            notification_channel_id=notification_channel_id,
+            notification_message_id=notification_message_id,
+            awaiting_reply_until=awaiting_reply_until,
         )
 
 
@@ -276,6 +290,21 @@ def ensure_prayer_jobs():
         logger.info("Configured prayer_autoclose_unknown job")
 
 
+def ensure_context_event_jobs():
+    if scheduler.get_job("context_no_reply_followups"):
+        return
+    scheduler.add_job(
+        run_no_reply_followups,
+        "interval",
+        minutes=15,
+        id="context_no_reply_followups",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    logger.info("Configured context_no_reply_followups job")
+
+
 async def run_retention_prune_job():
     memory_result = await prune_old_data(
         memory_days=settings.memory_retention_days,
@@ -296,6 +325,7 @@ async def bootstrap_agent_jobs():
             logger.warning("Failed scheduling persistent job id=%s: %s", row.id, exc)
     ensure_maintenance_jobs()
     ensure_prayer_jobs()
+    ensure_context_event_jobs()
 
 
 async def sync_agent_job(agent_name: str, cadence: str, enabled: bool, target_channel: str | None) -> None:

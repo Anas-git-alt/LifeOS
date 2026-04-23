@@ -317,6 +317,26 @@ export const captureCommitment = (data) =>
 export const promoteIntakeEntry = (entryId, data = {}) =>
   request(`/life/inbox/${entryId}/promote`, { method: "POST", body: JSON.stringify(data) });
 
+export const captureMeetingSummary = (data) =>
+  request("/memory/intake/meeting", {
+    method: "POST",
+    body: JSON.stringify(data),
+    timeoutMs: 30000,
+  });
+export const getMemoryEvents = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/memory/events${query ? `?${query}` : ""}`);
+};
+export const curateMemoryEvent = (eventId) =>
+  request(`/memory/events/${eventId}/curate`, { method: "POST", body: JSON.stringify({}), timeoutMs: 30000 });
+export const getVaultConflicts = () => request("/vault/conflicts");
+export const applyMemoryProposal = (proposalId, sourceAgent = "webui") =>
+  request(`/memory/proposals/${proposalId}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ source_agent: sourceAgent }),
+    timeoutMs: 30000,
+  });
+
 // Prayer dashboard
 export const getPrayerDashboard = (endDate = null) => {
   const query = endDate ? `?end_date=${endDate}` : "";

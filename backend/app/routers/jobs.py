@@ -58,6 +58,8 @@ def _to_response(row) -> ScheduledJobResponse:
         enabled=row.enabled,
         paused=row.paused,
         approval_required=row.approval_required,
+        expect_reply=row.expect_reply,
+        follow_up_after_minutes=row.follow_up_after_minutes,
         source=row.source,
         created_by=row.created_by,
         config_json=row.config_json,

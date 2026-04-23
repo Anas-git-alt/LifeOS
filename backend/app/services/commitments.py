@@ -151,6 +151,8 @@ async def upsert_follow_up_job(
                 enabled=True,
                 paused=False,
                 approval_required=False,
+                expect_reply=True,
+                follow_up_after_minutes=120,
                 source="commitment_follow_up",
                 created_by="lifeos",
                 config_json={
@@ -177,6 +179,8 @@ async def upsert_follow_up_job(
                     enabled=True,
                     paused=False,
                     approval_required=False,
+                    expect_reply=True,
+                    follow_up_after_minutes=120,
                     source="commitment_follow_up",
                     created_by="lifeos",
                     config_json={

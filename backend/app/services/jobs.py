@@ -78,6 +78,16 @@ def validate_notification_mode(notification_mode: str | None) -> str:
     return value
 
 
+def normalize_follow_up_after_minutes(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(minutes, 10080))
+
+
 def infer_schedule_type(
     schedule_type: str | None,
     *,
@@ -128,10 +138,17 @@ def prepare_job_payload(payload: dict, *, existing: ScheduledJob | None = None) 
     notification_mode = validate_notification_mode(
         normalized.get("notification_mode", getattr(existing, "notification_mode", None))
     )
+    if source_name == "commitment_follow_up":
+        normalized.setdefault("expect_reply", True)
+        normalized.setdefault("follow_up_after_minutes", 120)
 
     normalized["timezone"] = timezone_name
     normalized["schedule_type"] = schedule_type
     normalized["notification_mode"] = notification_mode
+    normalized["expect_reply"] = bool(normalized.get("expect_reply", getattr(existing, "expect_reply", False)))
+    normalized["follow_up_after_minutes"] = normalize_follow_up_after_minutes(
+        normalized.get("follow_up_after_minutes", getattr(existing, "follow_up_after_minutes", None))
+    )
     if notification_mode == "silent":
         normalized["target_channel"] = None
         normalized["target_channel_id"] = None
@@ -292,6 +309,10 @@ async def record_job_run(
     next_run_at: datetime | None,
     completed_at: datetime | None = None,
     enabled: bool | None = None,
+    notification_channel: str | None = None,
+    notification_channel_id: str | None = None,
+    notification_message_id: str | None = None,
+    awaiting_reply_until: datetime | None = None,
 ) -> None:
     async with async_session() as db:
         log_row = JobRunLog(
@@ -301,6 +322,10 @@ async def record_job_run(
             status=status,
             message=message,
             error=error,
+            notification_channel=notification_channel,
+            notification_channel_id=notification_channel_id,
+            notification_message_id=notification_message_id,
+            awaiting_reply_until=awaiting_reply_until,
         )
         db.add(log_row)
         result = await db.execute(select(ScheduledJob).where(ScheduledJob.id == job_id))

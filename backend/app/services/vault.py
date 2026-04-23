@@ -106,6 +106,113 @@ def _index_template(title: str, description: str) -> str:
     )
 
 
+def _note_title(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return path.stem.replace("-", " ").replace("_", " ").title()
+    match = re.search(r"(?m)^#\s+(.+?)\s*$", text)
+    if match:
+        return match.group(1).strip()
+    return path.stem.replace("-", " ").replace("_", " ").title()
+
+
+def _index_link_lines(root: Path) -> list[str]:
+    if not root.exists():
+        return []
+    lines: list[str] = []
+    for path in sorted(root.glob("*.md")):
+        if path.name.lower() == "index.md":
+            continue
+        lines.append(f"- [[{path.stem}|{_note_title(path)}]]")
+    return lines
+
+
+def rebuild_obsidian_indexes() -> dict[str, Any]:
+    """Rebuild mechanical Obsidian hub notes after approved wiki writes."""
+    if not obsidian_vault_enabled():
+        return {"updated": []}
+    ensure_obsidian_vault_layout()
+    updated: list[str] = []
+    root = obsidian_vault_root()
+    stamp = datetime.now(timezone.utc).isoformat()
+
+    for domain_dir in sorted((root / "shared" / "domains").glob("*")):
+        if not domain_dir.is_dir():
+            continue
+        domain = domain_dir.name
+        links = _index_link_lines(domain_dir) or ["- No approved notes yet."]
+        content = (
+            "---\n"
+            f"id: {slugify_note(domain)}-domain-index\n"
+            "scope: shared_domain\n"
+            f"domain: {domain}\n"
+            "owners:\n"
+            "  - lifeos\n"
+            "status: active\n"
+            "managed_by: lifeos\n"
+            f"verified_at: {stamp}\n"
+            "confidence: high\n"
+            "tags:\n"
+            "  - lifeos\n"
+            "  - index\n"
+            "---\n\n"
+            f"# {domain.title()} Domain Index\n\n"
+            + "\n".join(links)
+            + "\n"
+        )
+        try:
+            (domain_dir / "index.md").write_text(content, encoding="utf-8")
+            updated.append(str(domain_dir / "index.md"))
+        except OSError as exc:
+            logger.warning("obsidian domain index rebuild skipped for %s: %s", domain_dir, exc)
+
+    global_links = _index_link_lines(root / "shared" / "global")
+    domain_links = [
+        f"- [[../domains/{path.name}/index|{path.name.title()}]]"
+        for path in sorted((root / "shared" / "domains").glob("*"))
+        if path.is_dir()
+    ]
+    global_content = (
+        "---\n"
+        "id: global-shared-index\n"
+        "scope: shared_global\n"
+        "domain: global\n"
+        "owners:\n"
+        "  - lifeos\n"
+        "status: active\n"
+        "managed_by: lifeos\n"
+        f"verified_at: {stamp}\n"
+        "confidence: high\n"
+        "tags:\n"
+        "  - lifeos\n"
+        "  - index\n"
+        "---\n\n"
+        "# Global Shared Index\n\n"
+        "## Global Notes\n"
+        + "\n".join(global_links or ["- No approved global notes yet."])
+        + "\n\n## Domain Hubs\n"
+        + "\n".join(domain_links or ["- No domain hubs yet."])
+        + "\n"
+    )
+    try:
+        (root / "shared" / "global" / "index.md").write_text(global_content, encoding="utf-8")
+        updated.append(str(root / "shared" / "global" / "index.md"))
+    except OSError as exc:
+        logger.warning("obsidian global index rebuild skipped: %s", exc)
+
+    router_content = _index_template(
+        "Memory Router",
+        "Use the global index first, then the smallest relevant domain hub before broad semantic search.",
+    )
+    try:
+        (obsidian_index_root() / "router.md").write_text(router_content, encoding="utf-8")
+        updated.append(str(obsidian_index_root() / "router.md"))
+    except OSError as exc:
+        logger.warning("obsidian router index rebuild skipped: %s", exc)
+    return {"updated": updated}
+
+
 def render_managed_note(title: str, body: str, metadata: dict[str, Any]) -> str:
     lines = ["---"]
     for key in [

@@ -13,7 +13,7 @@ from app.models import ActionStatus, Agent, AuditLog, LifeItemCreate, PendingAct
 from app.redaction import redact_sensitive
 from app.services.chat_sessions import build_session_reference_context, ensure_session, refresh_session_metadata
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
-from app.services.discord_notify import send_channel_message
+from app.services.discord_notify import send_channel_message_result
 from app.services.action_executor import execute_pending_action
 from app.services.events import publish_event
 from app.services.intake import upsert_fallback_intake_entry, upsert_intake_entry_from_agent
@@ -847,13 +847,20 @@ async def run_scheduled_agent(
     notification_mode = str(notification_mode_override or "channel").strip().lower()
     if notification_mode == "silent":
         return {"status": "completed", "delivered": False}
-    delivered = False
+    delivery = {"delivered": False, "channel_id": target_channel_id, "message_id": None}
     target_channel = target_channel_override or (agent.discord_channel if agent else None)
     target_channel_id = target_channel_id_override
     if target_channel_id or target_channel:
-        delivered = await send_channel_message(
+        delivery = await send_channel_message_result(
             target_channel,
             run_result.get("response", ""),
             channel_id=target_channel_id,
         )
-    return {"status": "delivered" if delivered else "completed", "delivered": delivered}
+    delivered = bool(delivery.get("delivered"))
+    return {
+        "status": "delivered" if delivered else "completed",
+        "delivered": delivered,
+        "notification_channel": target_channel,
+        "notification_channel_id": delivery.get("channel_id") or target_channel_id,
+        "notification_message_id": delivery.get("message_id"),
+    }

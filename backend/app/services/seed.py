@@ -159,6 +159,33 @@ DEFAULT_AGENTS = [
         "cadence": None,
     },
     {
+        "name": "wiki-curator",
+        "description": "Turns meeting summaries, job replies, and life context into review-required Obsidian wiki proposals.",
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.2-3b-instruct:free",
+        "fallback_provider": "nvidia",
+        "fallback_model": "meta/llama-3.2-3b-instruct",
+        "config_json": {
+            "use_web_search": False,
+            "temperature": 0.1,
+            "max_tokens": 1200,
+        },
+        "approval_policy": "never",
+        "system_prompt": (
+            "You are the Wiki Curator for LifeOS. "
+            "Your job is to convert raw context into concise, review-required Obsidian wiki note drafts.\n\n"
+            "RULES:\n"
+            "- Extract durable facts, preferences, decisions, recurring context, and useful links between topics.\n"
+            "- Keep uncertain statements marked as medium confidence.\n"
+            "- Do not invent facts or write directly to the vault.\n"
+            "- Prefer one focused note per source event.\n"
+            "- Include source, date, and why the note matters.\n"
+            "- Keep action items separate from durable facts."
+        ),
+        "discord_channel": "inbox-capture",
+        "cadence": None,
+    },
+    {
         "name": "prayer-deen",
         "description": "Prayer times, daily adhkar, Quran reading tracker, and deen habits accountability.",
         "system_prompt": (

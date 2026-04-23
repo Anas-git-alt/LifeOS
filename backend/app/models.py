@@ -166,6 +166,8 @@ class ScheduledJob(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expect_reply: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    follow_up_after_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
     created_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     config_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -194,9 +196,42 @@ class JobRunLog(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notification_channel: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    notification_channel_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    notification_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    reply_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    awaiting_reply_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    no_reply_follow_up_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class ContextEvent(Base):
+    __tablename__ = "context_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), nullable=True)
+    job_id: Mapped[Optional[int]] = mapped_column(ForeignKey("scheduled_jobs.id"), nullable=True)
+    job_run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("job_run_logs.id"), nullable=True)
+    life_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("life_items.id"), nullable=True)
+    discord_channel_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    discord_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    discord_reply_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    discord_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
+    metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    curated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class ChatSession(Base):
@@ -925,6 +960,8 @@ class ScheduledJobCreate(BaseModel):
     enabled: bool = True
     paused: bool = False
     approval_required: bool = True
+    expect_reply: bool = False
+    follow_up_after_minutes: Optional[int] = None
     source: str = "manual"
     created_by: Optional[str] = None
     config_json: Optional[dict] = None
@@ -960,6 +997,8 @@ class ScheduledJobUpdate(BaseModel):
     enabled: Optional[bool] = None
     paused: Optional[bool] = None
     approval_required: Optional[bool] = None
+    expect_reply: Optional[bool] = None
+    follow_up_after_minutes: Optional[int] = None
     source: Optional[str] = None
     created_by: Optional[str] = None
     config_json: Optional[dict] = None
@@ -982,6 +1021,8 @@ class ScheduledJobResponse(BaseModel):
     enabled: bool
     paused: bool
     approval_required: bool
+    expect_reply: bool
+    follow_up_after_minutes: Optional[int]
     source: str
     created_by: Optional[str]
     config_json: Optional[dict]
@@ -1005,6 +1046,12 @@ class JobRunLogResponse(BaseModel):
     status: str
     message: Optional[str]
     error: Optional[str]
+    notification_channel: Optional[str]
+    notification_channel_id: Optional[str]
+    notification_message_id: Optional[str]
+    reply_count: int
+    awaiting_reply_until: Optional[datetime]
+    no_reply_follow_up_sent_at: Optional[datetime]
     created_at: datetime
 
     class Config:
@@ -1111,6 +1158,72 @@ class SharedMemoryProposalResponse(BaseModel):
 
 class SharedMemoryProposalApplyRequest(BaseModel):
     source_agent: str = "webui"
+
+
+class ContextEventResponse(BaseModel):
+    id: int
+    event_type: str
+    source: str
+    source_agent: Optional[str]
+    source_session_id: Optional[int]
+    job_id: Optional[int]
+    job_run_id: Optional[int]
+    life_item_id: Optional[int]
+    discord_channel_id: Optional[str]
+    discord_message_id: Optional[str]
+    discord_reply_message_id: Optional[str]
+    discord_user_id: Optional[str]
+    title: Optional[str]
+    summary: Optional[str]
+    raw_text: str
+    domain: str
+    status: str
+    metadata_json: Optional[dict[str, Any]]
+    created_at: datetime
+    curated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class MeetingIntakeRequest(BaseModel):
+    summary: str
+    title: Optional[str] = None
+    domain: Optional[str] = None
+    source: str = "api"
+    source_agent: str = "wiki-curator"
+    session_id: Optional[int] = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class MeetingIntakeResponse(BaseModel):
+    event: ContextEventResponse
+    proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
+    intake_entry_ids: list[int] = Field(default_factory=list)
+
+
+class ContextEventCurateResponse(BaseModel):
+    event: ContextEventResponse
+    proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
+    intake_entry_ids: list[int] = Field(default_factory=list)
+
+
+class JobReplyIntakeRequest(BaseModel):
+    notification_message_id: str
+    reply_text: str
+    discord_channel_id: Optional[str] = None
+    discord_reply_message_id: Optional[str] = None
+    discord_user_id: Optional[str] = None
+    source: str = "discord_reply"
+
+
+class JobReplyIntakeResponse(BaseModel):
+    event: ContextEventResponse
+    job_id: int
+    job_run_id: int
+    life_checkin_id: Optional[int] = None
+    life_checkin_result: Optional[str] = None
+    proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
 
 
 class LifeItemCreate(BaseModel):

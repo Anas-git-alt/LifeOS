@@ -38,12 +38,100 @@ class _Ctx:
         return _Typing()
 
 
+class _Reference:
+    def __init__(self, message_id: int | None):
+        self.message_id = message_id
+
+
+class _Message:
+    def __init__(self, *, content: str, message_id: int = 50, reference_id: int | None = None, bot: bool = False):
+        self.id = message_id
+        self.content = content
+        self.reference = _Reference(reference_id) if reference_id else None
+        self.channel = _Dummy(2, "planning")
+        self.author = _Dummy(3)
+        self.author.bot = bot
+
+
 def _not_found(path: str):
     raise httpx.HTTPStatusError(
         "not found",
         request=httpx.Request("GET", f"http://test{path}"),
         response=httpx.Response(404, request=httpx.Request("GET", f"http://test{path}")),
     )
+
+
+@pytest.mark.asyncio
+async def test_meeting_command_posts_meeting_intake(monkeypatch):
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/memory/intake/meeting"
+        assert payload["summary"] == "Decision: build shared wiki. Action: add meeting intake."
+        assert payload["source"] == "discord_meeting"
+        return {
+            "event": {"id": 12, "domain": "work"},
+            "proposals": [{"id": 5}],
+            "intake_entry_ids": [9],
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.meeting.callback(cog, ctx, summary="Decision: build shared wiki. Action: add meeting intake.")
+
+    assert len(ctx.sent_embeds) == 1
+    embed = ctx.sent_embeds[0]
+    assert embed.title == "Meeting Intake"
+    assert "event #12" in embed.description
+
+
+@pytest.mark.asyncio
+async def test_notification_reply_listener_posts_job_reply(monkeypatch):
+    calls = []
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    await cog.capture_notification_reply(
+        _Message(content="Done, invoice sent.", message_id=101, reference_id=99)
+    )
+
+    assert calls == [
+        (
+            "/memory/intake/job-reply",
+            {
+                "notification_message_id": "99",
+                "reply_text": "Done, invoice sent.",
+                "discord_channel_id": "2",
+                "discord_reply_message_id": "101",
+                "discord_user_id": "3",
+                "source": "discord_reply",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notification_reply_listener_ignores_non_replies_commands_and_bots(monkeypatch):
+    calls = []
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    await cog.capture_notification_reply(_Message(content="Done", reference_id=None))
+    await cog.capture_notification_reply(_Message(content="!done 1", reference_id=99))
+    await cog.capture_notification_reply(_Message(content="Done", reference_id=99, bot=True))
+
+    assert calls == []
 
 
 @pytest.mark.asyncio
