@@ -70,6 +70,8 @@ export default function ExperimentDashboard() {
   const [experiments, setExperiments] = useState([]);
   const [pendingPromotions, setPendingPromotions] = useState([]);
   const [telemetry, setTelemetry] = useState([]);
+  const [shadowEnabled, setShadowEnabled] = useState(false);
+  const [freeOnlyMode, setFreeOnlyMode] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -84,6 +86,8 @@ export default function ExperimentDashboard() {
       setExperiments(expData?.experiments || []);
       setPendingPromotions(expData?.pending_promotions || []);
       setTelemetry(telData?.providers || []);
+      setShadowEnabled(Boolean(expData?.shadow_router_enabled || telData?.shadow_router_enabled));
+      setFreeOnlyMode(Boolean(expData?.free_only_mode ?? telData?.free_only_mode ?? true));
     } catch (e) {
       setError('Could not load experiment data. Backend may be offline.');
     } finally {
@@ -112,7 +116,7 @@ export default function ExperimentDashboard() {
         <div>
           <h1>🧪 Experiments</h1>
           <p style={{ marginTop: 4 }}>
-            Shadow-router A/B test log. Watching alternative providers passively — promotion requests appear only after sustained wins and still need your approval.
+            Shadow-router A/B test log. Free quota is protected by default.
           </p>
         </div>
         <button className="btn btn-ghost" onClick={load} disabled={loading}>
@@ -124,7 +128,7 @@ export default function ExperimentDashboard() {
       <div className="card" style={{ padding: '16px', marginBottom: 16 }}>
         <div className="panel-card-head">
           <h2>Live Provider Health</h2>
-          <span>Updates every 30s</span>
+          <span>{shadowEnabled ? 'Shadow on' : 'Shadow off'} · {freeOnlyMode ? 'Free-only' : 'Mixed-cost'}</span>
         </div>
         {telemetry.length === 0 ? (
           <p className="empty-state" style={{ padding: '20px 0', textAlign: 'left' }}>
@@ -172,7 +176,11 @@ export default function ExperimentDashboard() {
         ) : experiments.length === 0 ? (
           <div className="empty-state" style={{ padding: 40 }}>
             <p>No shadow tests run yet.</p>
-            <p style={{ marginTop: 8, fontSize: 12 }}>They fire automatically on ~5% of successful LLM calls when multiple healthy providers are configured.</p>
+            <p style={{ marginTop: 8, fontSize: 12 }}>
+              {shadowEnabled
+                ? 'They fire automatically on ~5% of successful LLM calls when multiple healthy free-mode providers are configured.'
+                : 'Shadow tests are disabled by default so free provider quota is not spent in the background.'}
+            </p>
           </div>
         ) : (
           <table className="experiment-table">

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS agents (
     description TEXT DEFAULT '',
     system_prompt TEXT DEFAULT 'You are a helpful assistant.',
     provider VARCHAR(50) DEFAULT 'openrouter',
-    model VARCHAR(100) DEFAULT 'openrouter/auto',
+    model VARCHAR(100) DEFAULT 'openrouter/free',
     fallback_provider VARCHAR(50),
     fallback_model VARCHAR(100),
     discord_channel VARCHAR(100),

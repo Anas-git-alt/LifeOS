@@ -30,12 +30,18 @@ async def test_sleep_quick_log_posts_daily_log(monkeypatch, cog):
     monkeypatch.setattr("bot.cogs.reminders.api_post", _fake_api_post)
     ctx = _Ctx()
 
-    await cog.log_sleep_quick.callback(cog, ctx, details="7.5 slept better")
+    await cog.log_sleep_quick.callback(cog, ctx, details="7.5 bed 23:30 wake 07:10 slept better")
 
     assert calls == [
         (
             "/life/daily-log",
-            {"kind": "sleep", "hours": 7.5, "note": "slept better"},
+            {
+                "kind": "sleep",
+                "hours": 7.5,
+                "bedtime": "23:30",
+                "wake_time": "07:10",
+                "note": "slept better",
+            },
         )
     ]
     assert "Logged sleep." in ctx.sent_messages[-1]
@@ -111,3 +117,31 @@ async def test_water_and_shutdown_quick_logs(monkeypatch, cog):
     ]
     assert "Logged hydration." in ctx.sent_messages[0]
     assert "Logged shutdown." in ctx.sent_messages[1]
+
+
+@pytest.mark.asyncio
+async def test_family_and_priority_quick_logs(monkeypatch, cog):
+    calls = []
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        return {"message": f"Logged {payload['kind']}. Meals 0 | water 0 | train unset | priorities 1 | rescue ok"}
+
+    monkeypatch.setattr("bot.cogs.reminders.api_post", _fake_api_post)
+    ctx = _Ctx()
+
+    await cog.log_family_quick.callback(cog, ctx, note="called parents")
+    await cog.log_priority_quick.callback(cog, ctx, note="shipped invoice")
+
+    assert calls == [
+        (
+            "/life/daily-log",
+            {"kind": "family", "done": True, "note": "called parents"},
+        ),
+        (
+            "/life/daily-log",
+            {"kind": "priority", "count": 1, "note": "shipped invoice"},
+        ),
+    ]
+    assert "Logged family." in ctx.sent_messages[0]
+    assert "Logged priority." in ctx.sent_messages[1]

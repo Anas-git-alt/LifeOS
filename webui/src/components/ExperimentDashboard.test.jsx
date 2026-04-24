@@ -15,7 +15,7 @@ function makeExperiment(overrides = {}) {
     id: 1,
     created_at: "2026-04-15T08:00:00Z",
     primary_provider: "openrouter",
-    primary_model: "openrouter/auto",
+    primary_model: "openrouter/free",
     shadow_provider: "nvidia",
     shadow_model: "meta/llama-3.1-8b-instruct",
     primary_score: 0.7,
@@ -32,7 +32,11 @@ function makeExperiment(overrides = {}) {
 describe("ExperimentDashboard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    apiMocks.getProviderTelemetry.mockResolvedValue({ providers: [] });
+    apiMocks.getProviderTelemetry.mockResolvedValue({
+      providers: [],
+      shadow_router_enabled: false,
+      free_only_mode: true,
+    });
   });
 
   test("does not claim a promotion request exists for a shadow win alone", async () => {
@@ -66,13 +70,15 @@ describe("ExperimentDashboard", () => {
     apiMocks.getExperiments.mockResolvedValue({
       experiments: [],
       pending_promotions: [],
+      shadow_router_enabled: false,
+      free_only_mode: true,
     });
 
     render(<ExperimentDashboard />);
 
     expect(await screen.findByText("No shadow tests run yet.")).toBeInTheDocument();
     expect(
-      screen.getByText(/~5% of successful LLM calls when multiple healthy providers are configured/i)
+      screen.getByText(/Shadow tests are disabled by default so free provider quota is not spent/i)
     ).toBeInTheDocument();
   });
 });

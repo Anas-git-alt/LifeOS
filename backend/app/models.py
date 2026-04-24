@@ -45,7 +45,7 @@ class Agent(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     system_prompt: Mapped[str] = mapped_column(Text, default="You are a helpful assistant.")
     provider: Mapped[str] = mapped_column(String(50), default="openrouter")
-    model: Mapped[str] = mapped_column(String(100), default="openrouter/auto")
+    model: Mapped[str] = mapped_column(String(100), default="openrouter/free")
     fallback_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     fallback_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     discord_channel: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -665,7 +665,7 @@ class AgentCreate(BaseModel):
     description: str = ""
     system_prompt: str = "You are a helpful assistant."
     provider: str = "openrouter"
-    model: str = "openrouter/auto"
+    model: str = "openrouter/free"
     fallback_provider: Optional[str] = None
     fallback_model: Optional[str] = None
     discord_channel: Optional[str] = None

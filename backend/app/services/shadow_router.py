@@ -69,7 +69,7 @@ def _score_output(text: str, reference: str) -> float:
 
 def _pick_shadow_provider(primary_provider: str) -> Optional[tuple[str, str]]:
     """Return (provider_name, model) for the shadow call, or None if unavailable."""
-    from app.services.provider_router import PROVIDERS
+    from app.services.provider_router import PROVIDERS, free_mode_rejection
     from app.services import telemetry
 
     candidates = []
@@ -82,6 +82,8 @@ def _pick_shadow_provider(primary_provider: str) -> Optional[tuple[str, str]]:
         if telemetry.is_circuit_open(name):
             continue
         default_model = getattr(settings, config["default_model_attr"], "")
+        if free_mode_rejection(name, default_model):
+            continue
         candidates.append((name, default_model))
 
     if not candidates:
@@ -105,7 +107,7 @@ async def _run_shadow_call(
     success = False
     try:
         shadow_text = await asyncio.wait_for(
-            _call_provider(shadow_provider, shadow_model, messages, 0.7, 1024),
+            _call_provider(shadow_provider, shadow_model, messages, 0.7, 1024, enable_shadow=False),
             timeout=30.0,  # Hard cap — shadow must not run forever
         )
         success = True
@@ -151,6 +153,8 @@ async def maybe_shadow_test(
     primary_model: Optional[str] = None,
 ) -> None:
     """Fire-and-forget shadow test. Call with asyncio.create_task()."""
+    if not settings.shadow_router_enabled:
+        return
     if random.random() > SHADOW_SAMPLE_RATE:
         return  # Not sampled this call
 

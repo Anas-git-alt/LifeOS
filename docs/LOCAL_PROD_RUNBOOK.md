@@ -102,8 +102,10 @@ Run a short smoke test:
 !today
 !prayertoday
 !pending
-!sleep 7.5 baseline check
+!sleep 7.5 bed 23:30 wake 07:10 baseline check
 !water 1 startup smoke
+!family startup smoke
+!priority startup smoke
 !commit send invoice tomorrow at 9am
 !focus
 ```
@@ -141,7 +143,7 @@ Quick actions:
 
 - WebUI buttons for `Meal +1`, `Protein Meal`, `Water +1`, `Train`, `Rest Day`, `Family Action`, `Priority Done`, and `Shutdown`
 - sleep form in `Today`
-- Discord quick logs: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Discord quick logs: `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, `!shutdown`
 - Discord `!today` for compact remote status when you are away from the browser
 
 ### Commitment Loop
@@ -154,7 +156,7 @@ Use Discord as the fastest capture surface for promises and follow-through:
 - `!snooze <life_item_id> <time phrase>` moves a commitment and resyncs its linked reminder.
 - `!focus` shows deterministic ranking.
 - `!focuscoach` asks the commitment coach AI to choose from the backend-provided shortlist.
-- `!commitreview` runs an on-demand weekly commitment review.
+- `!commitreview` runs an on-demand weekly commitment review. A weekly review is also scheduled for Sunday 10:00 in `#weekly-review`.
 
 Deadline examples:
 
@@ -262,7 +264,7 @@ Use WebUI `Experiments` to inspect:
 - token averages
 - success/failure counts
 - circuit-breaker state
-- shadow-router win history
+- shadow-router win history when `SHADOW_ROUTER_ENABLED=true`
 
 ## 7. Backup And Restore
 

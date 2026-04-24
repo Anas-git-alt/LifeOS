@@ -175,7 +175,7 @@ function NavPills({ page, setPage }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("today");
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [selectedGoalId, setSelectedGoalId] = useState(null);
   const [hasToken, setHasToken] = useState(() => Boolean((localStorage.getItem("lifeos_token") || "").trim()));

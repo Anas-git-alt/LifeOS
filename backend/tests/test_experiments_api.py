@@ -17,7 +17,7 @@ async def _seed_experiment_data() -> None:
         db.add(
             ExperimentRun(
                 primary_provider="openrouter",
-                primary_model="openrouter/auto",
+                primary_model="openrouter/free",
                 shadow_provider="nvidia",
                 shadow_model="meta/llama-3.1-8b-instruct",
                 primary_score=0.7,
@@ -65,4 +65,6 @@ def test_experiments_api_returns_pending_promotion_providers():
     payload = response.json()
     assert payload["total"] == 1
     assert payload["pending_promotions"] == ["nvidia"]
+    assert payload["shadow_router_enabled"] is False
+    assert payload["free_only_mode"] is True
     assert payload["experiments"][0]["shadow_provider"] == "nvidia"

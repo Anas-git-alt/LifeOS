@@ -19,7 +19,7 @@ We add a lightweight, in-memory circuit breaker per provider. If a provider accu
 All call metrics (latency, token count, success/failure) are collected in a rolling window (`_ProviderWindow`) exposed via `get_provider_stats()` and a new `/api/telemetry` HTTP endpoint.
 
 ### Shadow Testing (`shadow_router.py`)
-A small percentage (~5%) of successful primary calls trigger an asynchronous "shadow call" to the next available provider. The shadow call:
+When `SHADOW_ROUTER_ENABLED=true`, a small percentage (~5%) of successful primary calls trigger an asynchronous "shadow call" to the next available provider. It is disabled by default while `FREE_ONLY_MODE=true` to protect free-provider quota. The shadow call:
 - Runs entirely non-blocking via `asyncio.create_task()` — it never blocks the user's response
 - Grades both outputs with a simple heuristic score (length match, non-empty, no error phrases)
 - Persists the result to the `experiment_runs` DB table
@@ -38,5 +38,5 @@ A small percentage (~5%) of successful primary calls trigger an asynchronous "sh
 
 **Harder / Trade-offs:**
 - In-memory telemetry resets on restart. This is intentional — we avoid a migration cost and operator overhead. Persistent experiment history is handled by `experiment_runs` (SQLite/Postgres).
-- Shadow calls add a small background CPU/memory cost (~5% of traffic × shadow call overhead). This is bounded and negligible for LifeOS's traffic volume.
+- Shadow calls add a small background CPU/memory and provider-quota cost (~5% of traffic × shadow call overhead), so operators must opt in with `SHADOW_ROUTER_ENABLED=true`.
 - Circuit breaker trips (3 failures / 60s) are fairly aggressive for a personal system. This threshold is a constant that can be adjusted in `telemetry.py`.

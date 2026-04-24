@@ -549,7 +549,7 @@ async def seed_default_agents():
                 continue
 
             if not existing:
-                if agent_data["name"] == "sandbox" and settings.openai_api_key:
+                if agent_data["name"] == "sandbox" and settings.openai_api_key and not settings.free_only_mode:
                     provider = "openai"
                     model = settings.openai_default_model
                 else:

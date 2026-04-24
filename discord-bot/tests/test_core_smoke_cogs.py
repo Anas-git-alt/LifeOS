@@ -80,7 +80,7 @@ async def test_agents_command_smoke(monkeypatch):
                 "enabled": True,
                 "description": "General-purpose sandbox",
                 "provider": "openrouter",
-                "model": "openrouter/auto",
+                "model": "openrouter/free",
             },
             {
                 "name": "daily-planner",

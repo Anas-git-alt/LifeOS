@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.models import ScheduledJob
+from app.services.discord_notify import send_channel_message_result
 from app.services.jobs import (
     disable_agent_cadence_job,
     fill_missing_job_descriptions,
@@ -29,6 +30,7 @@ from app.services.context_events import run_no_reply_followups
 
 logger = logging.getLogger(__name__)
 ONCE_JOB_MISFIRE_GRACE_SECONDS = 600
+WEEKLY_COMMITMENT_REVIEW_SOURCE = "system_commitment_review"
 
 
 def _new_scheduler() -> AsyncIOScheduler:
@@ -76,6 +78,75 @@ def _parse_cadence(cron_expression: str) -> tuple[str, str, str]:
 
 def _scheduler_job_id(job_id: int) -> str:
     return f"scheduled_job_{job_id}"
+
+
+def _format_weekly_commitment_review(payload: dict) -> str:
+    def _section(title: str, values: list[str]) -> str:
+        lines = [str(value).strip() for value in values if str(value).strip()]
+        if not lines:
+            lines = ["none"]
+        return f"**{title}**\n" + "\n".join(f"- {line}" for line in lines[:5])
+
+    mode = "fallback" if payload.get("fallback_used") else "ai"
+    sections = [
+        f"**Weekly commitment review**\nMode: {mode}",
+        _section("Wins", payload.get("wins") or []),
+        _section("Stale", payload.get("stale_commitments") or []),
+        _section("Blockers", payload.get("repeat_blockers") or []),
+        _section("At risk", payload.get("promises_at_risk") or []),
+        _section("Simplify next week", payload.get("simplify_next_week") or []),
+    ]
+    return "\n\n".join(sections)
+
+
+async def _get_weekly_commitment_review() -> dict:
+    from app.services.commitment_coach import get_weekly_commitment_review
+
+    return await get_weekly_commitment_review()
+
+
+async def seed_weekly_commitment_review_job() -> int:
+    """Ensure the commitment review runs weekly without manual prompting."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ScheduledJob).where(ScheduledJob.source == WEEKLY_COMMITMENT_REVIEW_SOURCE).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.name = "weekly commitment review"
+            row.description = "Posts a weekly commitment review with wins, stale promises, blockers, and simplification steps."
+            row.agent_name = "commitment-coach"
+            row.job_type = "weekly_commitment_review"
+            row.schedule_type = "cron"
+            row.cron_expression = "0 10 * * sun"
+            row.timezone = settings.timezone
+            row.notification_mode = "channel"
+            row.target_channel = row.target_channel or "weekly-review"
+            row.enabled = True
+            row.paused = False
+            row.approval_required = False
+            await db.commit()
+            return 0
+        db.add(
+            ScheduledJob(
+                name="weekly commitment review",
+                description="Posts a weekly commitment review with wins, stale promises, blockers, and simplification steps.",
+                agent_name="commitment-coach",
+                job_type="weekly_commitment_review",
+                schedule_type="cron",
+                cron_expression="0 10 * * sun",
+                timezone=settings.timezone,
+                notification_mode="channel",
+                target_channel="weekly-review",
+                enabled=True,
+                paused=False,
+                approval_required=False,
+                source=WEEKLY_COMMITMENT_REVIEW_SOURCE,
+                created_by="system_seed",
+            )
+        )
+        await db.commit()
+        return 1
 
 
 def _to_db_datetime(value: datetime | None) -> datetime | None:
@@ -217,6 +288,19 @@ async def run_persistent_job(job_id: int) -> None:
                 notification_channel = result.get("notification_channel")
                 notification_channel_id = result.get("notification_channel_id")
                 notification_message_id = result.get("notification_message_id")
+        elif row.job_type == "weekly_commitment_review":
+            review = await _get_weekly_commitment_review()
+            message = _format_weekly_commitment_review(review)
+            if row.notification_mode != "silent":
+                delivery = await send_channel_message_result(
+                    row.target_channel or "weekly-review",
+                    message,
+                    channel_id=row.target_channel_id,
+                )
+                notification_channel = delivery.get("channel_name") or row.target_channel
+                notification_channel_id = delivery.get("channel_id") or row.target_channel_id
+                notification_message_id = delivery.get("message_id")
+                status = "delivered" if delivery.get("delivered") else "completed"
         else:
             status = "failed"
             error = f"Unsupported job_type '{row.job_type}'"
@@ -317,6 +401,7 @@ async def run_retention_prune_job():
 async def bootstrap_agent_jobs():
     """Register persisted jobs and keep legacy agent cadence in sync."""
     await seed_jobs_from_agent_cadence()
+    await seed_weekly_commitment_review_job()
     await fill_missing_job_descriptions()
     for row in await list_jobs():
         try:

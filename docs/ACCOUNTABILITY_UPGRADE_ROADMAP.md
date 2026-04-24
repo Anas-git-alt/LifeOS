@@ -96,7 +96,7 @@ Implemented:
 - Added deterministic `POST /api/life/daily-log`
 - Extended `GET /api/life/today` with `scorecard`, `next_prayer`, `rescue_plan`, `sleep_protocol`, `streaks`, and `trend_summary`
 - Redesigned WebUI `Today` around scorecard first, quick logs second, then next prayer, due work, and inbox-ready items
-- Added Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Added Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, `!shutdown`
 - Added accountability streaks and a 7-day trend summary
 - Added rule-based rescue plan for missing anchors and overdue high-priority work
 - Upgraded Discord `!today` to show scorecard, rescue state, sleep protocol, streaks, trend summary, and explicit empty states
@@ -120,10 +120,10 @@ Phase 2 user-facing result:
 
 ### Phase 2 Open Gaps
 
-Status: not done yet
+Status: partially closed
 
-- Discord quick logs still do not capture bedtime and wake time directly
-- Discord still has no dedicated quick commands for `family` and `priority` anchor logging
+- Discord quick logs now capture bedtime and wake time directly through `!sleep ... bed HH:MM wake HH:MM`
+- Discord now has dedicated `!family` and `!priority` quick commands
 - no calendar/email accountability integrations yet
 - no LLM-generated rescue plans by design
 
@@ -152,7 +152,7 @@ Implemented:
 - Added deterministic Today ranking with `focus_reason` and `follow_up_due_at`
 - Added WebUI `Commitment Radar` and `AI Focus Coach`
 - Added seeded `commitment-capture` and `commitment-coach` agents using free provider defaults
-- Added on-demand weekly commitment review
+- Added on-demand weekly commitment review and a scheduled Sunday 10:00 `#weekly-review` post
 - Hardened AI failure modes:
   - ready prose without `[INTAKE_JSON]` can still promote
   - AI coach endpoints fall back cleanly
@@ -293,10 +293,8 @@ Most valuable concrete pieces:
 
 - meal rotation with fallback meals
 - grocery and pantry support
-- family and priority quick-log shortcuts in Discord
 - training block planner and 15-minute fallback mode
 - protocol adjustments driven by the new streak and trend data
-- scheduled weekly commitment review after on-demand review stays reliable
 
 ## Definition Of Success
 

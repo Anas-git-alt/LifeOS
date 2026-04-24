@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # LLM Providers
     openrouter_api_key: str = ""
-    openrouter_default_model: str = "openrouter/auto"
+    openrouter_default_model: str = "openrouter/free"
     nvidia_api_key: str = ""
     nvidia_default_model: str = "meta/llama-3.1-8b-instruct"
     google_api_key: str = ""
@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_default_model: str = "gpt-4o-mini"
     default_provider: str = "openrouter"
+    free_only_mode: bool = True
+    nvidia_nim_free_tier_allowed: bool = True
+    shadow_router_enabled: bool = False
 
     # Tools
     brave_api_key: str = ""

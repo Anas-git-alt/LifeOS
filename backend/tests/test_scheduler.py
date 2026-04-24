@@ -137,3 +137,55 @@ async def test_run_persistent_job_respects_silent_once_job_delivery(monkeypatch)
     )
     assert record_job_run.await_args.kwargs["enabled"] is False
     assert record_job_run.await_args.kwargs["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_run_persistent_job_posts_weekly_commitment_review(monkeypatch):
+    row = SimpleNamespace(
+        id=31,
+        enabled=True,
+        paused=False,
+        schedule_type="cron",
+        job_type="weekly_commitment_review",
+        target_channel="weekly-review",
+        target_channel_id="987654321098765432",
+        notification_mode="channel",
+        expect_reply=False,
+    )
+    fake_scheduler = _FakeScheduler()
+    record_job_run = AsyncMock()
+    get_weekly_commitment_review = AsyncMock(
+        return_value={
+            "wins": ["Closed 1 commitment."],
+            "stale_commitments": ["Send invoice"],
+            "repeat_blockers": ["Too many open loops"],
+            "promises_at_risk": ["Call family"],
+            "simplify_next_week": ["Keep only 3 active commitments."],
+            "fallback_used": False,
+        }
+    )
+    send_channel_message_result = AsyncMock(
+        return_value={
+            "delivered": True,
+            "channel_id": "987654321098765432",
+            "message_id": "555",
+        }
+    )
+
+    monkeypatch.setattr("app.services.scheduler.scheduler", fake_scheduler)
+    monkeypatch.setattr("app.services.scheduler.get_job", AsyncMock(return_value=row))
+    monkeypatch.setattr("app.services.scheduler.record_job_run", record_job_run)
+    monkeypatch.setattr("app.services.scheduler._get_weekly_commitment_review", get_weekly_commitment_review)
+    monkeypatch.setattr("app.services.scheduler.send_channel_message_result", send_channel_message_result)
+
+    await run_persistent_job(31)
+
+    get_weekly_commitment_review.assert_awaited_once()
+    send_channel_message_result.assert_awaited_once()
+    assert send_channel_message_result.await_args.args[0] == "weekly-review"
+    assert "**Weekly commitment review**" in send_channel_message_result.await_args.args[1]
+    assert "- Closed 1 commitment." in send_channel_message_result.await_args.args[1]
+    assert record_job_run.await_args.kwargs["status"] == "delivered"
+    assert record_job_run.await_args.kwargs["notification_channel"] == "weekly-review"
+    assert record_job_run.await_args.kwargs["notification_channel_id"] == "987654321098765432"
+    assert record_job_run.await_args.kwargs["notification_message_id"] == "555"

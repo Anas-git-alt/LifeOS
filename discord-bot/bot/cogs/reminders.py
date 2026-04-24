@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 
 import discord
@@ -13,6 +14,11 @@ from bot.utils import api_get, api_post
 PRAYER_EMOJI_TO_STATUS = {"✅": "on_time", "🕒": "late", "❌": "missed"}
 VALID_PRAYER_STATUSES = {"on_time", "late", "missed"}
 VALID_PRAYERS = {"fajr": "Fajr", "dhuhr": "Dhuhr", "asr": "Asr", "maghrib": "Maghrib", "isha": "Isha"}
+_SLEEP_TIME_PATTERN = re.compile(
+    r"\b(bed(?:time)?|sleep|wake|woke|wakeup|wake-up|up)\s*(?:at)?\s*"
+    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+    re.IGNORECASE,
+)
 
 
 def _owner_ids() -> set[int]:
@@ -56,6 +62,47 @@ class RemindersCog(commands.Cog, name="Reminders"):
         except ValueError:
             return None, text
         return value, (rest[0] if rest else "").strip()
+
+    @staticmethod
+    def _clock_value(hour_text: str, minute_text: str | None, meridian_text: str | None) -> str | None:
+        hour = int(hour_text)
+        minute = int(minute_text or 0)
+        meridian = (meridian_text or "").lower()
+        if meridian == "pm" and hour < 12:
+            hour += 12
+        if meridian == "am" and hour == 12:
+            hour = 0
+        if hour > 23 or minute > 59:
+            return None
+        return f"{hour:02d}:{minute:02d}"
+
+    def _parse_sleep_details(self, details: str) -> dict:
+        hours, parsed_note = self._split_number_prefix(details, float)
+        note = parsed_note if hours is not None else (details or "").strip()
+        bedtime = None
+        wake_time = None
+        spans = []
+        for match in _SLEEP_TIME_PATTERN.finditer(note):
+            value = self._clock_value(match.group(2), match.group(3), match.group(4))
+            if not value:
+                continue
+            label = match.group(1).lower()
+            if label.startswith(("bed", "sleep")):
+                bedtime = value
+            else:
+                wake_time = value
+            spans.append(match.span())
+        cleaned = note
+        for start, end in sorted(spans, reverse=True):
+            cleaned = f"{cleaned[:start]} {cleaned[end:]}"
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-")
+        return {
+            "kind": "sleep",
+            "hours": hours,
+            "bedtime": bedtime,
+            "wake_time": wake_time,
+            "note": cleaned or None,
+        }
 
     @commands.command(name="prayer")
     async def prayer_check(self, ctx):
@@ -164,10 +211,8 @@ class RemindersCog(commands.Cog, name="Reminders"):
 
     @commands.command(name="sleep")
     async def log_sleep_quick(self, ctx, *, details: str = ""):
-        """Quick sleep log. Usage: !sleep 7.5 slept better / !sleep rough night"""
-        hours, parsed_note = self._split_number_prefix(details, float)
-        note = parsed_note if hours is not None else details.strip()
-        payload = {"kind": "sleep", "hours": hours, "note": note or None}
+        """Quick sleep log. Usage: !sleep 7.5 bed 23:30 wake 07:10 solid"""
+        payload = self._parse_sleep_details(details)
         try:
             result = await api_post("/life/daily-log", payload)
             await ctx.send(f"😴 {result['message']}")
@@ -237,6 +282,30 @@ class RemindersCog(commands.Cog, name="Reminders"):
             await ctx.send(f"🌙 {result['message']}")
         except Exception as exc:
             await ctx.send(f"Failed to log shutdown: {str(exc)[:180]}")
+
+    @commands.command(name="family")
+    async def log_family_quick(self, ctx, *, note: str = ""):
+        """Quick family anchor log. Usage: !family called parents"""
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {"kind": "family", "done": True, "note": note.strip() or None},
+            )
+            await ctx.send(f"💕 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log family action: {str(exc)[:180]}")
+
+    @commands.command(name="priority")
+    async def log_priority_quick(self, ctx, *, note: str = ""):
+        """Quick priority anchor log. Usage: !priority shipped invoice"""
+        try:
+            result = await api_post(
+                "/life/daily-log",
+                {"kind": "priority", "count": 1, "note": note.strip() or None},
+            )
+            await ctx.send(f"🎯 {result['message']}")
+        except Exception as exc:
+            await ctx.send(f"Failed to log priority: {str(exc)[:180]}")
 
     @commands.command(name="tahajjud")
     async def tahajjud(self, ctx, state: str, prayer_date: str | None = None):

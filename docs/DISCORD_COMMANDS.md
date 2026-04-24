@@ -135,7 +135,7 @@ Commitment behavior:
 - Snoozing or reopening a Life item resyncs its linked reminder.
 - `!focus` is deterministic priority ranking.
 - `!focuscoach` uses the commitment coach AI when available, and falls back to deterministic ranking if providers fail.
-- `!commitreview` gives an on-demand weekly commitment review. It is not auto-scheduled yet.
+- `!commitreview` gives an on-demand weekly commitment review. The same review is auto-posted every Sunday at 10:00 to `#weekly-review`.
 
 ## Prayer, Quran, Habits, And Quick Logs
 
@@ -144,10 +144,12 @@ Commitment behavior:
 - `!prayerlog <YYYY-MM-DD> <prayer> <status> [note]`
 - `!quran <end_page> [start_page] [note]`
 - `!quranprogress`
-- `!sleep [hours] [note]`
+- `!sleep [hours] [bed HH:MM] [wake HH:MM] [note]`
 - `!meal [count] [note]`
 - `!train [done|rest|missed] [note]`
 - `!water [count] [note]`
+- `!family [note]`
+- `!priority [note]`
 - `!shutdown [note]`
 - `!tahajjud <done|missed> [YYYY-MM-DD]`
 - `!adhkar <morning|evening> <done|missed> [YYYY-MM-DD]`
@@ -175,13 +177,15 @@ Examples:
 - `!prayerlog 2026-03-01 Fajr late overslept`
 - `!quran 25`
 - `!quran 40 26`
-- `!sleep 7.5 solid night`
+- `!sleep 7.5 bed 23:30 wake 07:10 solid night`
 - `!sleep rough night but up for Fajr`
 - `!meal 2 chicken rice`
 - `!meal protein shake`
 - `!train done push day`
 - `!train rest sore today`
 - `!water 2 after walk`
+- `!family called parents`
+- `!priority shipped invoice`
 - `!shutdown tomorrow planned and inbox clear`
 - `!adhkar morning done`
 - `!tahajjud missed 2026-03-05`
@@ -190,10 +194,11 @@ Examples:
 
 Quick-log behavior:
 
-- `!sleep` accepts leading float hours or note-only text.
-- `!sleep` does not currently accept bedtime or wake time; use WebUI `Today` or `Profile` for sleep protocol details.
+- `!sleep` accepts leading float hours, optional `bed HH:MM`, optional `wake HH:MM`, or note-only text.
 - `!meal` and `!water` accept leading integer count, default `1`.
 - `!train` accepts optional first token `done`, `rest`, or `missed`; default is `done`.
+- `!family` marks today's family-action anchor complete and stores optional note.
+- `!priority` increments today's completed-priority count and stores optional note.
 - `!shutdown` marks shutdown complete for today and stores optional note.
 - Quick-log replies echo compact scorecard state: meals, water, training, priorities, and rescue status.
 
@@ -294,7 +299,7 @@ Examples:
 
 1. Start with `!status`.
 2. Run `!today` or `!daily`.
-3. Log anchors as they happen with `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown`.
+3. Log anchors as they happen with `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, and `!shutdown`.
 4. Clear pending actions with `!pending`.
 5. Use `!schedule` for recurring reminders you would otherwise forget.
 6. Keep longer agent work in explicit sessions instead of one giant running thread.

@@ -401,7 +401,7 @@ class AutomationCog(commands.Cog, name="Automation"):
             "description": data["description"],
             "system_prompt": data["system_prompt"],
             "provider": data.get("provider", "openrouter"),
-            "model": data.get("model", "openrouter/auto"),
+                    "model": data.get("model", "openrouter/free"),
             "fallback_provider": data.get("fallback_provider"),
             "fallback_model": data.get("fallback_model"),
             "discord_channel": data["discord_channel"],

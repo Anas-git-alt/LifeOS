@@ -22,13 +22,14 @@ export default function ProviderConfig() {
           <div key={provider.name} className="glass-card">
             <div className="agent-card-header">
               <h3>{provider.name.toUpperCase()}</h3>
-              <span className={`badge ${provider.available ? "badge-approved" : "badge-rejected"}`}>
-                {provider.available ? "Configured" : "No API Key"}
+              <span className={`badge ${providerBadgeClass(provider)}`}>
+                {providerBadgeText(provider)}
               </span>
             </div>
             <div className="agent-meta">
               <span className="meta-tag">{provider.default_model}</span>
               <span className="meta-tag">{provider.base_url}</span>
+              {provider.free_mode_reason && <span className="meta-tag">{provider.free_mode_reason}</span>}
             </div>
           </div>
         ))}
@@ -46,4 +47,16 @@ export default function ProviderConfig() {
       </div>
     </div>
   );
+}
+
+function providerBadgeClass(provider) {
+  if (!provider.available) return "badge-rejected";
+  if (provider.free_mode_allowed === false) return "badge-pending";
+  return "badge-approved";
+}
+
+function providerBadgeText(provider) {
+  if (!provider.available) return "No API Key";
+  if (provider.free_mode_allowed === false) return "Blocked by free mode";
+  return "Free-mode ready";
 }

@@ -26,7 +26,7 @@ const apiMocks = vi.hoisted(() => ({
     description: "Sandbox",
     system_prompt: "You are sandbox.",
     provider: "openrouter",
-    model: "openrouter/auto",
+    model: "openrouter/free",
     fallback_provider: "",
     fallback_model: "",
     discord_channel: "",

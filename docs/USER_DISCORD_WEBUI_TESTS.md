@@ -14,7 +14,7 @@ This checklist mixes two kinds of validation:
 Already implemented and covered locally before this manual pass:
 
 - Discord smoke commands `!status`, `!agents`, and `!today`
-- Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!shutdown`
+- Discord quick-log commands: `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, `!shutdown`
 - WebUI `Today` accountability board
 - WebUI quick-log interactions
 - WebUI pending chat state with `Thinking...`, elapsed timer, and `View request status`
@@ -49,7 +49,7 @@ Latest automated verification now also includes VPS-side test runs:
 - Branch: `codex/commitment-loop-ai`
 - Main user-visible areas touched by this validation pass:
   - Today accountability board with scorecard, next prayer, rescue plan, sleep protocol, streaks, trend summary, and quick logs
-  - Discord quick-log commands for sleep, meals, training, water, and shutdown
+  - Discord quick-log commands for sleep, meals, training, water, family, priority, and shutdown
   - richer Discord `!today` output with explicit empty-state fields
   - Discord commitment commands: `!commit`, `!commitfollow`, `!snooze`, `!focuscoach`, `!commitreview`
   - WebUI Today commitment radar and AI focus coach card
@@ -65,6 +65,8 @@ Validated live by user on 2026-04-19:
 - `!meal`
 - `!train`
 - `!water`
+- `!family`
+- `!priority`
 - `!shutdown`
 - WebUI Today/Profile flows related to the new accountability features
 
@@ -175,10 +177,12 @@ Status:
 Commands:
 
 ```text
-!sleep 7.5 solid night
+!sleep 7.5 bed 23:30 wake 07:10 solid night
 !meal protein shake
 !train rest sore today
 !water 2 after walk
+!family called parents
+!priority shipped invoice
 !shutdown tomorrow planned
 ```
 
@@ -188,6 +192,8 @@ Expected:
 - Reply contains compact scorecard summary like `Meals`, `water`, `train`, `priorities`, and `rescue`.
 - `!meal protein shake` marks protein context without extra prompt.
 - `!train rest ...` keeps training state explicit as `rest`.
+- `!sleep ... bed ... wake ...` records bedtime and wake time.
+- `!family` and `!priority` update the two daily anchors that rescue planning watches.
 
 ### 6. Discord `!today` summary
 
@@ -260,6 +266,7 @@ Expected:
 - `Mode: fallback` appears with a useful deterministic response when providers are unavailable or time out.
 - The primary item is chosen only from existing ranked commitments.
 - `!commitreview` returns wins, stale commitments, repeat blockers, promises at risk, next-week simplification, and mode.
+- The same review is also scheduled weekly for Sunday 10:00 in `#weekly-review`.
 
 ## WebUI Tests
 
@@ -433,7 +440,8 @@ Open `Experiments`.
 Expected:
 
 - Page renders
-- Provider experiment data or empty state appears normally
+- Provider experiment data or empty state appears normally.
+- Header shows whether shadow routing is on and whether free-only mode is active.
 
 ## Workspace Prompt Regression Test
 

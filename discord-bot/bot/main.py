@@ -44,6 +44,7 @@ HELP_TOPICS = {
     "life": (
         "Life item and agenda tracking.\n"
         "`!today` `!focus` `!profile`\n"
+        "`!sleep` `!meal` `!train` `!water` `!family` `!priority` `!shutdown`\n"
         "`!meeting <summary>` `!add <domain> <text>` `!items [domain] [status]`\n"
         "`!done <id> [note]` `!miss <id> [note]` `!reopen <id>` `!goal <domain> <title>` `!goalprogress <id>`"
     ),
@@ -131,7 +132,7 @@ async def custom_help(ctx, *, topic: str = ""):
     )
     embed.add_field(name="Agent", value="`!ask` `!sandbox` `!agents` `!daily` `!weekly`", inline=False)
     embed.add_field(name="Sessions", value="`!sessions` `!newsession` `!usesession` `!renamesession` `!clearsession` `!history`", inline=False)
-    embed.add_field(name="Life", value="`!today` `!focus` `!meeting` `!profile` `!add` `!items` `!done` `!miss` `!reopen` `!goal` `!goalprogress`", inline=False)
+    embed.add_field(name="Life", value="`!today` `!focus` `!sleep` `!meal` `!train` `!water` `!family` `!priority` `!shutdown` `!meeting` `!profile` `!add` `!items` `!done` `!miss` `!reopen` `!goal` `!goalprogress`", inline=False)
     embed.add_field(name="Deen", value="`!prayer` `!prayertoday` `!prayerlog` `!quran` `!quranprogress` `!tahajjud` `!adhkar`", inline=False)
     embed.add_field(name="Approvals", value="`!pending` `!approve` `!reject`", inline=False)
     embed.add_field(name="Jobs", value="`!schedule` `!spawnagent` `!reply` `!cancel` `!jobs` `!job` `!pausejob` `!resumejob` `!jobruns`", inline=False)

@@ -76,5 +76,10 @@ Notes:
 ## Remaining Non-Blocking Gaps
 
 - `!agents` and `!prayertoday` were not re-run in this exact manual pass.
-- Discord still lacks direct quick commands for `family` and `priority` anchors.
-- Discord quick sleep logging still does not accept bedtime/wake-time fields directly.
+- Historical at this pass: Discord lacked direct quick commands for `family` and `priority` anchors.
+- Historical at this pass: Discord quick sleep logging did not accept bedtime/wake-time fields directly.
+
+Update on current branch:
+
+- Added `!family` and `!priority` quick logs.
+- `!sleep` now accepts `bed HH:MM` and `wake HH:MM`.

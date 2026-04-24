@@ -46,7 +46,7 @@ cp compose.env.example .env
 - `DISCORD_GUILD_ID`
 - `DISCORD_OWNER_IDS`
 - `API_SECRET_KEY`
-- At least one provider key: `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `GOOGLE_API_KEY`, or `OPENAI_API_KEY`
+- At least one free-friendly provider key: `OPENROUTER_API_KEY` with `OPENROUTER_DEFAULT_MODEL=openrouter/free`, or `NVIDIA_API_KEY` for NIM free-tier endpoints. `FREE_ONLY_MODE=true` blocks paid OpenAI/Google paths by default.
 
 Recommended:
 
@@ -94,7 +94,7 @@ After the stack is up, do this once before relying on automations:
 4. In Discord, run `!status`, `!agents`, `!today`, and `!prayertoday`.
 5. In WebUI `Agents`, inspect the seeded agents and adjust prompts, cadence, fallback models, voice settings, or workspace access as needed.
 6. In WebUI `Today`, confirm scorecard, next prayer, rescue plan, and quick-log buttons render for your local day.
-7. In Discord, try one quick accountability log such as `!sleep 7.5 solid night` or `!water 2 after walk`.
+7. In Discord, try quick accountability logs such as `!sleep 7.5 bed 23:30 wake 07:10 solid night`, `!family called parents`, or `!priority shipped invoice`.
 8. In Discord, try one commitment loop such as `!commit send invoice tomorrow at 9am`, then check `!focus`.
 
 Seeded by default:
@@ -128,17 +128,17 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
 - Prefer approval queues for risky changes. New agents and natural-language job creation are safer when you queue them first and review them in `Approvals`.
 - Keep workspace access narrow. If an agent needs repo access, enable workspace support only for the paths it really needs, then use `Sync Workspace` and rely on archives for rollback.
-- Watch `Experiments` before changing providers. The project now tracks live provider telemetry, circuit-breaker state, and shadow-router results.
+- Watch `Experiments` before changing providers. The project tracks live provider telemetry, circuit-breaker state, and shadow-router results when `SHADOW_ROUTER_ENABLED=true`; it is off by default to protect free quota.
 - Treat voice as an explicit feature. Enable speech on the agent, preview its voice in WebUI, then use `!joinvoice`, `!speak`, and `!interrupt` in Discord.
-- Use quick logs for anchors instead of waiting for review. `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` update same-day accountability state immediately.
+- Use quick logs for anchors instead of waiting for review. `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, and `!shutdown` update same-day accountability state immediately.
 
 Useful example workflows:
 
 - Daily planning: `!daily`, then refine in a dedicated `daily-planner` session.
-- Quick accountability log: `!meal protein shake`, `!water 2 after walk`, `!train rest sore today`, `!shutdown inbox zero`.
+- Quick accountability log: `!sleep 7.5 bed 23:30 wake 07:10`, `!meal protein shake`, `!water 2 after walk`, `!train rest sore today`, `!family called parents`, `!priority shipped invoice`, `!shutdown inbox zero`.
 - Commitment capture: `!commit create the Canva file deadline is today eod`, then `!focuscoach`.
 - Commitment follow-up: `!commitfollow 8 specific action is to create the mockup, deadline is today eod`.
-- Commitment review: `!commitreview`.
+- Commitment review: `!commitreview`; the same review is also posted weekly on Sunday 10:00 in `#weekly-review`.
 - New reminder job: `!schedule every weekday at 7:30 remind me to stretch in #fitness-log using health-fitness`
 - One-time background job: `!schedule tomorrow at 9am remind me to review /workspace/docs/spec.md using sandbox silently`
 - One-time Discord post: `!schedule in 10 min remind me to post the recap notify in <#123456789012345678> using sandbox`

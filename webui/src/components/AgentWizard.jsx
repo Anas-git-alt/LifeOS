@@ -9,7 +9,7 @@ const DEFAULT_FORM = {
   cadence: "0 8 *",
   approval_policy: "auto",
   provider: "openrouter",
-  model: "openrouter/auto",
+  model: "openrouter/free",
   workspace_enabled: false,
   workspace_paths_text: DEFAULT_WORKSPACE_PATH,
 };

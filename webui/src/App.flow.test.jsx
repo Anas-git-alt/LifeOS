@@ -139,10 +139,27 @@ const apiMocks = vi.hoisted(() => ({
   createLifeItem: vi.fn(async () => ({ id: 8 })),
   updateLifeItem: vi.fn(async () => ({})),
   checkinLifeItem: vi.fn(async () => ({})),
-  getAgents: vi.fn(async () => [{ id: 1, name: "planner", description: "Plans the day", provider: "openai", model: "gpt-5", enabled: true }]),
+  getAgents: vi.fn(async () => [{ id: 1, name: "planner", description: "Plans the day", provider: "openrouter", model: "openrouter/free", enabled: true }]),
   deleteAgent: vi.fn(async () => ({})),
   createAgent: vi.fn(async () => ({})),
-  getProviders: vi.fn(async () => [{ name: "openai", available: true, default_model: "gpt-5", base_url: "https://api.openai.com" }, { name: "anthropic", available: false, default_model: "claude", base_url: "https://api.anthropic.com" }]),
+  getProviders: vi.fn(async () => [
+    {
+      name: "openrouter",
+      available: true,
+      default_model: "openrouter/free",
+      base_url: "https://openrouter.ai/api/v1",
+      free_mode_allowed: true,
+      free_mode_reason: null,
+    },
+    {
+      name: "openai",
+      available: false,
+      default_model: "gpt-4o-mini",
+      base_url: "https://api.openai.com/v1",
+      free_mode_allowed: false,
+      free_mode_reason: "free_only_mode blocks provider `openai`",
+    },
+  ]),
   getCapabilities: vi.fn(async () => ({ vision: { enabled: true }, tools: { enabled: false, reason: "disabled in config" } })),
   getExperiments: vi.fn(async () => ({
     experiments: [
@@ -159,8 +176,12 @@ const apiMocks = vi.hoisted(() => ({
         promoted: false,
       },
     ],
+    shadow_router_enabled: false,
+    free_only_mode: true,
   })),
   getProviderTelemetry: vi.fn(async () => ({
+    shadow_router_enabled: false,
+    free_only_mode: true,
     providers: [
       {
         provider: "openai",
@@ -215,7 +236,7 @@ describe("App flow smoke", () => {
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     renderApp();
 
-    await screen.findAllByRole("heading", { name: "Mission Control" });
+    await screen.findAllByRole("heading", { name: "Today Focus" });
     for (const target of NAV_EXPECTATIONS) {
       fireEvent.click(screen.getAllByRole("button", { name: target.label })[0]);
       const headings = await screen.findAllByRole("heading", { name: target.heading });
@@ -230,7 +251,7 @@ describe("App flow smoke", () => {
     renderApp();
     fireEvent.click(screen.getAllByRole("button", { name: /^Providers$/i })[0]);
 
-    const configured = await screen.findByText("Configured");
+    const configured = await screen.findByText("Free-mode ready");
     const noApiKey = await screen.findByText("No API Key");
 
     expect(configured.className).toContain("badge-approved");

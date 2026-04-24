@@ -450,7 +450,7 @@ def parse_agent_prompt(text: str) -> dict:
         missing.append("approval_policy")
 
     data.setdefault("provider", "openrouter")
-    data.setdefault("model", "openrouter/auto")
+    data.setdefault("model", "openrouter/free")
     data.setdefault("enabled", True)
 
     return {"data": data, "missing": missing}

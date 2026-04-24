@@ -24,13 +24,14 @@
 - [x] `!status` works in Discord on the live server.
 - [x] `!today` works in Discord on the live server.
 - [x] Local/VPS automated coverage exists for Discord smoke commands `!status`, `!agents`, `!today`, plus warning-note handling.
-- [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` are implemented and covered locally.
+- [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, and `!shutdown` are implemented and covered locally.
 - [x] Discord quick logs `!sleep`, `!meal`, `!train`, `!water`, and `!shutdown` work and return updated summary text on the live server.
 - [x] Discord commitment capture `!commit` and `!commitfollow` are implemented and covered locally.
 - [x] Discord commitment capture promotes ready commitments, keeps clarifying commitments in Inbox, and creates linked reminders.
 - [x] Discord commitment follow-up by inbox id works on staging and avoids duplicate Life items for the same inbox/session.
 - [x] Discord commitment deadlines support `today eod` and `tomorrow end of day`.
 - [x] Discord `!snooze`, `!focuscoach`, and `!commitreview` are implemented and covered locally.
+- [x] Weekly commitment review is scheduled for Sunday 10:00 in `#weekly-review`.
 - [ ] Agent chat works through Discord and WebUI.
 - [ ] Session flows work end to end: create, switch, rename, clear, and history restore.
 - [ ] Approvals work through both commands and emoji reactions for owner users only.
@@ -50,6 +51,7 @@
 - [ ] Prayer dashboard loads and prayer check-ins can be edited from WebUI.
 - [ ] Quran logging and progress tracking work.
 - [ ] Provider telemetry and experiment history load in WebUI.
+- [ ] Free-only provider mode is active unless a deliberate paid-provider test sets `FREE_ONLY_MODE=false`.
 - [ ] Voice preview works in WebUI for a speech-enabled agent.
 - [ ] Discord voice join, speak, interrupt, and leave flows work if voice is part of the release scope.
 

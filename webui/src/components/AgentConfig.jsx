@@ -731,7 +731,7 @@ export default function AgentConfig({ agentName, onBack }) {
               <input
                 value={form.model}
                 onChange={(event) => setForm({ ...form, model: event.target.value })}
-                placeholder="e.g. openrouter/auto"
+                placeholder="e.g. openrouter/free"
               />
             </div>
           </div>

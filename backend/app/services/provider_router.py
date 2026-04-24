@@ -69,6 +69,27 @@ class LLMProvidersExhaustedError(RuntimeError):
         super().__init__(f"All LLM providers failed ({', '.join(failures)}).")
 
 
+def free_mode_rejection(provider: str, model: Optional[str]) -> str | None:
+    """Return reason a provider/model is blocked in free-only mode, else None."""
+    if not settings.free_only_mode:
+        return None
+
+    provider_name = str(provider or "").strip().lower()
+    model_name = str(model or "").strip()
+
+    if provider_name == "openrouter":
+        if not model_name:
+            model_name = settings.openrouter_default_model
+        if model_name == "openrouter/free" or model_name.endswith(":free"):
+            return None
+        return "free_only_mode requires OpenRouter model `openrouter/free` or a `:free` model id"
+
+    if provider_name == "nvidia" and settings.nvidia_nim_free_tier_allowed:
+        return None
+
+    return f"free_only_mode blocks provider `{provider_name}`"
+
+
 def _summarize_failure(provider: str, exc: Exception) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return f"{provider}:timeout"
@@ -77,6 +98,13 @@ def _summarize_failure(provider: str, exc: Exception) -> str:
     if isinstance(exc, ValueError):
         return f"{provider}:config"
     return f"{provider}:error"
+
+
+def _free_mode_failure(provider: str, model: Optional[str]) -> str | None:
+    reason = free_mode_rejection(provider, model)
+    if not reason:
+        return None
+    return f"{provider}:free_only_blocked"
 
 
 async def chat_completion(
@@ -90,8 +118,12 @@ async def chat_completion(
 ) -> str:
     failures: list[str] = []
 
+    free_block = _free_mode_failure(provider, model)
+    if free_block:
+        logger.warning("Free-only mode blocked primary provider '%s' model '%s'.", provider, model)
+        failures.append(free_block)
     # Skip circuit-open primary provider immediately to avoid latency penalty.
-    if telemetry.is_circuit_open(provider):
+    elif telemetry.is_circuit_open(provider):
         logger.warning("Circuit open for primary provider '%s', skipping.", provider)
         failures.append(f"{provider}:circuit_open")
     else:
@@ -102,7 +134,15 @@ async def chat_completion(
             logger.warning("Primary provider failed: %s", failures[-1])
 
     if fallback_provider:
-        if telemetry.is_circuit_open(fallback_provider):
+        free_block = _free_mode_failure(fallback_provider, fallback_model)
+        if free_block:
+            logger.warning(
+                "Free-only mode blocked fallback provider '%s' model '%s'.",
+                fallback_provider,
+                fallback_model,
+            )
+            failures.append(free_block)
+        elif telemetry.is_circuit_open(fallback_provider):
             logger.warning("Circuit open for fallback provider '%s', skipping.", fallback_provider)
             failures.append(f"{fallback_provider}:circuit_open")
         else:
@@ -118,12 +158,17 @@ async def chat_completion(
         api_key = getattr(settings, PROVIDERS[provider_name]["api_key_attr"], "")
         if not api_key:
             continue
+        default_model = getattr(settings, PROVIDERS[provider_name]["default_model_attr"], "")
+        free_block = _free_mode_failure(provider_name, default_model)
+        if free_block:
+            failures.append(free_block)
+            continue
         if telemetry.is_circuit_open(provider_name):
             logger.debug("Circuit open for sweep provider '%s', skipping.", provider_name)
             failures.append(f"{provider_name}:circuit_open")
             continue
         try:
-            return await _call_provider(provider_name, None, messages, temperature, max_tokens)
+            return await _call_provider(provider_name, default_model, messages, temperature, max_tokens)
         except Exception as exc:
             failures.append(_summarize_failure(provider_name, exc))
             continue
@@ -137,6 +182,8 @@ async def _call_provider(
     messages: list[dict],
     temperature: float,
     max_tokens: int,
+    *,
+    enable_shadow: bool = True,
 ) -> str:
     """Send a chat-completion request to a provider with exponential-backoff retry.
 
@@ -152,6 +199,10 @@ async def _call_provider(
 
     if not model:
         model = getattr(settings, config["default_model_attr"])
+
+    reason = free_mode_rejection(provider, model)
+    if reason:
+        raise ValueError(reason)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -185,14 +236,14 @@ async def _call_provider(
             latency_ms = (time.monotonic() - t0) * 1000
             tokens = data.get("usage", {}).get("total_tokens", 0)
             telemetry.record_call(provider, model, latency_ms, tokens, success=True)
-            # Fire-and-forget shadow test — does NOT block this response.
-            try:
-                from app.services.shadow_router import maybe_shadow_test
-                asyncio.create_task(
-                    maybe_shadow_test(messages, content, provider, model)
-                )
-            except Exception:
-                pass  # Shadow testing must never affect production flow
+            if enable_shadow and settings.shadow_router_enabled:
+                try:
+                    from app.services.shadow_router import maybe_shadow_test
+                    asyncio.create_task(
+                        maybe_shadow_test(messages, content, provider, model)
+                    )
+                except Exception:
+                    pass  # Shadow testing must never affect production flow
             return content
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             latency_ms = (time.monotonic() - t0) * 1000
@@ -233,6 +284,15 @@ def get_available_providers() -> list[dict]:
                 "available": bool(api_key),
                 "base_url": config["base_url"],
                 "default_model": getattr(settings, config["default_model_attr"]),
+                "free_mode_allowed": free_mode_rejection(
+                    name,
+                    getattr(settings, config["default_model_attr"]),
+                )
+                is None,
+                "free_mode_reason": free_mode_rejection(
+                    name,
+                    getattr(settings, config["default_model_attr"]),
+                ),
             }
         )
     return result

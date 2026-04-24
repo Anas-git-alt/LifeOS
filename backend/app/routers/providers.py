@@ -16,7 +16,13 @@ async def list_providers():
 @router.get("/capabilities")
 async def list_capabilities():
     return {
-        "calendar": {"enabled": False, "reason": "not_configured"},
-        "email": {"enabled": False, "reason": "not_configured"},
+        "free_only_mode": {
+            "enabled": settings.free_only_mode,
+            "reason": "active" if settings.free_only_mode else "disabled",
+        },
+        "shadow_router": {
+            "enabled": settings.shadow_router_enabled,
+            "reason": "enabled" if settings.shadow_router_enabled else "disabled_by_default_for_free_quota",
+        },
         "web_search": {"enabled": True, "provider": "brave" if settings.brave_api_key else "duckduckgo"},
     }
