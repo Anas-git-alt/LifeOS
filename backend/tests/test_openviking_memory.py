@@ -243,7 +243,6 @@ async def test_openviking_client_repair_failed_session_archives(monkeypatch):
             _message_line("2", "assistant", "Answer", "2026-03-24T10:27:49.958Z"),
         ]
     )
-    writes: list[tuple[str, str]] = []
     removed: list[str] = []
 
     async def fake_read_content(uri: str, *, agent_name=None, offset=0, limit=-1):
@@ -255,22 +254,14 @@ async def test_openviking_client_repair_failed_session_archives(monkeypatch):
             return mapping[uri]
         raise OpenVikingApiError("missing", code="NOT_FOUND", status_code=404)
 
-    async def fake_write_content(uri: str, content: str, **_kwargs):
-        writes.append((uri, content))
-        return {}
-
     async def fake_rm(uri: str, *, recursive=True):
         removed.append(uri)
         return {}
 
     monkeypatch.setattr(openviking_client, "read_content", fake_read_content)
-    monkeypatch.setattr(openviking_client, "write_content", fake_write_content)
     monkeypatch.setattr(openviking_client, "rm", fake_rm)
 
     repaired = await openviking_client.repair_failed_session_archives("sandbox", 62)
 
     assert repaired[0]["archive_id"] == "archive_001"
-    assert writes[0][0] == f"{archive_uri}/.done"
-    assert '"starting_message_id": "1"' in writes[0][1]
-    assert '"ending_message_id": "2"' in writes[0][1]
     assert removed == [f"{archive_uri}/.failed.json"]

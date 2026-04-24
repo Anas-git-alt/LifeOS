@@ -326,24 +326,7 @@ class OpenVikingClient:
                     continue
                 raise
 
-            messages = _parse_session_message_lines(messages_content, agent_name, session_id)
-            first_id = str((messages[0] if messages else {}).get("id") or "")
-            last_id = str((messages[-1] if messages else {}).get("id") or "")
-            done_payload = json.dumps(
-                {
-                    "starting_message_id": first_id,
-                    "ending_message_id": last_id,
-                    "recovered_by": "lifeos",
-                    "recovered_at": datetime.now(timezone.utc).isoformat(),
-                },
-                ensure_ascii=False,
-            )
-            await self.write_content(
-                f"{archive_uri}/.done",
-                done_payload,
-                agent_name=agent_name,
-                wait=False,
-            )
+            _parse_session_message_lines(messages_content, agent_name, session_id)
             try:
                 await self.rm(f"{archive_uri}/.failed.json", recursive=False)
             except OpenVikingApiError as exc:

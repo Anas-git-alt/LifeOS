@@ -32,6 +32,21 @@ if _disabled(os.getenv("OPENVIKING_EMBEDDING_SEND_DIMENSIONS")):
         OpenAIDenseEmbedder._should_send_dimensions = _lifeos_do_not_send_dimensions
     except Exception:
         pass
+
+if not _disabled(os.getenv("OPENVIKING_SESSION_IGNORE_FAILED_ARCHIVES", "true")):
+    try:
+        from openviking.session.session import Session
+
+        async def _lifeos_no_blocking_failed_archive(self):
+            return None
+
+        async def _lifeos_previous_archive_done(self, archive_index):
+            return True
+
+        Session._get_blocking_failed_archive_ref = _lifeos_no_blocking_failed_archive
+        Session._wait_for_previous_archive_done = _lifeos_previous_archive_done
+    except Exception:
+        pass
 '''.lstrip(),
         encoding="utf-8",
     )
