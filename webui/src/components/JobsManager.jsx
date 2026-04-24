@@ -114,6 +114,19 @@ function runStatusBadge(status) {
   return "badge-rejected";
 }
 
+function runReplyStateText(run, job) {
+  if (!job?.expect_reply || !run) return "";
+  const replyCount = Number(run.reply_count || 0);
+  if (replyCount > 0) return `${replyCount} repl${replyCount === 1 ? "y" : "ies"} received`;
+  if (run.no_reply_follow_up_sent_at) {
+    return `follow-up sent ${formatInTimezone(run.no_reply_follow_up_sent_at, job.timezone)}`;
+  }
+  if (run.awaiting_reply_until) {
+    return `awaiting reply until ${formatInTimezone(run.awaiting_reply_until, job.timezone)}`;
+  }
+  return "awaiting reply";
+}
+
 export default function JobsManager() {
   const [jobs, setJobs] = useState([]);
   const [agents, setAgents] = useState([]);
@@ -461,6 +474,7 @@ export default function JobsManager() {
                 const status = jobStatusMeta(job);
                 const latestRun = runsByJob[job.id]?.[0];
                 const latestRunDetail = getJobRunDetail(latestRun);
+                const replyState = runReplyStateText(latestRun, job);
                 return (
                   <article key={job.id} className="glass-card job-card">
                     <div className="job-card-head">
@@ -490,6 +504,7 @@ export default function JobsManager() {
                             {getJobRunDetailLabel(latestRun?.status)}: {latestRunDetail}
                           </p>
                         )}
+                        {replyState && <p className="job-card-meta">Reply state: {replyState}</p>}
                         {job.last_error && <p className="error-text job-card-meta">Last error: {job.last_error}</p>}
                       </div>
                       <div className="job-card-actions">
@@ -516,6 +531,7 @@ export default function JobsManager() {
                               {formatInTimezone(run.created_at, job.timezone, run.created_at)} ·{" "}
                               <span className={`badge ${runStatusBadge(run.status)}`}>{run.status}</span>
                               {getJobRunDetail(run) ? ` · ${getJobRunDetail(run)}` : ""}
+                              {runReplyStateText(run, job) ? ` · Reply: ${runReplyStateText(run, job)}` : ""}
                             </li>
                           ))}
                         </ul>

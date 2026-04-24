@@ -12,7 +12,7 @@ from app.config import settings
 from app.database import async_session
 from app.main import app
 from app.models import ContextEvent, JobRunLog, LifeCheckin, LifeItem, ScheduledJobCreate
-from app.services.context_events import run_no_reply_followups
+from app.services.context_events import capture_job_reply, run_no_reply_followups
 from app.services.jobs import create_job, record_job_run
 from app.services.vault import obsidian_vault_root
 
@@ -94,6 +94,59 @@ async def test_job_run_records_notification_reply_deadline():
     assert run.notification_message_id == "456"
     assert run.awaiting_reply_until is not None
     assert run.reply_count == 0
+
+
+@pytest.mark.asyncio
+async def test_capture_job_reply_publishes_realtime_update(monkeypatch):
+    publish_event = AsyncMock()
+    monkeypatch.setattr("app.services.context_events.publish_event", publish_event)
+    monkeypatch.setattr(
+        "app.services.context_events.curate_context_event",
+        AsyncMock(side_effect=lambda event_id: (type("Event", (), {"id": event_id})(), [], [])),
+    )
+
+    job = await create_job(
+        ScheduledJobCreate(
+            name="Reply ack",
+            agent_name="sandbox",
+            schedule_type="once",
+            run_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            notification_mode="channel",
+            target_channel="planning",
+            expect_reply=True,
+        )
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    await record_job_run(
+        job_id=job.id,
+        started_at=now,
+        finished_at=now,
+        status="delivered",
+        message="ok",
+        error=None,
+        last_run_at=now,
+        next_run_at=None,
+        notification_channel="planning",
+        notification_channel_id="123",
+        notification_message_id="abc123",
+        awaiting_reply_until=now + timedelta(minutes=10),
+    )
+
+    payload = type(
+        "ReplyPayload",
+        (),
+        {
+            "notification_message_id": "abc123",
+            "reply_text": "checking in",
+            "discord_channel_id": "123",
+            "discord_reply_message_id": "reply-1",
+            "discord_user_id": "42",
+            "source": "discord_reply",
+        },
+    )()
+    await capture_job_reply(payload)
+    assert publish_event.await_count >= 1
+    assert any(call.args[0] == "jobs.run.updated" for call in publish_event.await_args_list)
 
 
 def test_job_reply_links_run_creates_event_and_commitment_checkin():

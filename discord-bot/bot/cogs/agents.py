@@ -539,7 +539,10 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @commands.Cog.listener("on_message")
     async def capture_notification_reply(self, message):
-        if getattr(message.author, "bot", False):
+        author = getattr(message, "author", None)
+        author_id = getattr(author, "id", None)
+        bot_user_id = getattr(getattr(self.bot, "user", None), "id", None)
+        if bot_user_id is not None and author_id == bot_user_id:
             return
         content = str(getattr(message, "content", "") or "").strip()
         if not content or content.startswith("!"):
@@ -560,6 +563,10 @@ class AgentsCog(commands.Cog, name="Agents"):
                     "source": "discord_reply",
                 },
             )
+            try:
+                await message.add_reaction("✅")
+            except Exception:
+                pass
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return

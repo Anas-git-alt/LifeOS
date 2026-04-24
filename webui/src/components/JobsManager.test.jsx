@@ -13,6 +13,9 @@ vi.mock("../api", () => ({
       status: "skipped",
       message: "{'status': 'skipped', 'reason': 'memory_unavailable'}",
       error: null,
+      reply_count: 1,
+      awaiting_reply_until: "2026-03-02T08:00:00Z",
+      no_reply_follow_up_sent_at: null,
       created_at: "2026-03-02T07:30:00Z",
     },
   ]),
@@ -57,6 +60,7 @@ describe("JobsManager", () => {
 
     await screen.findByText(/Morning stretch/i);
     await screen.findByText(/Skip reason: memory unavailable/i);
+    await screen.findByText(/Reply state: 1 reply received/i);
     fireEvent.click(screen.getByRole("button", { name: /^pause$/i }));
 
     await waitFor(() => expect(pauseJob).toHaveBeenCalledWith(11));

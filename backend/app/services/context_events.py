@@ -18,6 +18,7 @@ from app.models import (
     SharedMemoryPromoteRequest,
     SharedMemoryProposal,
 )
+from app.services.events import publish_event
 from app.services.discord_notify import send_channel_message
 from app.services.shared_memory import create_shared_memory_review_proposal, list_shared_memory_proposals
 
@@ -33,6 +34,12 @@ def _now_naive_utc() -> datetime:
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc).isoformat()
 
 
 def _infer_domain(text: str, fallback: str | None = None) -> str:
@@ -289,6 +296,19 @@ async def capture_job_reply(payload) -> tuple[ContextEvent, JobRunLog, int | Non
         await db.refresh(run)
         await db.refresh(event)
 
+    await publish_event(
+        "jobs.run.updated",
+        {"kind": "job_run", "id": str(run.id)},
+        {
+            "job_id": run.job_id,
+            "run_id": run.id,
+            "status": run.status,
+            "reply_count": run.reply_count,
+            "awaiting_reply_until": _iso(run.awaiting_reply_until),
+            "no_reply_follow_up_sent_at": _iso(run.no_reply_follow_up_sent_at),
+        },
+    )
+
     life_checkin_id: int | None = None
     life_checkin_result: str | None = None
     if event.life_item_id:
@@ -353,5 +373,17 @@ async def run_no_reply_followups(now: datetime | None = None) -> dict[str, int]:
             )
             db.add(event)
             await db.commit()
+            await publish_event(
+                "jobs.run.updated",
+                {"kind": "job_run", "id": str(current_run.id)},
+                {
+                    "job_id": current_run.job_id,
+                    "run_id": current_run.id,
+                    "status": current_run.status,
+                    "reply_count": current_run.reply_count,
+                    "awaiting_reply_until": _iso(current_run.awaiting_reply_until),
+                    "no_reply_follow_up_sent_at": _iso(current_run.no_reply_follow_up_sent_at),
+                },
+            )
             sent += 1
     return {"sent": sent, "checked": len(rows)}

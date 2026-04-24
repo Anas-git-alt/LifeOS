@@ -44,13 +44,17 @@ class _Reference:
 
 
 class _Message:
-    def __init__(self, *, content: str, message_id: int = 50, reference_id: int | None = None, bot: bool = False):
+    def __init__(self, *, content: str, message_id: int = 50, reference_id: int | None = None, bot: bool = False, author_id: int = 3):
         self.id = message_id
         self.content = content
         self.reference = _Reference(reference_id) if reference_id else None
         self.channel = _Dummy(2, "planning")
-        self.author = _Dummy(3)
+        self.author = _Dummy(author_id)
         self.author.bot = bot
+        self.reactions: list[str] = []
+
+    async def add_reaction(self, emoji: str):
+        self.reactions.append(emoji)
 
 
 def _not_found(path: str):
@@ -96,10 +100,10 @@ async def test_notification_reply_listener_posts_job_reply(monkeypatch):
 
     monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
 
-    cog = AgentsCog(bot=object())
-    await cog.capture_notification_reply(
-        _Message(content="Done, invoice sent.", message_id=101, reference_id=99)
-    )
+    bot = type("Bot", (), {"user": _Dummy(999)})()
+    message = _Message(content="Done, invoice sent.", message_id=101, reference_id=99, bot=True, author_id=3)
+    cog = AgentsCog(bot=bot)
+    await cog.capture_notification_reply(message)
 
     assert calls == [
         (
@@ -114,10 +118,11 @@ async def test_notification_reply_listener_posts_job_reply(monkeypatch):
             },
         )
     ]
+    assert message.reactions == ["✅"]
 
 
 @pytest.mark.asyncio
-async def test_notification_reply_listener_ignores_non_replies_commands_and_bots(monkeypatch):
+async def test_notification_reply_listener_ignores_non_replies_commands_and_self_messages(monkeypatch):
     calls = []
 
     async def _fake_api_post(path: str, payload: dict):
@@ -126,10 +131,11 @@ async def test_notification_reply_listener_ignores_non_replies_commands_and_bots
 
     monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
 
-    cog = AgentsCog(bot=object())
+    bot = type("Bot", (), {"user": _Dummy(3)})()
+    cog = AgentsCog(bot=bot)
     await cog.capture_notification_reply(_Message(content="Done", reference_id=None))
     await cog.capture_notification_reply(_Message(content="!done 1", reference_id=99))
-    await cog.capture_notification_reply(_Message(content="Done", reference_id=99, bot=True))
+    await cog.capture_notification_reply(_Message(content="Done", reference_id=99, bot=True, author_id=3))
 
     assert calls == []
 

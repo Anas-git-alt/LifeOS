@@ -22,6 +22,26 @@ function formatUpdatedAt(updatedAt) {
   return `Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
 }
 
+function parseApiDate(value) {
+  if (!value) return null;
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatInTimezone(value, timezone, fallback = "n/a") {
+  const parsed = parseApiDate(value);
+  if (!parsed) return value || fallback;
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: timezone || "UTC",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(parsed);
+}
+
 function listLimit(expanded, compact = 5, expandedLimit = 20) {
   return expanded ? expandedLimit : compact;
 }
@@ -35,15 +55,45 @@ function healthBadge(status) {
   return "badge-rejected";
 }
 
-function jobStatusBadge(job) {
-  if (job.paused) return "badge-pending";
-  if (job.enabled) return "badge-active";
-  return "badge-rejected";
+function jobStatusMeta(job) {
+  if (job.schedule_type === "once" && job.completed_at) {
+    if (job.last_status === "missed") return { label: "missed", badge: "badge-rejected" };
+    return { label: "completed", badge: "badge-approved" };
+  }
+  if (job.paused) return { label: "paused", badge: "badge-pending" };
+  if (job.enabled) return { label: "active", badge: "badge-active" };
+  return { label: "disabled", badge: "badge-rejected" };
+}
+
+function jobActivityTimestamp(job) {
+  return (
+    parseApiDate(job.updated_at)?.getTime()
+    || parseApiDate(job.last_run_at)?.getTime()
+    || parseApiDate(job.next_run_at)?.getTime()
+    || Number(job.id || 0)
+  );
+}
+
+function sortJobsByActivity(jobRows) {
+  return [...(jobRows || [])].sort((left, right) => jobActivityTimestamp(right) - jobActivityTimestamp(left));
+}
+
+function replyStateText(run, job) {
+  if (!job?.expect_reply || !run) return "";
+  const replyCount = Number(run.reply_count || 0);
+  if (replyCount > 0) return `${replyCount} repl${replyCount === 1 ? "y" : "ies"} received`;
+  if (run.no_reply_follow_up_sent_at) {
+    return `follow-up sent ${formatInTimezone(run.no_reply_follow_up_sent_at, job.timezone)}`;
+  }
+  if (run.awaiting_reply_until) {
+    return `awaiting reply until ${formatInTimezone(run.awaiting_reply_until, job.timezone)}`;
+  }
+  return "awaiting reply";
 }
 
 async function fetchJobsSummary() {
-  const jobs = await getJobs();
-  const topJobs = jobs.slice(0, 8);
+  const jobs = sortJobsByActivity(await getJobs());
+  const topJobs = jobs.slice(0, 20);
   const runs = await Promise.all(
     topJobs.map(async (job) => {
       try {
@@ -239,11 +289,13 @@ export default function MissionControl({ hasToken = false, onNavigate, onChangeT
               {jobs.slice(0, listLimit(expanded.jobs, 4)).map((job) => {
                 const latestRun = runsByJob[job.id]?.[0];
                 const latestRunDetail = getJobRunDetail(latestRun);
+                const status = jobStatusMeta(job);
+                const replyState = replyStateText(latestRun, job);
                 return (
                   <div key={job.id} className="widget-row stack">
                     <strong>#{job.id} {job.name}</strong>
                     <span>
-                      <span className={`badge ${jobStatusBadge(job)}`}>{job.paused ? "paused" : job.enabled ? "active" : "disabled"}</span>
+                      <span className={`badge ${status.badge}`}>{status.label}</span>
                       {" · "}
                       {job.next_run_at || "no next run"}
                     </span>
@@ -256,6 +308,7 @@ export default function MissionControl({ hasToken = false, onNavigate, onChangeT
                     ) : (
                       <span>No runs yet</span>
                     )}
+                    {replyState && <span>Reply: {replyState}</span>}
                   </div>
                 );
               })}
