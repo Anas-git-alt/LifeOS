@@ -44,6 +44,10 @@ def build_session_archive_messages_uri(agent_name: str, session_id: int | str, a
     return f"{build_session_root_uri(agent_name, session_id)}/history/archive_{archive_index:03d}/messages.jsonl"
 
 
+def build_session_archive_root_uri(agent_name: str, session_id: int | str, archive_index: int) -> str:
+    return f"{build_session_root_uri(agent_name, session_id)}/history/archive_{archive_index:03d}"
+
+
 def _is_not_found_error(exc: OpenVikingApiError) -> bool:
     return exc.status_code == 404 or (exc.code or "").upper() == "NOT_FOUND"
 
@@ -260,6 +264,99 @@ class OpenVikingClient:
             params={"uri": uri, "offset": offset, "limit": limit},
         )
         return str(content or "")
+
+    async def write_content(
+        self,
+        uri: str,
+        content: str,
+        *,
+        agent_name: str | None = None,
+        mode: str = "replace",
+        wait: bool = False,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self._request(
+            "POST",
+            "/api/v1/content/write",
+            agent_name=agent_name,
+            json_body={
+                "uri": uri,
+                "content": content,
+                "mode": mode,
+                "wait": wait,
+                "timeout": timeout,
+                "telemetry": False,
+            },
+        )
+
+    async def repair_failed_session_archives(
+        self,
+        agent_name: str,
+        session_id: int | str,
+        *,
+        max_archives: int = _MAX_SESSION_ARCHIVE_SCAN,
+    ) -> list[dict[str, Any]]:
+        repaired: list[dict[str, Any]] = []
+        for archive_index in range(1, max_archives + 1):
+            archive_uri = build_session_archive_root_uri(agent_name, session_id, archive_index)
+            try:
+                messages_content = await self.read_content(
+                    f"{archive_uri}/messages.jsonl",
+                    agent_name=agent_name,
+                )
+            except OpenVikingApiError as exc:
+                if _is_not_found_error(exc):
+                    break
+                raise
+
+            try:
+                await self.read_content(f"{archive_uri}/.done", agent_name=agent_name)
+                continue
+            except OpenVikingApiError as exc:
+                if not _is_not_found_error(exc):
+                    raise
+
+            try:
+                failed_content = await self.read_content(
+                    f"{archive_uri}/.failed.json",
+                    agent_name=agent_name,
+                )
+            except OpenVikingApiError as exc:
+                if _is_not_found_error(exc):
+                    continue
+                raise
+
+            messages = _parse_session_message_lines(messages_content, agent_name, session_id)
+            first_id = str((messages[0] if messages else {}).get("id") or "")
+            last_id = str((messages[-1] if messages else {}).get("id") or "")
+            done_payload = json.dumps(
+                {
+                    "starting_message_id": first_id,
+                    "ending_message_id": last_id,
+                    "recovered_by": "lifeos",
+                    "recovered_at": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            )
+            await self.write_content(
+                f"{archive_uri}/.done",
+                done_payload,
+                agent_name=agent_name,
+                wait=False,
+            )
+            try:
+                await self.rm(f"{archive_uri}/.failed.json", recursive=False)
+            except OpenVikingApiError as exc:
+                if not _is_not_found_error(exc):
+                    raise
+            repaired.append(
+                {
+                    "archive_id": f"archive_{archive_index:03d}",
+                    "archive_uri": archive_uri,
+                    "failed": failed_content,
+                }
+            )
+        return repaired
 
     async def read_session_messages(
         self,

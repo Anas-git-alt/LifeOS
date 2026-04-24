@@ -9,6 +9,7 @@ from app.services.memory import get_context, save_message, summarise_session
 from app.services.openviking_client import (
     OpenVikingApiError,
     OpenVikingUnavailableError,
+    build_session_archive_root_uri,
     build_session_archive_messages_uri,
     build_session_messages_uri,
     openviking_client,
@@ -209,3 +210,67 @@ async def test_save_message_openviking_retries_commit_in_progress(monkeypatch):
 
     add_message.assert_awaited_once()
     assert commit_session.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_save_message_openviking_repairs_failed_archive_before_retry(monkeypatch):
+    _enable_openviking(monkeypatch)
+    add_message = AsyncMock(return_value={})
+    commit_session = AsyncMock(
+        side_effect=[
+            RuntimeError("Session lifeos:sandbox:62 has unresolved failed archive archive_001; fix it before committing again."),
+            {},
+        ]
+    )
+    repair = AsyncMock(return_value=[{"archive_id": "archive_001"}])
+    monkeypatch.setattr("app.services.memory.openviking_client.add_message", add_message)
+    monkeypatch.setattr("app.services.memory.openviking_client.commit_session", commit_session)
+    monkeypatch.setattr("app.services.memory.openviking_client.repair_failed_session_archives", repair)
+
+    await save_message("sandbox", "assistant", "hello", session_id=62)
+
+    add_message.assert_awaited_once()
+    repair.assert_awaited_once_with("sandbox", 62)
+    assert commit_session.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_openviking_client_repair_failed_session_archives(monkeypatch):
+    archive_uri = build_session_archive_root_uri("sandbox", 62, 1)
+    messages = "\n".join(
+        [
+            _message_line("1", "user", "Question", "2026-03-24T10:27:49.911Z"),
+            _message_line("2", "assistant", "Answer", "2026-03-24T10:27:49.958Z"),
+        ]
+    )
+    writes: list[tuple[str, str]] = []
+    removed: list[str] = []
+
+    async def fake_read_content(uri: str, *, agent_name=None, offset=0, limit=-1):
+        mapping = {
+            f"{archive_uri}/messages.jsonl": messages,
+            f"{archive_uri}/.failed.json": '{"stage":"memory_extraction"}',
+        }
+        if uri in mapping:
+            return mapping[uri]
+        raise OpenVikingApiError("missing", code="NOT_FOUND", status_code=404)
+
+    async def fake_write_content(uri: str, content: str, **_kwargs):
+        writes.append((uri, content))
+        return {}
+
+    async def fake_rm(uri: str, *, recursive=True):
+        removed.append(uri)
+        return {}
+
+    monkeypatch.setattr(openviking_client, "read_content", fake_read_content)
+    monkeypatch.setattr(openviking_client, "write_content", fake_write_content)
+    monkeypatch.setattr(openviking_client, "rm", fake_rm)
+
+    repaired = await openviking_client.repair_failed_session_archives("sandbox", 62)
+
+    assert repaired[0]["archive_id"] == "archive_001"
+    assert writes[0][0] == f"{archive_uri}/.done"
+    assert '"starting_message_id": "1"' in writes[0][1]
+    assert '"ending_message_id": "2"' in writes[0][1]
+    assert removed == [f"{archive_uri}/.failed.json"]

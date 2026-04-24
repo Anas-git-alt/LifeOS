@@ -43,6 +43,7 @@ services:
       - OPENVIKING_EMBEDDING_API_BASE=https://integrate.api.nvidia.com/v1
       - OPENVIKING_EMBEDDING_MODEL=nvidia/nv-embed-v1
       - OPENVIKING_EMBEDDING_DIMENSION=4096
+      - OPENVIKING_EMBEDDING_SEND_DIMENSIONS=false
       - OPENVIKING_VLM_PROVIDER=openai
       - OPENVIKING_VLM_API_KEY=
       - OPENVIKING_VLM_API_BASE=https://integrate.api.nvidia.com/v1

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 _SUMMARY_PREFIX = "[SUMMARY]\n"
 _COMMIT_IN_PROGRESS_PATTERN = re.compile(r"commit in progress", re.IGNORECASE)
+_FAILED_ARCHIVE_PATTERN = re.compile(r"unresolved failed archive\s+archive_\d+", re.IGNORECASE)
 
 
 def _use_openviking() -> bool:
@@ -75,28 +76,50 @@ def _is_commit_in_progress_error(exc: Exception) -> bool:
     return bool(_COMMIT_IN_PROGRESS_PATTERN.search(str(exc)))
 
 
+def _is_failed_archive_error(exc: Exception) -> bool:
+    return bool(_FAILED_ARCHIVE_PATTERN.search(str(exc)))
+
+
 async def _commit_openviking_session(agent_name: str, session_id: int | str) -> None:
-    for attempt in range(2):
+    repaired_failed_archive = False
+    for attempt in range(3):
         try:
             await openviking_client.commit_session(agent_name, session_id, wait=False)
             return
         except Exception as exc:
-            if not _is_commit_in_progress_error(exc):
-                raise
-            if attempt == 0:
+            if _is_commit_in_progress_error(exc):
+                if attempt == 0:
+                    logger.warning(
+                        "OpenViking commit already in progress for %s/%s; retrying once",
+                        agent_name,
+                        session_id,
+                    )
+                    await asyncio.sleep(0.25)
+                    continue
                 logger.warning(
-                    "OpenViking commit already in progress for %s/%s; retrying once",
+                    "OpenViking commit still in progress for %s/%s after retry; leaving appended message as-is",
                     agent_name,
                     session_id,
                 )
-                await asyncio.sleep(0.25)
-                continue
-            logger.warning(
-                "OpenViking commit still in progress for %s/%s after retry; leaving appended message as-is",
-                agent_name,
-                session_id,
-            )
-            return
+                return
+            if _is_failed_archive_error(exc) and not repaired_failed_archive:
+                repaired = await openviking_client.repair_failed_session_archives(agent_name, session_id)
+                if repaired:
+                    repaired_failed_archive = True
+                    logger.warning(
+                        "Repaired %d failed OpenViking archive(s) for %s/%s; retrying commit",
+                        len(repaired),
+                        agent_name,
+                        session_id,
+                    )
+                    await asyncio.sleep(0.25)
+                    continue
+                logger.warning(
+                    "OpenViking reported failed archive for %s/%s but no archive was repairable",
+                    agent_name,
+                    session_id,
+                )
+            raise
 
 
 async def _openviking_summary_message(
