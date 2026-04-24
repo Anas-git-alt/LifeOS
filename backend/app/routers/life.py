@@ -32,6 +32,7 @@ from app.models import (
     WeeklyCommitmentReviewResponse,
     LifeItem,
     ScheduledJobResponse,
+    SharedMemoryProposalResponse,
 )
 from app.security import require_api_token
 from app.services.chat_sessions import create_session, generate_title_from_prompts
@@ -44,6 +45,7 @@ from app.services.intake import (
     promote_intake_entry,
     update_intake_entry,
 )
+from app.services.life_synthesis import synthesize_intake_capture
 from app.services.life import (
     add_checkin,
     create_life_item,
@@ -255,12 +257,18 @@ async def capture_inbox(data: IntakeCaptureRequest):
             result["session_id"],
             source_agent="intake-inbox",
         )
+    synthesis = await synthesize_intake_capture(raw_message=message, primary_entry=entry)
+    entries = synthesis.get("entries") or ([entry] if entry else [])
 
     return IntakeCaptureResponse(
         response=result["response"],
         session_id=result.get("session_id"),
         session_title=result.get("session_title"),
-        entry=IntakeEntryResponse.model_validate(entry) if entry else None,
+        entry=IntakeEntryResponse.model_validate(entries[0]) if entries else None,
+        entries=[IntakeEntryResponse.model_validate(row) for row in entries],
+        life_items=[LifeItemResponse.model_validate(item) for item in synthesis.get("life_items") or []],
+        wiki_proposals=[SharedMemoryProposalResponse.model_validate(row) for row in synthesis.get("wiki_proposals") or []],
+        auto_promoted_count=int(synthesis.get("auto_promoted_count") or 0),
     )
 
 

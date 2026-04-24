@@ -115,6 +115,26 @@ def _parse_date_string(value: str | None):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def _parse_datetime_value(value):
+    if isinstance(value, datetime):
+        return value
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def _coerce_priority_score(value: Any) -> int:
+    try:
+        return max(0, min(100, int(float(value))))
+    except (TypeError, ValueError):
+        return 50
+
+
 def _build_entry_title(payload: dict[str, Any], user_message: str) -> str:
     title = _clean_text(payload.get("title"))
     if title:
@@ -213,6 +233,12 @@ async def upsert_intake_entry_from_agent(
     agent_name: str,
     session_id: int | None,
 ) -> IntakeEntry:
+    primary_payload = payload
+    if isinstance(payload.get("items"), list) and payload["items"]:
+        first_item = next((item for item in payload["items"] if isinstance(item, dict)), None)
+        if first_item:
+            primary_payload = {**payload, **first_item}
+
     async with async_session() as db:
         entry = None
         if session_id is not None:
@@ -249,16 +275,16 @@ async def upsert_intake_entry_from_agent(
             )
             db.add(entry)
 
-        entry.title = _build_entry_title(payload, user_message)
-        entry.summary = _clean_text(payload.get("summary"))
-        entry.domain = _safe_domain(payload.get("domain"))
-        entry.kind = _safe_kind(payload.get("kind"))
-        entry.status = _safe_status(payload.get("status"))
-        entry.desired_outcome = _clean_text(payload.get("desired_outcome"))
-        entry.next_action = _clean_text(payload.get("next_action"))
-        entry.follow_up_questions_json = _normalize_questions(payload.get("follow_up_questions"))
+        entry.title = _build_entry_title(primary_payload, user_message)
+        entry.summary = _clean_text(primary_payload.get("summary"))
+        entry.domain = _safe_domain(primary_payload.get("domain"))
+        entry.kind = _safe_kind(primary_payload.get("kind"))
+        entry.status = _safe_status(primary_payload.get("status"))
+        entry.desired_outcome = _clean_text(primary_payload.get("desired_outcome"))
+        entry.next_action = _clean_text(primary_payload.get("next_action"))
+        entry.follow_up_questions_json = _normalize_questions(primary_payload.get("follow_up_questions"))
         entry.structured_data_json = dict(payload)
-        promotion_payload = payload.get("life_item")
+        promotion_payload = primary_payload.get("life_item")
         entry.promotion_payload_json = promotion_payload if isinstance(promotion_payload, dict) else None
         entry.last_agent_response = _clean_text(response_text)
         if not entry.raw_text:
@@ -384,11 +410,16 @@ async def promote_intake_entry(
             kind=life_item_kind,
             notes=_life_item_notes(entry, notes_override=_clean_text(payload.get("notes"))),
             priority=str(payload.get("priority") or "medium").strip().lower() or "medium",
-            due_at=payload.get("due_at"),
+            due_at=_parse_datetime_value(payload.get("due_at")),
             start_date=start_date,
             recurrence_rule=_clean_text(payload.get("recurrence_rule")),
             source_agent=entry.source_agent,
             risk_level="low",
+            priority_score=_coerce_priority_score(payload.get("priority_score")),
+            priority_reason=_clean_text(payload.get("priority_reason")),
+            priority_factors_json=payload.get("priority_factors") if isinstance(payload.get("priority_factors"), dict) else None,
+            context_links_json=payload.get("context_links") if isinstance(payload.get("context_links"), list) else None,
+            last_prioritized_at=_parse_datetime_value(payload.get("last_prioritized_at")),
         )
         db.add(item)
         await db.flush()

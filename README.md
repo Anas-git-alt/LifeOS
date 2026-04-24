@@ -95,7 +95,7 @@ After the stack is up, do this once before relying on automations:
 5. In WebUI `Agents`, inspect the seeded agents and adjust prompts, cadence, fallback models, voice settings, or workspace access as needed.
 6. In WebUI `Today`, confirm scorecard, next prayer, rescue plan, and quick-log buttons render for your local day.
 7. In Discord, try quick accountability logs such as `!sleep 7.5 bed 23:30 wake 07:10 solid night`, `!family called parents`, or `!priority shipped invoice`.
-8. In Discord, try one commitment loop such as `!commit send invoice tomorrow at 9am`, then check `!focus`.
+8. In Discord, try one raw intake loop such as `!capture need invoice sent today and sleep routine fixed`, then check `!focus`.
 
 Seeded by default:
 
@@ -121,8 +121,9 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Use Discord for capture and lightweight execution. It is the fastest place to ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
 - Use WebUI for configuration and review. `Mission Control`, `Today`, `Jobs`, `Approvals`, `Agents`, `Profile`, and `Settings` are main operator surfaces.
 - Use `Today` as daily control board. It now shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, and inbox-ready work in one place.
+- Use `!capture` for messy raw life input. The intake brain reads shared Wiki context, splits tasks/goals/habits/facts, assigns AI priority scores, auto-creates clear Life items, and sends durable facts to Wiki review.
 - Use `!commit` when you say you will do something. Clear commitments become tracked Life items with linked reminders; fuzzy ones ask for follow-up through `!commitfollow <inbox_id> <answer>`.
-- Use `!focus` for deterministic priority and `!focuscoach` when you want AI help choosing the next visible step.
+- Use `!focus` for backend-ranked priority and `!focuscoach` when you want AI help choosing the next visible step.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
 - Use the Obsidian vault for durable shared knowledge. Session chat stays transient; promoted facts live in the vault and become available cross-agent by scope/domain.
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
@@ -135,6 +136,7 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 Useful example workflows:
 
 - Daily planning: `!daily`, then refine in a dedicated `daily-planner` session.
+- Raw life capture: `!capture need invoice sent today, sleep routine is broken, and invoices are high leverage for payment loops`.
 - Quick accountability log: `!sleep 7.5 bed 23:30 wake 07:10`, `!meal protein shake`, `!water 2 after walk`, `!train rest sore today`, `!family called parents`, `!priority shipped invoice`, `!shutdown inbox zero`.
 - Commitment capture: `!commit create the Canva file deadline is today eod`, then `!focuscoach`.
 - Commitment follow-up: `!commitfollow 8 specific action is to create the mockup, deadline is today eod`.

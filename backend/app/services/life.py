@@ -68,6 +68,10 @@ async def list_life_items(domain: str | None = None, status: str | None = None) 
 async def create_life_item(data: LifeItemCreate) -> LifeItem:
     async with async_session() as db:
         dump = data.model_dump()
+        if "priority_factors" in dump:
+            dump["priority_factors_json"] = dump.pop("priority_factors")
+        if "context_links" in dump:
+            dump["context_links_json"] = dump.pop("context_links")
         # Parse start_date string to date object
         start_date_raw = dump.pop("start_date", None)
         if start_date_raw and isinstance(start_date_raw, str):
@@ -90,6 +94,10 @@ async def update_life_item(item_id: int, data: LifeItemUpdate) -> LifeItem | Non
         previous_status = item.status
         previous_due_at = item.due_at
         for key, value in data.model_dump(exclude_unset=True).items():
+            if key == "priority_factors":
+                key = "priority_factors_json"
+            elif key == "context_links":
+                key = "context_links_json"
             setattr(item, key, value)
         if item.status == "open" and previous_status != "open":
             db.add(
@@ -230,6 +238,11 @@ def _serialize_life_item(
         "source_agent": item.source_agent,
         "risk_level": item.risk_level,
         "follow_up_job_id": item.follow_up_job_id,
+        "priority_score": getattr(item, "priority_score", 50),
+        "priority_reason": getattr(item, "priority_reason", None),
+        "priority_factors": getattr(item, "priority_factors_json", None),
+        "context_links": getattr(item, "context_links_json", None) or [],
+        "last_prioritized_at": getattr(item, "last_prioritized_at", None),
         "focus_reason": focus_reason,
         "follow_up_due_at": follow_up_due_at,
         "created_at": item.created_at,
@@ -272,18 +285,18 @@ def _focus_rank_details(
         category = 4
         reason = f"Due today at {_format_local_clock(due_utc, tz)}."
         secondary = due_utc.timestamp() if due_utc else 0
-    elif item.priority == "high":
+    elif getattr(item, "priority_score", 50) >= 75 or item.priority == "high":
         category = 5
-        reason = "High-priority open commitment."
-        secondary = due_utc.timestamp() if due_utc else (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
+        reason = getattr(item, "priority_reason", None) or "High-priority open commitment."
+        secondary = -float(getattr(item, "priority_score", 50) or 50)
     elif due_utc is not None:
         category = 6
         reason = "Upcoming deadline."
         secondary = due_utc.timestamp()
     else:
         category = 7
-        reason = "Oldest untouched open commitment."
-        secondary = (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
+        reason = getattr(item, "priority_reason", None) or "Oldest untouched open commitment."
+        secondary = -float(getattr(item, "priority_score", 50) or 50)
 
     tertiary = (_coerce_aware_utc(item.updated_at) or now_local.astimezone(timezone.utc)).timestamp()
     return {

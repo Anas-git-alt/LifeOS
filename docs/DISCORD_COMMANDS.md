@@ -60,6 +60,8 @@ Session behavior:
 - `!focus`
 - `!focuscoach`
 - `!profile`
+- `!capture <raw life dump>`
+- `!capturefollow <answer or extra context>`
 - `!add <domain> <text>`
 - `!items [domain] [status]`
 - `!done <id> [note]`
@@ -86,6 +88,7 @@ Examples:
 
 - `!profile`
 - `!today`
+- `!capture need invoice sent today, sleep routine messy, remember invoices are high leverage`
 - `!add work Ship weekly KPI update`
 - `!items planning open`
 - `!done 42 finished before Dhuhr`
@@ -97,6 +100,27 @@ Examples:
 - returns a richer embed with `Scorecard`, `Next Prayer`, `Rescue Plan`, `Sleep Protocol`, `Streaks`, `7-Day Trend`, `Commitment Radar`, `Top Focus`, `Due Today`, and `Overdue`
 - empty sections now render as `none` instead of disappearing
 - this command is read-only and reflects the current `Today` API state
+
+## Raw Inbox And Auto-Priority
+
+Use this when you do not want to decide the priority yourself. Give LifeOS messy raw input; the intake agent uses the shared Wiki context, splits actionable items, assigns AI priority scores, auto-creates clear Life items, and leaves unclear items in Inbox with follow-up questions.
+
+- `!capture <raw life dump>`
+- `!capturefollow <answer or extra context>`
+- `!promotecapture <inbox_id>`
+
+Examples:
+
+- `!capture need invoice sent today, fix sleep routine, remember invoice follow-through is high leverage`
+- `!capturefollow bedtime target should be 23:30 and wake target 07:10`
+- `!promotecapture 12`
+
+Capture behavior:
+
+- Clear tasks, goals, habits, routines, and commitments can auto-promote into tracked Life items.
+- Each created item gets `priority_score`, `priority_reason`, and Wiki context links when shared memory matches.
+- Durable facts from raw input become review-required Wiki proposals instead of direct unreviewed writes.
+- `!focus` uses due dates, AI priority score, and Life context so urgent/important work rises without manual priority picking.
 
 ## Commitments And Follow-Through
 

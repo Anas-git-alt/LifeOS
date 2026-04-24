@@ -82,9 +82,16 @@ CREATE TABLE IF NOT EXISTS life_items (
     priority VARCHAR(20) NOT NULL DEFAULT 'medium',
     status VARCHAR(20) NOT NULL DEFAULT 'open',
     due_at DATETIME,
+    start_date DATE,
     recurrence_rule VARCHAR(100),
     source_agent VARCHAR(100),
     risk_level VARCHAR(20) NOT NULL DEFAULT 'low',
+    follow_up_job_id INTEGER,
+    priority_score INTEGER NOT NULL DEFAULT 50,
+    priority_reason TEXT,
+    priority_factors_json JSON,
+    context_links_json JSON,
+    last_prioritized_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -82,7 +82,13 @@ export default function InboxView() {
         newSession ? "webui_capture" : "webui_capture_followup",
       );
       setDraft("");
-      setSuccess(newSession ? "Captured into inbox." : "Follow-up saved.")
+      const created = result.auto_promoted_count || result.life_items?.length || 0;
+      const proposals = result.wiki_proposals?.length || 0;
+      setSuccess(
+        newSession
+          ? `Captured. Auto-created ${created} life item(s), ${proposals} wiki proposal(s).`
+          : `Follow-up saved. Auto-created ${created} life item(s), ${proposals} wiki proposal(s).`,
+      );
       if (result.session_id) {
         setActiveSessionId(result.session_id);
         await loadConversation(result.session_id);
@@ -264,6 +270,28 @@ export default function InboxView() {
                     <div>
                       <strong>Suggested next action</strong>
                       <p style={{ marginTop: 6, color: "var(--text-secondary)" }}>{selectedEntry.next_action}</p>
+                    </div>
+                  )}
+
+                  {selectedEntry.promotion_payload?.priority_reason && (
+                    <div>
+                      <strong>AI priority</strong>
+                      <p style={{ marginTop: 6, color: "var(--text-secondary)" }}>
+                        {selectedEntry.promotion_payload.priority_score ?? "?"}/100 · {selectedEntry.promotion_payload.priority_reason}
+                      </p>
+                    </div>
+                  )}
+
+                  {(selectedEntry.promotion_payload?.context_links || []).length > 0 && (
+                    <div>
+                      <strong>Context links</strong>
+                      <ul style={{ marginTop: 8, paddingLeft: 18, color: "var(--text-secondary)", display: "grid", gap: 6 }}>
+                        {selectedEntry.promotion_payload.context_links.map((link, index) => (
+                          <li key={`${selectedEntry.id}-context-${index}`}>
+                            {link.title || link.uri || link.path}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 

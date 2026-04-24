@@ -452,7 +452,10 @@ function CommitmentRadarBlock({ items }) {
           {items.map((item) => (
             <li key={item.id}>
               <strong>#{item.id} {item.title}</strong>
-              <div className="today-highlight-meta">{item.focus_reason || `${item.domain} / ${item.priority}`}</div>
+              <div className="today-highlight-meta">{item.focus_reason || item.priority_reason || `${item.domain} / ${item.priority}`}</div>
+              <div className="meta-tag" style={{ marginTop: 6 }}>
+                AI priority {item.priority_score ?? 50}/100 · {item.priority}
+              </div>
               {(item.follow_up_due_at || item.due_at) && (
                 <div className="meta-tag" style={{ marginTop: 6 }}>
                   Follow-up {formatDateTime(item.follow_up_due_at || item.due_at)}
@@ -560,11 +563,11 @@ function AgendaBlock({ title, items, emptyLabel }) {
             <li key={item.id} style={{ listStyle: "none" }}>
               #{item.id} {item.title}
               <div className="meta-tag" style={{ marginTop: 4 }}>
-                {item.domain} / {item.priority}
+                {item.domain} / {item.priority} / AI {item.priority_score ?? 50}
               </div>
-              {item.focus_reason && (
+              {(item.focus_reason || item.priority_reason) && (
                 <div style={{ marginTop: 6, color: "var(--text-secondary)", fontSize: 13 }}>
-                  {item.focus_reason}
+                  {item.focus_reason || item.priority_reason}
                 </div>
               )}
               {(item.follow_up_due_at || item.due_at) && (

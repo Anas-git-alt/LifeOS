@@ -61,7 +61,7 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @staticmethod
     def _clean_visible_response(text: str) -> str:
-        cleaned = str(text or "Captured.").split("[INTAKE_JSON]", 1)[0].strip()
+        cleaned = str(text or "Captured.").split("[INTAKE_JSON]", 1)[0].split("[RAW_LIFE_SYNTHESIS_JSON]", 1)[0].strip()
         return cleaned or "Captured."
 
     @staticmethod
@@ -73,8 +73,9 @@ class AgentsCog(commands.Cog, name="Agents"):
             line = f"#{item.get('id', '?')} {item.get('title', 'Untitled')}"
             if include_priority and item.get("priority"):
                 line += f" ({item['priority']})"
-            if include_reason and item.get("focus_reason"):
-                line += f" — {item['focus_reason']}"
+            reason = item.get("focus_reason") or item.get("priority_reason")
+            if include_reason and reason:
+                line += f" — {reason}"
             lines.append(line)
         return "\n".join(lines)
 
@@ -199,19 +200,31 @@ class AgentsCog(commands.Cog, name="Agents"):
         description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x7C3AED)
         if entry.get("id"):
+            priority = entry.get("promotion_payload") or {}
             embed.add_field(
                 name="Inbox Item",
-                value=(
+                value=self._embed_value(
                     f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
-                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}"
+                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}\n"
+                    f"AI priority {priority.get('priority_score', '?')}/100 · {priority.get('priority_reason', 'reason pending')}"
                 ),
                 inline=False,
             )
+        life_items = result.get("life_items") or []
+        if life_items:
+            lines = [
+                f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')} ({item.get('priority_score', 50)}/100)"
+                for item in life_items[:5]
+            ]
+            embed.add_field(name="Auto-created", value=self._embed_value("\n".join(lines)), inline=False)
+        wiki_proposals = result.get("wiki_proposals") or []
+        if wiki_proposals:
+            embed.add_field(name="Wiki Proposals", value=f"{len(wiki_proposals)} review-required proposal(s)", inline=False)
         followups = entry.get("follow_up_questions") or []
         if followups:
             embed.add_field(
                 name="Follow-up",
-                value="\n".join([f"• {question}" for question in followups[:3]]),
+                value=self._embed_value("\n".join([f"• {question}" for question in followups[:3]])),
                 inline=False,
             )
         if result.get("session_id"):
@@ -818,7 +831,7 @@ class AgentsCog(commands.Cog, name="Agents"):
             for index, item in enumerate(top_focus[:3], start=1):
                 lines.append(
                     f"{index}) #{item['id']} {item['title']} [{item['domain']}/{item['priority']}] — "
-                    f"{item.get('focus_reason', 'focus now')}"
+                    f"{item.get('focus_reason') or item.get('priority_reason') or 'focus now'}"
                 )
             await ctx.send("Top 3 focus items:\n" + "\n".join(lines))
         except Exception as exc:

@@ -462,6 +462,11 @@ class LifeItem(Base):
     source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(20), default="low")
     follow_up_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    priority_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    priority_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    priority_factors_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    context_links_json: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+    last_prioritized_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -1237,6 +1242,11 @@ class LifeItemCreate(BaseModel):
     recurrence_rule: Optional[str] = None
     source_agent: Optional[str] = None
     risk_level: str = "low"
+    priority_score: int = Field(default=50, ge=0, le=100)
+    priority_reason: Optional[str] = None
+    priority_factors: Optional[dict[str, Any]] = None
+    context_links: Optional[list[dict[str, Any]]] = None
+    last_prioritized_at: Optional[datetime] = None
 
 
 class LifeItemUpdate(BaseModel):
@@ -1248,6 +1258,11 @@ class LifeItemUpdate(BaseModel):
     recurrence_rule: Optional[str] = None
     risk_level: Optional[str] = None
     follow_up_job_id: Optional[int] = None
+    priority_score: Optional[int] = Field(default=None, ge=0, le=100)
+    priority_reason: Optional[str] = None
+    priority_factors: Optional[dict[str, Any]] = None
+    context_links: Optional[list[dict[str, Any]]] = None
+    last_prioritized_at: Optional[datetime] = None
 
 
 class LifeItemResponse(BaseModel):
@@ -1264,6 +1279,11 @@ class LifeItemResponse(BaseModel):
     source_agent: Optional[str]
     risk_level: str
     follow_up_job_id: Optional[int] = None
+    priority_score: int = 50
+    priority_reason: Optional[str] = None
+    priority_factors: Optional[dict[str, Any]] = None
+    context_links: list[dict[str, Any]] = Field(default_factory=list)
+    last_prioritized_at: Optional[datetime] = None
     focus_reason: Optional[str] = None
     follow_up_due_at: Optional[datetime] = None
     created_at: datetime
@@ -1273,7 +1293,12 @@ class LifeItemResponse(BaseModel):
     @classmethod
     def _normalize_life_item_fields(cls, value: Any):
         if isinstance(value, dict):
-            return dict(value)
+            data = dict(value)
+            if "priority_factors" not in data:
+                data["priority_factors"] = data.get("priority_factors_json")
+            if "context_links" not in data:
+                data["context_links"] = data.get("context_links_json") or []
+            return data
 
         return {
             "id": value.id,
@@ -1289,6 +1314,11 @@ class LifeItemResponse(BaseModel):
             "source_agent": value.source_agent,
             "risk_level": value.risk_level,
             "follow_up_job_id": getattr(value, "follow_up_job_id", None),
+            "priority_score": getattr(value, "priority_score", 50),
+            "priority_reason": getattr(value, "priority_reason", None),
+            "priority_factors": getattr(value, "priority_factors_json", None),
+            "context_links": getattr(value, "context_links_json", None) or [],
+            "last_prioritized_at": getattr(value, "last_prioritized_at", None),
             "focus_reason": getattr(value, "focus_reason", None),
             "follow_up_due_at": getattr(value, "follow_up_due_at", None),
             "created_at": value.created_at,
@@ -1386,6 +1416,10 @@ class IntakeCaptureResponse(BaseModel):
     session_id: Optional[int] = None
     session_title: Optional[str] = None
     entry: Optional[IntakeEntryResponse] = None
+    entries: list[IntakeEntryResponse] = Field(default_factory=list)
+    life_items: list[LifeItemResponse] = Field(default_factory=list)
+    wiki_proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
+    auto_promoted_count: int = 0
 
 
 class CommitmentCaptureRequest(BaseModel):

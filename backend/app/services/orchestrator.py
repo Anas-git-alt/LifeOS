@@ -128,7 +128,7 @@ def _should_search_web(agent: Agent, user_message: str, referenced_session_id: i
 
 
 def _should_fetch_shared_memory_context(agent_name: str, user_message: str, referenced_session_id: int | None) -> bool:
-    if agent_name in {"intake-inbox", "commitment-capture", "commitment-coach"}:
+    if agent_name in {"commitment-capture", "commitment-coach"}:
         return False
     return referenced_session_id is None and not _is_local_context_query(user_message)
 
@@ -198,12 +198,13 @@ _GOAL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_INTAKE_BLOCK_NAME = r"(?:INTAKE_JSON|RAW_LIFE_SYNTHESIS_JSON)"
 _INTAKE_JSON_PATTERN = re.compile(
-    r"\[INTAKE_JSON\]\s*(\{.*?\})\s*\[/INTAKE_JSON\]",
+    rf"\[{_INTAKE_BLOCK_NAME}\]\s*(\{{.*?\}})\s*\[/({_INTAKE_BLOCK_NAME})\]",
     re.IGNORECASE | re.DOTALL,
 )
 _INTAKE_JSON_OPEN_PATTERN = re.compile(
-    r"\[INTAKE_JSON\]\s*(\{.*\})\s*$",
+    rf"\[{_INTAKE_BLOCK_NAME}\]\s*(\{{.*\}})\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 _INTAKE_AGENTS = {"intake-inbox", "commitment-capture"}
@@ -238,7 +239,7 @@ async def _extract_and_create_goals(response_text: str, agent_name: str) -> list
 
 def _extract_intake_payload(response_text: str) -> tuple[str, dict | None, bool]:
     text = response_text or ""
-    if "[INTAKE_JSON]" not in text:
+    if "[INTAKE_JSON]" not in text and "[RAW_LIFE_SYNTHESIS_JSON]" not in text:
         return text.strip(), None, False
 
     match = _INTAKE_JSON_PATTERN.search(text)
@@ -250,9 +251,9 @@ def _extract_intake_payload(response_text: str) -> tuple[str, dict | None, bool]
             except json.JSONDecodeError:
                 logger.warning("Invalid unterminated INTAKE_JSON block; leaving response unstructured")
                 payload = None
-            cleaned = text.split("[INTAKE_JSON]", 1)[0].strip()
+            cleaned = re.split(r"\[(?:INTAKE_JSON|RAW_LIFE_SYNTHESIS_JSON)\]", text, maxsplit=1, flags=re.IGNORECASE)[0].strip()
             return cleaned, payload, True
-        cleaned = text.split("[INTAKE_JSON]", 1)[0].strip()
+        cleaned = re.split(r"\[(?:INTAKE_JSON|RAW_LIFE_SYNTHESIS_JSON)\]", text, maxsplit=1, flags=re.IGNORECASE)[0].strip()
         return cleaned, None, True
 
     payload = None

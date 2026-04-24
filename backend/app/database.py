@@ -242,9 +242,29 @@ def run_migrations() -> None:
             if "follow_up_job_id" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
                 life_cols.add("follow_up_job_id")
+            for column_name, ddl in {
+                "priority_score": "ALTER TABLE life_items ADD COLUMN priority_score INTEGER NOT NULL DEFAULT 50",
+                "priority_reason": "ALTER TABLE life_items ADD COLUMN priority_reason TEXT",
+                "priority_factors_json": "ALTER TABLE life_items ADD COLUMN priority_factors_json JSON",
+                "context_links_json": "ALTER TABLE life_items ADD COLUMN context_links_json JSON",
+                "last_prioritized_at": "ALTER TABLE life_items ADD COLUMN last_prioritized_at DATETIME",
+            }.items():
+                if column_name not in life_cols:
+                    cur.execute(ddl)
+                    life_cols.add(column_name)
             if "202604190001_commitment_loop" not in applied and "follow_up_job_id" in life_cols:
                 cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", ("202604190001_commitment_loop",))
                 applied.add("202604190001_commitment_loop")
+            synthesis_cols = {
+                "priority_score",
+                "priority_reason",
+                "priority_factors_json",
+                "context_links_json",
+                "last_prioritized_at",
+            }
+            if "202604240001_life_priority_metadata" not in applied and synthesis_cols.issubset(life_cols):
+                cur.execute("INSERT INTO schema_migrations(version) VALUES (?)", ("202604240001_life_priority_metadata",))
+                applied.add("202604240001_life_priority_metadata")
         sleep_protocol_version = "202604180002_sleep_protocol_profile"
         sleep_protocol_columns = {
             "sleep_bedtime_target",
@@ -372,6 +392,17 @@ def run_migrations() -> None:
                 life_cols.add("start_date")
             if "follow_up_job_id" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
+                life_cols.add("follow_up_job_id")
+            for column_name, ddl in {
+                "priority_score": "ALTER TABLE life_items ADD COLUMN priority_score INTEGER NOT NULL DEFAULT 50",
+                "priority_reason": "ALTER TABLE life_items ADD COLUMN priority_reason TEXT",
+                "priority_factors_json": "ALTER TABLE life_items ADD COLUMN priority_factors_json JSON",
+                "context_links_json": "ALTER TABLE life_items ADD COLUMN context_links_json JSON",
+                "last_prioritized_at": "ALTER TABLE life_items ADD COLUMN last_prioritized_at DATETIME",
+            }.items():
+                if column_name not in life_cols:
+                    cur.execute(ddl)
+                    life_cols.add(column_name)
         conn.commit()
     except Exception:
         conn.rollback()
