@@ -847,9 +847,9 @@ async def run_scheduled_agent(
     notification_mode = str(notification_mode_override or "channel").strip().lower()
     if notification_mode == "silent":
         return {"status": "completed", "delivered": False}
-    delivery = {"delivered": False, "channel_id": target_channel_id, "message_id": None}
     target_channel = target_channel_override or (agent.discord_channel if agent else None)
     target_channel_id = target_channel_id_override
+    delivery = {"delivered": False, "channel_id": target_channel_id, "message_id": None}
     if target_channel_id or target_channel:
         delivery = await send_channel_message_result(
             target_channel,

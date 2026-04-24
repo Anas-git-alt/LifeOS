@@ -9,7 +9,7 @@ import pytest
 
 from app.models import AuditLog, PendingAction
 from app.services.openviking_client import OpenVikingUnavailableError
-from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message
+from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message, run_scheduled_agent
 from app.services.risk_engine import (
     classify_risk,
     is_approval_eligible_action_type,
@@ -261,6 +261,35 @@ async def test_handle_message_saves_cleaned_intake_response(monkeypatch):
 
     assert result["pending_action_id"] is None
     assert save_message.await_args_list[1].args[2] == "Visible reply"
+
+
+@pytest.mark.asyncio
+async def test_run_scheduled_agent_channel_delivery_without_channel_id_override(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.discord_channel = "test"
+    factory = _FakeSessionFactory(agent)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr(
+        "app.services.orchestrator.handle_message",
+        AsyncMock(return_value={"response": "Check in now."}),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.send_channel_message_result",
+        AsyncMock(return_value={"delivered": True, "channel_id": "999", "message_id": "555"}),
+    )
+
+    result = await run_scheduled_agent(
+        agent_name="sandbox",
+        prompt_override="Ask me how day going",
+        target_channel_override="test",
+        notification_mode_override="channel",
+    )
+
+    assert result["status"] == "delivered"
+    assert result["notification_channel"] == "test"
+    assert result["notification_channel_id"] == "999"
+    assert result["notification_message_id"] == "555"
 
 
 @pytest.mark.asyncio
