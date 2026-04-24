@@ -142,6 +142,47 @@ async def test_build_shared_memory_context_includes_router_hubs_and_exact_note(m
 
 
 @pytest.mark.asyncio
+async def test_build_shared_memory_context_includes_note_inventory_for_broad_vault_questions(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.shared_memory.openviking_client.search",
+        AsyncMock(return_value=SimpleNamespace(resources=[], memories=[], skills=[])),
+    )
+    await promote_to_shared_memory(
+        SharedMemoryPromoteRequest(
+            agent_name="sandbox",
+            title="Planning Sync",
+            content="Review Obsidian wiki proposals before applying factual notes.",
+            scope="shared_domain",
+            domain="planning",
+        )
+    )
+    await promote_to_shared_memory(
+        SharedMemoryPromoteRequest(
+            agent_name="sandbox",
+            title="Work Intake",
+            content="Client discovery calls should create review-first wiki intake.",
+            scope="shared_domain",
+            domain="work",
+        )
+    )
+
+    context = await build_shared_memory_context(
+        agent=SimpleNamespace(
+            name="sandbox",
+            memory_scopes=["shared_domain", "shared_global", "agent_private", "session"],
+            shared_domains=[],
+        ),
+        query="what's in the notes?",
+    )
+
+    assert "[SHARED MEMORY NOTE INVENTORY]" in context
+    assert "planning-sync.md" in context
+    assert "work-intake.md" in context
+    assert "Review Obsidian wiki proposals" in context
+    assert "Client discovery calls" in context
+
+
+@pytest.mark.asyncio
 async def test_build_shared_memory_context_survives_partial_read_only_vault(monkeypatch):
     monkeypatch.setattr(
         "app.services.shared_memory.openviking_client.search",

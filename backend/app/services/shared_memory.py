@@ -39,6 +39,11 @@ _WORKSPACE_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _PRIVATE_HINT_RE = re.compile(r"\b(private|personal|only me|just me|agent note|my note)\b", re.IGNORECASE)
+_VAULT_TOPIC_RE = re.compile(r"\b(obsidian|vault|wiki|knowledge\s+base|shared\s+memory)\b", re.IGNORECASE)
+_NOTE_OVERVIEW_RE = re.compile(
+    r"\b(what'?s\s+in|what\s+is\s+in|what\s+notes?|summ(?:a|e)ry|summari[sz]e|overview|list|show|contents?)\b",
+    re.IGNORECASE,
+)
 _DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
     "work": ("work", "repo", "project", "career", "business", "client", "deploy", "code"),
     "health": ("health", "fitness", "sleep", "diet", "training", "weight"),
@@ -111,6 +116,43 @@ def _candidate_roots(route: MemoryRoute, agent: Agent | Any) -> list[Path]:
     return roots
 
 
+def _is_vault_overview_query(query: str) -> bool:
+    text = str(query or "").strip()
+    if not text:
+        return False
+    if _VAULT_TOPIC_RE.search(text):
+        return True
+    return bool(re.search(r"\bnotes?\b", text, re.IGNORECASE) and _NOTE_OVERVIEW_RE.search(text))
+
+
+def _shared_domain_roots() -> list[Path]:
+    domains_root = obsidian_shared_root() / "domains"
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for domain in DEFAULT_SHARED_DOMAINS:
+        path = domains_root / slugify_note(domain)
+        if path.exists():
+            roots.append(path)
+            seen.add(path)
+    if domains_root.exists():
+        for path in sorted(domains_root.iterdir(), key=lambda item: item.name):
+            if path.is_dir() and path not in seen:
+                roots.append(path)
+    return roots
+
+
+def _inventory_roots(route: MemoryRoute, agent: Agent | Any) -> list[Path]:
+    roots: list[Path] = []
+    if route.scope == "shared_domain" and route.domain:
+        roots.append(obsidian_shared_root() / "domains" / slugify_note(route.domain))
+    else:
+        roots.append(obsidian_shared_root() / "global")
+        roots.extend(_shared_domain_roots())
+    if route.include_private:
+        roots.append(obsidian_private_root() / "agents" / slugify_note(getattr(agent, "name", "agent")))
+    return roots
+
+
 def _hub_paths(route: MemoryRoute, agent: Agent | Any) -> list[Path]:
     paths: list[Path] = [obsidian_index_root() / "router.md"]
     for root in _candidate_roots(route, agent):
@@ -147,6 +189,63 @@ def _frontmatter_title(text: str, fallback: str) -> str:
     if heading:
         return heading.group(1).strip()
     return fallback
+
+
+def _strip_frontmatter(text: str) -> str:
+    if not text.startswith("---"):
+        return text.strip()
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return text.strip()
+    return parts[2].strip()
+
+
+def _note_excerpt(text: str, *, limit: int = 700) -> str:
+    body = re.sub(r"\n{3,}", "\n\n", _strip_frontmatter(text))
+    return body[:limit].strip()
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+async def _note_inventory(query: str, route: MemoryRoute, agent: Agent | Any) -> list[SharedMemorySearchHit]:
+    if not _is_vault_overview_query(query):
+        return []
+
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for root in _inventory_roots(route, agent):
+        if not root.exists():
+            continue
+        for path in root.rglob("*.md"):
+            if path.name.lower() == "index.md" or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+
+    hits: list[SharedMemorySearchHit] = []
+    for path in sorted(paths, key=lambda item: (_safe_mtime(item), str(item)), reverse=True)[:8]:
+        content = await _read_text(path)
+        excerpt = _note_excerpt(content)
+        if not excerpt:
+            continue
+        hits.append(
+            SharedMemorySearchHit(
+                title=_frontmatter_title(content, path.stem.replace("-", " ").title()),
+                path=str(path),
+                scope=_frontmatter_scope(content) or route.scope,
+                domain=_frontmatter_domain(content) or route.domain,
+                score=1.0,
+                source="inventory",
+                snippet=excerpt,
+                uri=vault_note_uri(path),
+            )
+        )
+    return hits
 
 
 async def _candidate_exact_hits(query: str, route: MemoryRoute, agent: Agent | Any) -> list[SharedMemorySearchHit]:
@@ -280,6 +379,25 @@ async def build_shared_memory_context(
         sections.append("[SHARED MEMORY HUBS]")
         sections.extend(hub_blocks[:3])
         sections.append("[END SHARED MEMORY HUBS]")
+
+    inventory_hits = await _note_inventory(query, route, agent)
+    if _is_vault_overview_query(query):
+        sections.append("[SHARED MEMORY NOTE INVENTORY]")
+        sections.append(
+            "Approved Obsidian notes available to this route. Use these for broad vault/wiki/notes questions; "
+            "if notes appear here, do not say note contents are unavailable."
+        )
+        if inventory_hits:
+            for hit in inventory_hits:
+                sections.append(f"PATH: {hit.path}")
+                sections.append(f"TITLE: {hit.title}")
+                if hit.domain:
+                    sections.append(f"DOMAIN: {hit.domain}")
+                sections.append("SNIPPET:")
+                sections.append(hit.snippet)
+        else:
+            sections.append("No approved non-index notes found for this memory route.")
+        sections.append("[END SHARED MEMORY NOTE INVENTORY]")
 
     hits = await search_shared_memory(query=query, agent=agent, scope=route.scope, domain=route.domain)
     exact_hits = [hit for hit in hits if hit.source == "exact"][:2]
