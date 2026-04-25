@@ -272,29 +272,50 @@ async def _complete_matching_family_message_item(message: str) -> LifeItem | Non
 async def _apply_quick_updates_from_capture(message: str) -> dict:
     logged_signals: list[str] = []
     completed_items: list[LifeItem] = []
+    skipped_signals: list[str] = []
+    note = message.strip()[:500]
+    try:
+        agenda = await get_today_agenda()
+        scorecard_notes = dict(getattr(agenda.get("scorecard"), "notes_json", None) or {})
+    except Exception:
+        scorecard_notes = {}
 
     completed = await _complete_matching_family_message_item(message)
     if completed:
         completed_items.append(completed)
         logged_signals.append("completed family message")
-        await log_daily_signal(DailyLogCreate(kind="family", done=True, note=message.strip()[:500]))
-        logged_signals.append("family")
+        if scorecard_notes.get("family_note") == note:
+            skipped_signals.append("family already logged")
+        else:
+            await log_daily_signal(DailyLogCreate(kind="family", done=True, note=note))
+            logged_signals.append("family")
         if completed.priority == "high":
-            await log_daily_signal(DailyLogCreate(kind="priority", count=1, note=f"Completed #{completed.id}: {completed.title}"))
-            logged_signals.append("priority")
+            priority_note = f"Completed #{completed.id}: {completed.title}"
+            if scorecard_notes.get("priority_note") == priority_note:
+                skipped_signals.append("priority already logged")
+            else:
+                await log_daily_signal(DailyLogCreate(kind="priority", count=1, note=priority_note))
+                logged_signals.append("priority")
 
     if _CAPTURE_MEAL_RE.search(message):
-        await log_daily_signal(DailyLogCreate(kind="meal", count=1, note=message.strip()[:500]))
-        logged_signals.append("meal")
+        if scorecard_notes.get("last_meal_note") == note:
+            skipped_signals.append("meal already logged")
+        else:
+            await log_daily_signal(DailyLogCreate(kind="meal", count=1, note=note))
+            logged_signals.append("meal")
 
     if _CAPTURE_WATER_RE.search(message):
         count = _hydration_count_from_capture(message)
-        await log_daily_signal(DailyLogCreate(kind="hydration", count=count, note=message.strip()[:500]))
-        logged_signals.append(f"hydration x{count}")
+        if scorecard_notes.get("last_hydration_note") == note:
+            skipped_signals.append("hydration already logged")
+        else:
+            await log_daily_signal(DailyLogCreate(kind="hydration", count=count, note=note))
+            logged_signals.append(f"hydration x{count}")
 
     return {
-        "handled": bool(logged_signals or completed_items),
+        "handled": bool(logged_signals or skipped_signals or completed_items),
         "logged_signals": logged_signals,
+        "skipped_signals": skipped_signals,
         "completed_items": completed_items,
     }
 
@@ -500,11 +521,13 @@ async def capture_life(data: UnifiedCaptureRequest):
             if item is not None
         ]
         signals = quick_updates["logged_signals"]
+        skipped = quick_updates.get("skipped_signals") or []
+        status_text = ", ".join(signals + skipped) if signals or skipped else "daily status"
         return UnifiedCaptureResponse(
             route="daily_log",
             response=(
                 "Updated Today: "
-                f"{', '.join(signals) if signals else 'daily status'}. "
+                f"{status_text}. "
                 f"Completed {len(completed_items)} item(s)."
             ),
             logged_signals=signals,

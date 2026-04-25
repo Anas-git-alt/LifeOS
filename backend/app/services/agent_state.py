@@ -261,6 +261,8 @@ def render_agent_state_packet(packet: dict[str, Any]) -> str:
         "--- GROUNDING RULES ---\n"
         "- Use the state packet above as the source of truth for the user's status, tasks, habits, commitments, reminders, and memory review.\n"
         "- Do not invent tasks, deadlines, life status, prayer status, habit streaks, job results, or personal facts that are absent from the packet.\n"
+        "- Treat `today.now` and `today.timezone` as current local time. Do not recommend morning, early-afternoon, or other already-past time blocks.\n"
+        "- When giving a plan for today, start from what remains after `today.now`, not a generic full-day schedule.\n"
         "- If the packet lacks a fact needed for a good answer, say what is missing and ask one concise clarification.\n"
         "- If shared memory is unavailable, use the Today/status packet only and say durable memory context is missing when it matters.\n"
         "--- END LIFEOS STATE PACKET ---\n"

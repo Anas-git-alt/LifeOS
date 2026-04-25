@@ -65,6 +65,29 @@ class AgentsCog(commands.Cog, name="Agents"):
         return cleaned or "Captured."
 
     @staticmethod
+    def _split_discord_chunks(text: str, limit: int = 1800) -> list[str]:
+        remaining = str(text or "").strip()
+        if not remaining:
+            return ["No response received."]
+        chunks: list[str] = []
+        while len(remaining) > limit:
+            split_at = max(
+                remaining.rfind("\n\n", 0, limit),
+                remaining.rfind("\n", 0, limit),
+                remaining.rfind(". ", 0, limit),
+                remaining.rfind(" ", 0, limit),
+            )
+            if split_at < max(400, limit // 3):
+                split_at = limit
+            chunk = remaining[:split_at].strip()
+            if chunk:
+                chunks.append(chunk)
+            remaining = remaining[split_at:].strip()
+        if remaining:
+            chunks.append(remaining)
+        return chunks or ["No response received."]
+
+    @staticmethod
     def _format_today_items(items: list[dict], *, include_priority: bool = False, include_reason: bool = False) -> str:
         if not items:
             return "none"
@@ -392,12 +415,13 @@ class AgentsCog(commands.Cog, name="Agents"):
                 if returned_session_id:
                     self._set_active_session_id(ctx, agent_name, returned_session_id)
 
-                chunks = [response[i : i + 1900] for i in range(0, len(response), 1900)]
-                for chunk in chunks:
+                chunks = self._split_discord_chunks(response)
+                for index, chunk in enumerate(chunks, start=1):
                     embed = discord.Embed(title=f"{agent_name}", description=chunk, color=0x2563EB)
                     if returned_session_id:
                         title = result.get("session_title") or "New chat"
-                        embed.set_footer(text=f"Session #{returned_session_id} · {title}")
+                        suffix = f" · part {index}/{len(chunks)}" if len(chunks) > 1 else ""
+                        embed.set_footer(text=f"Session #{returned_session_id} · {title}{suffix}")
                     await ctx.send(embed=embed)
                 warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
                 if warnings:

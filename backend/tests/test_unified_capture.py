@@ -146,3 +146,16 @@ async def test_unified_capture_status_update_logs_and_closes_family_message(monk
         updated_entry = entry_result.scalar_one()
     assert updated_entry.status == "processed"
     assert updated_entry.follow_up_questions_json == []
+
+    duplicate = await capture_life(
+        UnifiedCaptureRequest(
+            message="Message sent to ask about her health, meal i ate a sandwitch, and i drank 1 cup of water",
+            source="discord_capture",
+        )
+    )
+    assert duplicate.route == "daily_log"
+    assert duplicate.entries == []
+    agenda_after_duplicate = await get_today_agenda()
+    assert agenda_after_duplicate["scorecard"].meals_count == 1
+    assert agenda_after_duplicate["scorecard"].hydration_count == 1
+    assert agenda_after_duplicate["scorecard"].top_priority_completed_count == 1
