@@ -50,6 +50,7 @@ async def decide_action(decision: ApprovalDecision):
         "id": action.id,
         "status": action.status.value,
         "message": f"Action {'approved' if decision.approved else 'rejected'}",
+        "result": action.result,
         "reviewed_by": action.reviewed_by,
         "review_source": action.review_source,
     }

@@ -149,6 +149,7 @@ async def chat_with_agent(data: ChatRequest):
         agent_name=data.agent_name,
         response=result["response"],
         pending_action_id=result.get("pending_action_id"),
+        pending_action_type=result.get("pending_action_type"),
         risk_level=result.get("risk_level", "low"),
         session_id=result.get("session_id"),
         session_title=result.get("session_title"),

@@ -802,6 +802,7 @@ class ChatResponse(BaseModel):
     agent_name: str
     response: str
     pending_action_id: Optional[int] = None
+    pending_action_type: Optional[str] = None
     risk_level: str = "low"
     session_id: Optional[int] = None
     session_title: Optional[str] = None

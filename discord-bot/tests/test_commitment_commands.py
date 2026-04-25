@@ -20,6 +20,15 @@ class _Typing:
         return False
 
 
+class _SentMessage:
+    def __init__(self, value: int):
+        self.id = value
+        self.reactions: list[str] = []
+
+    async def add_reaction(self, emoji: str):
+        self.reactions.append(emoji)
+
+
 class _Ctx:
     def __init__(self):
         self.guild = _Dummy(1)
@@ -27,15 +36,36 @@ class _Ctx:
         self.author = _Dummy(3)
         self.sent_messages: list[str] = []
         self.sent_embeds = []
+        self.sent_objects: list[_SentMessage] = []
 
     async def send(self, message: str | None = None, *, embed=None):
         if message is not None:
             self.sent_messages.append(message)
         if embed is not None:
             self.sent_embeds.append(embed)
+        sent = _SentMessage(1000 + len(self.sent_objects))
+        self.sent_objects.append(sent)
+        return sent
 
     def typing(self):
         return _Typing()
+
+
+class _Channel:
+    def __init__(self, value: int = 2):
+        self.id = value
+        self.sent_messages: list[str] = []
+        self.sent_embeds = []
+        self.sent_objects: list[_SentMessage] = []
+
+    async def send(self, message: str | None = None, *, embed=None):
+        if message is not None:
+            self.sent_messages.append(message)
+        if embed is not None:
+            self.sent_embeds.append(embed)
+        sent = _SentMessage(2000 + len(self.sent_objects))
+        self.sent_objects.append(sent)
+        return sent
 
 
 class _Reference:
@@ -55,6 +85,15 @@ class _Message:
 
     async def add_reaction(self, emoji: str):
         self.reactions.append(emoji)
+
+
+class _ReactionPayload:
+    def __init__(self, *, message_id: int, user_id: int = 3, channel_id: int = 2, emoji: str = "✅"):
+        self.message_id = message_id
+        self.user_id = user_id
+        self.channel_id = channel_id
+        self.guild_id = 1
+        self.emoji = emoji
 
 
 def _not_found(path: str):
@@ -140,6 +179,89 @@ async def test_notification_reply_listener_ignores_non_replies_commands_and_self
     await cog.capture_notification_reply(_Message(content="Done", reference_id=99, bot=True, author_id=3))
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_daily_log_proposal_uses_reaction_approval(monkeypatch):
+    calls = []
+    channel = _Channel()
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        if path == "/agents/chat":
+            return {
+                "response": "I can log this in Today: hydration x1, meal x1.",
+                "pending_action_id": 44,
+                "pending_action_type": "daily_log_batch",
+                "session_id": 7,
+                "session_title": "Should today",
+            }
+        if path == "/approvals/decide":
+            return {"id": 44, "status": "executed", "result": "Logged: water and meal"}
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+    bot = type("Bot", (), {"user": _Dummy(999), "get_channel": lambda self, channel_id: channel})()
+    cog = AgentsCog(bot=bot)
+    ctx = _Ctx()
+
+    await cog.ask_agent.callback(cog, ctx, agent_name="sandbox", message="i drank water and ate shawarma")
+
+    sent = ctx.sent_objects[0]
+    assert sent.reactions == ["✅"]
+    assert cog.pending_daily_log_actions[sent.id]["action_id"] == 44
+
+    await cog.approve_daily_log_reaction(_ReactionPayload(message_id=sent.id))
+
+    assert calls[-1] == (
+        "/approvals/decide",
+        {"action_id": 44, "approved": True, "reviewed_by": "3", "source": "discord_reaction"},
+    )
+    assert "Logged: water and meal" in channel.sent_messages[-1]
+    assert sent.id not in cog.pending_daily_log_actions
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_reply_replaces_with_correction(monkeypatch):
+    calls = []
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        if path == "/approvals/decide":
+            return {"id": 44, "status": "rejected", "result": "replaced"}
+        if path == "/agents/chat":
+            assert payload["message"] == "actually only meal"
+            return {
+                "response": "I can log this in Today: meal x1.",
+                "pending_action_id": 45,
+                "pending_action_type": "daily_log_batch",
+                "session_id": 7,
+            }
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+    bot = type("Bot", (), {"user": _Dummy(999)})()
+    cog = AgentsCog(bot=bot)
+    cog.pending_daily_log_actions[99] = {
+        "action_id": 44,
+        "agent_name": "sandbox",
+        "session_id": 7,
+        "guild_id": 1,
+        "channel_id": 2,
+        "author_id": 3,
+    }
+    channel = _Channel()
+    message = _Message(content="actually only meal", message_id=101, reference_id=99, author_id=3)
+    message.channel = channel
+
+    await cog.capture_notification_reply(message)
+
+    assert calls[0][0] == "/approvals/decide"
+    assert calls[0][1]["approved"] is False
+    assert calls[1][0] == "/agents/chat"
+    assert channel.sent_objects[0].reactions == ["✅"]
+    assert cog.pending_daily_log_actions[channel.sent_objects[0].id]["action_id"] == 45
+    assert 99 not in cog.pending_daily_log_actions
 
 
 @pytest.mark.asyncio

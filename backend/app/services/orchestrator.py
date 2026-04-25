@@ -12,6 +12,7 @@ from app.database import async_session
 from app.models import ActionStatus, Agent, AuditLog, LifeItemCreate, PendingAction
 from app.redaction import redact_sensitive
 from app.services.chat_sessions import build_session_reference_context, ensure_session, refresh_session_metadata
+from app.services.daily_log_proposals import format_daily_log_proposal, propose_daily_log_payload
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message_result
 from app.services.action_executor import execute_pending_action
@@ -422,6 +423,83 @@ async def handle_message(
                 "warnings": response_warnings,
                 "grounding": grounding,
             }
+        daily_log_payload = await propose_daily_log_payload(user_message, agent=agent)
+        if daily_log_payload:
+            proposal = format_daily_log_proposal(daily_log_payload)
+            final_response_text = (
+                f"I can log this in Today: {proposal}.\n\n"
+                "React with ✅ to apply it. If it is wrong, reply to this bot message with the corrected details."
+            )
+            pending = PendingAction(
+                agent_name=agent_name,
+                action_type="daily_log_batch",
+                summary=f"Proposed daily log: {proposal}"[:200],
+                details=json.dumps(daily_log_payload, ensure_ascii=True),
+                status=ActionStatus.PENDING,
+                risk_level="low",
+            )
+            db.add(pending)
+            await db.commit()
+            await db.refresh(pending)
+            await publish_event(
+                "approvals.pending.updated",
+                {"kind": "approval", "id": str(pending.id)},
+                {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
+            )
+            db.add(
+                AuditLog(
+                    agent_name=agent_name,
+                    action="chat:daily_log_batch",
+                    details=final_response_text[:1000],
+                    status="pending_approval",
+                )
+            )
+            await db.commit()
+            try:
+                await save_message(
+                    agent_name,
+                    "user",
+                    user_message,
+                    session_id=active_session.id if active_session else None,
+                )
+                await save_message(
+                    agent_name,
+                    "assistant",
+                    final_response_text,
+                    session_id=active_session.id if active_session else None,
+                )
+            except OpenVikingUnavailableError as exc:
+                logger.warning(
+                    "Daily-log proposal persistence unavailable for agent '%s': %s",
+                    agent_name,
+                    redact_sensitive(str(exc)),
+                )
+                _append_unique_warning(
+                    response_warnings,
+                    "This turn could not be saved to OpenViking session memory, so session history may look incomplete until memory is healthy again.",
+                )
+            if active_session:
+                try:
+                    active_session = await refresh_session_metadata(
+                        agent_name=agent_name,
+                        session_id=active_session.id,
+                    )
+                except OpenVikingUnavailableError as exc:
+                    logger.warning(
+                        "Session metadata refresh skipped for agent '%s' because OpenViking was unavailable: %s",
+                        agent_name,
+                        redact_sensitive(str(exc)),
+                    )
+            return {
+                "response": final_response_text,
+                "pending_action_id": pending.id,
+                "pending_action_type": "daily_log_batch",
+                "risk_level": "low",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
+                "warnings": response_warnings,
+                "grounding": grounding,
+            }
         workspace_paths = get_agent_workspace_paths(agent)
         if agent.workspace_enabled:
             if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or ""):
@@ -750,6 +828,7 @@ async def handle_message(
         return {
             "response": final_response_text,
             "pending_action_id": pending_id,
+            "pending_action_type": action_type if pending_id else None,
             "risk_level": risk_level,
             "session_id": active_session.id if active_session else None,
             "session_title": active_session.title if active_session else None,
@@ -779,7 +858,7 @@ async def approve_action(action_id: int, reviewer: Optional[str] = None, source:
         await db.commit()
     execution_ok = False
     execution_result = ""
-    if action.action_type in {"create_job", "create_agent", "workspace_delete"}:
+    if action.action_type in {"create_job", "create_agent", "workspace_delete", "daily_log_batch"}:
         execution_ok, execution_result = await execute_pending_action(action)
         async with async_session() as db:
             result = await db.execute(select(PendingAction).where(PendingAction.id == action_id))

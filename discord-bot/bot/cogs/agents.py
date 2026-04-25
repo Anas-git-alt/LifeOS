@@ -21,6 +21,7 @@ class AgentsCog(commands.Cog, name="Agents"):
     def __init__(self, bot):
         self.bot = bot
         self.active_sessions: dict[tuple[int, int, int, str], int] = {}
+        self.pending_daily_log_actions: dict[int, dict] = {}
 
     @staticmethod
     def _trim_error(exc: Exception, max_len: int = 220) -> str:
@@ -41,6 +42,10 @@ class AgentsCog(commands.Cog, name="Agents"):
     def _session_key(self, ctx, agent_name: str) -> tuple[int, int, int, str]:
         guild_id = ctx.guild.id if ctx.guild else 0
         return (guild_id, ctx.channel.id, ctx.author.id, agent_name.lower())
+
+    @staticmethod
+    def _session_key_from_ids(guild_id: int | None, channel_id: int | None, author_id: int | None, agent_name: str) -> tuple[int, int, int, str]:
+        return (int(guild_id or 0), int(channel_id or 0), int(author_id or 0), agent_name.lower())
 
     def _get_active_session_id(self, ctx, agent_name: str) -> int | None:
         return self.active_sessions.get(self._session_key(ctx, agent_name))
@@ -199,6 +204,62 @@ class AgentsCog(commands.Cog, name="Agents"):
         if session_id:
             payload["session_id"] = session_id
         return await api_post("/agents/chat", payload)
+
+    async def _send_agent_result(
+        self,
+        destination,
+        agent_name: str,
+        result: dict,
+        *,
+        ctx=None,
+        guild_id: int | None = None,
+        channel_id: int | None = None,
+        author_id: int | None = None,
+    ) -> None:
+        response = result.get("response", "No response received.")
+        returned_session_id = result.get("session_id")
+        if ctx is not None:
+            guild_id = ctx.guild.id if ctx.guild else 0
+            channel_id = ctx.channel.id
+            author_id = ctx.author.id
+            if returned_session_id:
+                self._set_active_session_id(ctx, agent_name, returned_session_id)
+        elif returned_session_id:
+            self.active_sessions[self._session_key_from_ids(guild_id, channel_id, author_id, agent_name)] = int(returned_session_id)
+
+        chunks = self._split_discord_chunks(response)
+        first_sent = None
+        for index, chunk in enumerate(chunks, start=1):
+            embed = discord.Embed(title=f"{agent_name}", description=chunk, color=0x2563EB)
+            if returned_session_id:
+                title = result.get("session_title") or "New chat"
+                suffix = f" · part {index}/{len(chunks)}" if len(chunks) > 1 else ""
+                embed.set_footer(text=f"Session #{returned_session_id} · {title}{suffix}")
+            sent = await destination.send(embed=embed)
+            if index == 1:
+                first_sent = sent
+
+        pending_action_id = result.get("pending_action_id")
+        pending_action_type = result.get("pending_action_type")
+        if pending_action_id and pending_action_type == "daily_log_batch" and first_sent is not None:
+            try:
+                self.pending_daily_log_actions[int(first_sent.id)] = {
+                    "action_id": int(pending_action_id),
+                    "agent_name": agent_name,
+                    "session_id": int(returned_session_id) if returned_session_id else None,
+                    "guild_id": int(guild_id or 0),
+                    "channel_id": int(channel_id or 0),
+                    "author_id": int(author_id or 0),
+                }
+                await first_sent.add_reaction("✅")
+            except Exception:
+                await destination.send(f"Daily log proposal #{pending_action_id} needs approval (`!approve {pending_action_id}`).")
+        elif pending_action_id:
+            await destination.send(f"Action #{pending_action_id} requires approval (`!pending`).")
+
+        warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
+        if warnings:
+            await destination.send(f"Note: {warnings[0][:350]}")
 
     async def _resolve_commitment_session_from_inbox(self, inbox_id: int) -> tuple[int | None, str | None, bool]:
         try:
@@ -410,24 +471,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                     else:
                         raise
 
-                response = result.get("response", "No response received.")
-                returned_session_id = result.get("session_id")
-                if returned_session_id:
-                    self._set_active_session_id(ctx, agent_name, returned_session_id)
-
-                chunks = self._split_discord_chunks(response)
-                for index, chunk in enumerate(chunks, start=1):
-                    embed = discord.Embed(title=f"{agent_name}", description=chunk, color=0x2563EB)
-                    if returned_session_id:
-                        title = result.get("session_title") or "New chat"
-                        suffix = f" · part {index}/{len(chunks)}" if len(chunks) > 1 else ""
-                        embed.set_footer(text=f"Session #{returned_session_id} · {title}{suffix}")
-                    await ctx.send(embed=embed)
-                warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
-                if warnings:
-                    await ctx.send(f"Note: {warnings[0][:350]}")
-                if result.get("pending_action_id"):
-                    await ctx.send(f"Action #{result['pending_action_id']} requires approval (`!pending`).")
+                await self._send_agent_result(result=result, destination=ctx, agent_name=agent_name, ctx=ctx)
             except Exception as exc:
                 await ctx.send(f"Error contacting agent: {self._trim_error(exc)}")
 
@@ -622,6 +666,39 @@ class AgentsCog(commands.Cog, name="Agents"):
         notification_message_id = getattr(reference, "message_id", None)
         if not notification_message_id:
             return
+        pending_log = self.pending_daily_log_actions.get(int(notification_message_id))
+        if pending_log:
+            if int(author_id or 0) != int(pending_log.get("author_id") or 0):
+                return
+            self.pending_daily_log_actions.pop(int(notification_message_id), None)
+            try:
+                await api_post(
+                    "/approvals/decide",
+                    {
+                        "action_id": pending_log["action_id"],
+                        "approved": False,
+                        "reason": f"Replaced by Discord correction: {content[:200]}",
+                        "reviewed_by": str(author_id or ""),
+                        "source": "discord_daily_log_correction",
+                    },
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+            result = await self._send_agent_chat(
+                agent_name=pending_log.get("agent_name") or "sandbox",
+                message=content,
+                session_id=pending_log.get("session_id"),
+            )
+            await self._send_agent_result(
+                destination=message.channel,
+                agent_name=pending_log.get("agent_name") or "sandbox",
+                result=result,
+                guild_id=pending_log.get("guild_id"),
+                channel_id=pending_log.get("channel_id"),
+                author_id=pending_log.get("author_id"),
+            )
+            return
         try:
             await api_post(
                 "/memory/intake/job-reply",
@@ -642,6 +719,50 @@ class AgentsCog(commands.Cog, name="Agents"):
             if exc.response.status_code == 404:
                 return
             raise
+
+    @commands.Cog.listener("on_raw_reaction_add")
+    async def approve_daily_log_reaction(self, payload):
+        if str(getattr(payload, "emoji", "")) != "✅":
+            return
+        user_id = int(getattr(payload, "user_id", 0) or 0)
+        bot_user_id = getattr(getattr(self.bot, "user", None), "id", None)
+        if bot_user_id is not None and user_id == int(bot_user_id):
+            return
+        message_id = int(getattr(payload, "message_id", 0) or 0)
+        pending_log = self.pending_daily_log_actions.get(message_id)
+        if not pending_log:
+            return
+        if user_id != int(pending_log.get("author_id") or 0):
+            return
+        self.pending_daily_log_actions.pop(message_id, None)
+        try:
+            result = await api_post(
+                "/approvals/decide",
+                {
+                    "action_id": pending_log["action_id"],
+                    "approved": True,
+                    "reviewed_by": str(user_id),
+                    "source": "discord_reaction",
+                },
+            )
+        except Exception:
+            return
+        channel_id = int(getattr(payload, "channel_id", 0) or pending_log.get("channel_id") or 0)
+        channel = None
+        get_channel = getattr(self.bot, "get_channel", None)
+        if callable(get_channel):
+            channel = get_channel(channel_id)
+        if channel is None:
+            fetch_channel = getattr(self.bot, "fetch_channel", None)
+            if callable(fetch_channel):
+                try:
+                    channel = await fetch_channel(channel_id)
+                except Exception:
+                    channel = None
+        if channel is not None:
+            status = result.get("status") or "approved"
+            detail = result.get("result") or result.get("message") or "Logged."
+            await channel.send(f"Daily log {status}: {detail[:500]}")
 
     @commands.command(name="capturefollow")
     async def capture_follow(self, ctx, *, message: str):

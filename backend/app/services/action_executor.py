@@ -7,7 +7,7 @@ import json
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import Agent, AgentCreate, PendingAction, ScheduledJobCreate
+from app.models import Agent, AgentCreate, DailyLogCreate, PendingAction, ScheduledJobCreate
 from app.services.agent_payloads import build_agent_row
 from app.services.jobs import create_job
 from app.services.workspace import execute_workspace_delete_action
@@ -59,5 +59,21 @@ async def execute_pending_action(action: PendingAction) -> tuple[bool, str]:
 
     if action.action_type == "workspace_delete":
         return await execute_workspace_delete_action(action)
+
+    if action.action_type == "daily_log_batch":
+        from app.services.life import log_daily_signal
+
+        logs = payload.get("logs") if isinstance(payload, dict) else None
+        if not isinstance(logs, list) or not logs:
+            return False, "No daily logs in action details"
+        labels: list[str] = []
+        try:
+            for raw_log in logs:
+                data = DailyLogCreate.model_validate(raw_log)
+                result = await log_daily_signal(data)
+                labels.append(result.get("message") or data.kind)
+        except Exception as exc:
+            return False, f"Failed logging daily check-in: {exc}"
+        return True, "Logged: " + "; ".join(labels)
 
     return False, f"Unsupported action_type '{action.action_type}'"
