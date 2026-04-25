@@ -17,6 +17,7 @@ from app.models import (
     LifeItemCreate,
     LifeItemUpdate,
     ScheduledJob,
+    SharedMemoryProposal,
     UserProfile,
 )
 from app.services.commitments import disable_follow_up_job, resolve_job_follow_up_due_at, upsert_follow_up_job
@@ -651,6 +652,16 @@ async def _load_intake_snapshot(db) -> dict:
     return {"intake_summary": intake_summary, "ready_intake": ready_intake}
 
 
+async def _load_memory_review_snapshot(db) -> list[SharedMemoryProposal]:
+    result = await db.execute(
+        select(SharedMemoryProposal)
+        .where(SharedMemoryProposal.status == "pending")
+        .order_by(SharedMemoryProposal.created_at.desc(), SharedMemoryProposal.id.desc())
+        .limit(5)
+    )
+    return list(result.scalars().all())
+
+
 async def _load_next_prayer_context() -> dict | None:
     try:
         schedule = await get_today_schedule()
@@ -820,6 +831,7 @@ async def get_today_agenda() -> dict:
         today_date = now_local.date()
         agenda_snapshot = await _load_open_items_snapshot(db, tz=tz, today_date=today_date)
         intake_snapshot = await _load_intake_snapshot(db)
+        memory_review = await _load_memory_review_snapshot(db)
         scorecard, created = await _get_or_create_daily_scorecard(
             db,
             local_date=today_date,
@@ -856,6 +868,7 @@ async def get_today_agenda() -> dict:
             "domain_summary": agenda_snapshot["domain_summary"],
             "intake_summary": intake_snapshot["intake_summary"],
             "ready_intake": intake_snapshot["ready_intake"],
+            "memory_review": memory_review,
             "scorecard": scorecard,
             "next_prayer": next_prayer,
             "rescue_plan": rescue_plan,

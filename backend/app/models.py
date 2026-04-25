@@ -806,6 +806,7 @@ class ChatResponse(BaseModel):
     session_id: Optional[int] = None
     session_title: Optional[str] = None
     warnings: list[str] = Field(default_factory=list)
+    grounding: Optional[dict[str, Any]] = None
 
 
 class ChatSessionCreate(BaseModel):
@@ -1445,6 +1446,35 @@ class CommitmentCaptureResponse(BaseModel):
     needs_follow_up: bool = False
 
 
+class UnifiedCaptureRequest(BaseModel):
+    message: str
+    session_id: Optional[int] = None
+    new_session: bool = True
+    source: str = "api"
+    route_hint: Optional[Literal["auto", "intake", "commitment", "memory"]] = "auto"
+    due_at: Optional[datetime] = None
+    timezone: Optional[str] = None
+    target_channel: Optional[str] = None
+    target_channel_id: Optional[str] = None
+
+
+class UnifiedCaptureResponse(BaseModel):
+    route: Literal["intake", "commitment", "memory"]
+    response: str
+    session_id: Optional[int] = None
+    session_title: Optional[str] = None
+    entry: Optional[IntakeEntryResponse] = None
+    entries: list[IntakeEntryResponse] = Field(default_factory=list)
+    life_item: Optional[LifeItemResponse] = None
+    life_items: list[LifeItemResponse] = Field(default_factory=list)
+    follow_up_job: Optional[ScheduledJobResponse] = None
+    wiki_proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
+    event: Optional[ContextEventResponse] = None
+    auto_promoted_count: int = 0
+    needs_follow_up: bool = False
+    needs_answer_count: int = 0
+
+
 class IntakePromoteRequest(BaseModel):
     title: Optional[str] = None
     kind: Optional[str] = None
@@ -1628,6 +1658,7 @@ class TodayAgendaResponse(BaseModel):
     domain_summary: dict[str, int]
     intake_summary: dict[str, int] = Field(default_factory=dict)
     ready_intake: list[IntakeEntryResponse] = Field(default_factory=list)
+    memory_review: list[SharedMemoryProposalResponse] = Field(default_factory=list)
     scorecard: Optional[DailyScorecardResponse] = None
     next_prayer: Optional[NextPrayerResponse] = None
     rescue_plan: Optional[RescuePlanResponse] = None

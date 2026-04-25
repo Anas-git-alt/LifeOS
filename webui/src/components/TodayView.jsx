@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { getDailyFocusCoach, getTodayAgenda, getWeeklyCommitmentReview, logDailySignal } from "../api";
+import {
+  applyMemoryProposal,
+  captureLife,
+  getDailyFocusCoach,
+  getTodayAgenda,
+  getWeeklyCommitmentReview,
+  logDailySignal,
+} from "../api";
 
 const EMPTY_SCORECARD = {
   sleep_hours: null,
@@ -20,6 +27,8 @@ export default function TodayView() {
   const [weeklyReviewLoading, setWeeklyReviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [captureText, setCaptureText] = useState("");
+  const [captureLoading, setCaptureLoading] = useState(false);
   const [activeLog, setActiveLog] = useState("");
   const [sleepHours, setSleepHours] = useState("");
   const [sleepNote, setSleepNote] = useState("");
@@ -75,6 +84,40 @@ export default function TodayView() {
     }
   }
 
+  async function submitCapture(event) {
+    event.preventDefault();
+    const message = captureText.trim();
+    if (!message) return;
+    try {
+      setCaptureLoading(true);
+      const result = await captureLife(message, { source: "webui_today_capture", newSession: true });
+      const bits = [`Captured as ${result.route}.`];
+      if (result.auto_promoted_count) bits.push(`Tracked ${result.auto_promoted_count}.`);
+      if (result.needs_answer_count) bits.push(`${result.needs_answer_count} need answer.`);
+      if ((result.wiki_proposals || []).length) bits.push(`${result.wiki_proposals.length} memory review.`);
+      setStatus(bits.join(" "));
+      setCaptureText("");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCaptureLoading(false);
+    }
+  }
+
+  async function applyMemoryReview(proposalId) {
+    try {
+      setActiveLog(`memory-${proposalId}`);
+      await applyMemoryProposal(proposalId, "today");
+      setStatus(`Applied memory review #${proposalId}.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActiveLog("");
+    }
+  }
+
   async function loadWeeklyReview() {
     try {
       setWeeklyReviewLoading(true);
@@ -93,6 +136,7 @@ export default function TodayView() {
   const sleepProtocol = agenda?.sleep_protocol;
   const streaks = agenda?.streaks || [];
   const trendSummary = agenda?.trend_summary;
+  const memoryReview = agenda?.memory_review || [];
 
   return (
     <div>
@@ -106,6 +150,13 @@ export default function TodayView() {
 
       {agenda && (
         <>
+          <CaptureBox
+            value={captureText}
+            loading={captureLoading}
+            onChange={setCaptureText}
+            onSubmit={submitCapture}
+          />
+
           <div className="grid grid-4 today-score-grid" style={{ marginBottom: 20 }}>
             <ScoreCardStat label="Timezone" value={agenda.timezone} />
             <ScoreCardStat label="Now" value={formatDateTime(agenda.now)} />
@@ -118,7 +169,7 @@ export default function TodayView() {
             <ScoreCardStat label="Family" value={scorecard.family_action_done ? "Done" : "Pending"} />
             <ScoreCardStat label="Priorities" value={String(scorecard.top_priority_completed_count)} />
             <ScoreCardStat label="Open Domains" value={String(Object.keys(agenda.domain_summary || {}).length)} />
-            <ScoreCardStat label="Inbox Ready" value={String(agenda.intake_summary?.ready || 0)} />
+            <ScoreCardStat label="Needs Answer" value={String((agenda.intake_summary?.ready || 0) + (agenda.intake_summary?.clarifying || 0))} />
           </div>
 
           <div className="grid grid-2" style={{ marginBottom: 20 }}>
@@ -306,11 +357,40 @@ export default function TodayView() {
 
           <div className="grid grid-2">
             <AgendaBlock title="Top Focus" items={agenda.top_focus || []} emptyLabel="No focus items yet." />
-            <InboxBlock title="Inbox Ready" items={agenda.ready_intake || []} summary={agenda.intake_summary || {}} />
+            <CaptureReviewBlock title="Needs Answer" items={agenda.ready_intake || []} summary={agenda.intake_summary || {}} />
+            <MemoryReviewBlock items={memoryReview} activeLog={activeLog} onApply={applyMemoryReview} />
           </div>
         </>
       )}
     </div>
+  );
+}
+
+function CaptureBox({ value, loading, onChange, onSubmit }) {
+  return (
+    <section className="glass-card" style={{ marginBottom: 20 }}>
+      <div className="panel-card-head">
+        <h2>Capture</h2>
+        <span>Auto-sort to task, commitment, or memory review</span>
+      </div>
+      <form onSubmit={onSubmit}>
+        <div className="form-group">
+          <label htmlFor="today-capture">What needs to be held?</label>
+          <textarea
+            id="today-capture"
+            rows={3}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Send invoice today, meeting decision, sleep habit, idea, reminder..."
+          />
+        </div>
+        <div className="action-row">
+          <button className="btn btn-primary" type="submit" disabled={loading || !value.trim()}>
+            {loading ? "Capturing..." : "Capture"}
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -583,7 +663,7 @@ function AgendaBlock({ title, items, emptyLabel }) {
   );
 }
 
-function InboxBlock({ title, items, summary }) {
+function CaptureReviewBlock({ title, items, summary }) {
   return (
     <div className="glass-card">
       <h3 style={{ marginBottom: 12 }}>{title}</h3>
@@ -593,7 +673,7 @@ function InboxBlock({ title, items, summary }) {
         <span className="meta-tag">parked {summary.parked || 0}</span>
       </div>
       {items.length === 0 ? (
-        <p style={{ color: "var(--text-muted)" }}>Inbox clear enough for today.</p>
+        <p style={{ color: "var(--text-muted)" }}>No capture questions blocking today.</p>
       ) : (
         <ul style={{ display: "grid", gap: 8 }}>
           {items.map((item) => (
@@ -601,6 +681,38 @@ function InboxBlock({ title, items, summary }) {
               #{item.id} {item.title || item.raw_text}
               <div className="meta-tag" style={{ marginTop: 4 }}>
                 {item.status} / {item.domain} / {item.kind}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MemoryReviewBlock({ items, activeLog, onApply }) {
+  return (
+    <div className="glass-card">
+      <h3 style={{ marginBottom: 12 }}>Memory Review</h3>
+      {items.length === 0 ? (
+        <p style={{ color: "var(--text-muted)" }}>No memory proposals waiting.</p>
+      ) : (
+        <ul style={{ display: "grid", gap: 8 }}>
+          {items.map((item) => (
+            <li key={item.id} style={{ listStyle: "none" }}>
+              #{item.id} {item.title}
+              <div className="meta-tag" style={{ marginTop: 4 }}>
+                {item.domain || "planning"} / {item.conflict_reason}
+              </div>
+              <div className="action-row" style={{ marginTop: 8 }}>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => onApply(item.id)}
+                  disabled={activeLog === `memory-${item.id}`}
+                >
+                  {activeLog === `memory-${item.id}` ? "Applying..." : "Apply"}
+                </button>
               </div>
             </li>
           ))}

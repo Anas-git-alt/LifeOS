@@ -68,13 +68,15 @@ def _not_found(path: str):
 @pytest.mark.asyncio
 async def test_meeting_command_posts_meeting_intake(monkeypatch):
     async def _fake_api_post(path: str, payload: dict):
-        assert path == "/memory/intake/meeting"
-        assert payload["summary"] == "Decision: build shared wiki. Action: add meeting intake."
+        assert path == "/life/capture"
+        assert payload["message"] == "Decision: build shared wiki. Action: add meeting intake."
         assert payload["source"] == "discord_meeting"
+        assert payload["route_hint"] == "memory"
         return {
+            "route": "memory",
             "event": {"id": 12, "domain": "work"},
-            "proposals": [{"id": 5}],
-            "intake_entry_ids": [9],
+            "wiki_proposals": [{"id": 5}],
+            "entries": [{"id": 9}],
         }
 
     monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
@@ -86,7 +88,7 @@ async def test_meeting_command_posts_meeting_intake(monkeypatch):
 
     assert len(ctx.sent_embeds) == 1
     embed = ctx.sent_embeds[0]
-    assert embed.title == "Meeting Intake"
+    assert embed.title == "Memory Review"
     assert "event #12" in embed.description
 
 
@@ -143,13 +145,15 @@ async def test_notification_reply_listener_ignores_non_replies_commands_and_self
 @pytest.mark.asyncio
 async def test_commit_command_posts_commitment_capture(monkeypatch):
     async def _fake_api_post(path: str, payload: dict):
-        assert path == "/life/commitments/capture"
+        assert path == "/life/capture"
         assert payload["message"] == "Send invoice"
         assert payload["raw_message"] == "Send invoice tomorrow at 9am"
+        assert payload["route_hint"] == "commitment"
         assert payload["target_channel"] == "planning"
         assert payload["target_channel_id"] == "2"
         assert payload["due_at"]
         return {
+            "route": "commitment",
             "response": "Ready to promote",
             "session_id": 77,
             "needs_follow_up": False,
@@ -162,6 +166,7 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
                 "follow_up_questions": [],
             },
             "life_item": {"id": 31, "title": "Send invoice"},
+            "life_items": [{"id": 31, "title": "Send invoice"}],
             "follow_up_job": {"id": 44, "run_at": "2026-03-26T08:00:00Z"},
         }
 

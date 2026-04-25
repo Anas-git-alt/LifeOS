@@ -1,6 +1,6 @@
 # LifeOS
 
-LifeOS is a self-hosted AI agent system for personal operations. Current project state is Discord-first workflow backed by FastAPI API, token-gated WebUI, OpenViking runtime memory and workspace search, optional Obsidian-based shared-memory vault, scheduled jobs, approval gates, prayer and Quran tracking, daily accountability scorecards with quick logs, AI-backed commitment capture/follow-up, and optional voice/TTS playback.
+LifeOS is a self-hosted AI agent system for personal operations. The daily loop is intentionally simple: capture once in Discord or Today, let LifeOS auto-sort it, then review Today for focus, habits, reminders, prayer context, and anything that needs an answer. Behind that loop are FastAPI, the Discord bot, token-gated WebUI, OpenViking runtime memory and workspace search, optional Obsidian shared memory, scheduled jobs, approval gates, prayer and Quran tracking, daily scorecards, commitment follow-up, and optional voice/TTS playback.
 
 The recommended way to run it today is Docker Compose on Linux or WSL2.
 
@@ -82,7 +82,7 @@ Runtime-data note:
 - `.venv/.env` is for app secrets and service env vars.
 - repo-root `.env` is optional and only for Docker host mount overrides such as runtime data paths.
 - In Docker/Compose, set `OBSIDIAN_VAULT_ROOT=/obsidian-vault` in `.venv/.env` and set `LIFEOS_OBSIDIAN_VAULT_DIR=/absolute/host/path` in repo-root `.env`.
-- See [docs/RUNTIME_DATA.md](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/docs/RUNTIME_DATA.md) if you want a clean repo with runtime data stored elsewhere.
+- See [docs/RUNTIME_DATA.md](docs/RUNTIME_DATA.md) if you want a clean repo with runtime data stored elsewhere.
 
 ## First-Use Checklist
 
@@ -95,7 +95,7 @@ After the stack is up, do this once before relying on automations:
 5. In WebUI `Agents`, inspect the seeded agents and adjust prompts, cadence, fallback models, voice settings, or workspace access as needed.
 6. In WebUI `Today`, confirm scorecard, next prayer, rescue plan, and quick-log buttons render for your local day.
 7. In Discord, try quick accountability logs such as `!sleep 7.5 bed 23:30 wake 07:10 solid night`, `!family called parents`, or `!priority shipped invoice`.
-8. In Discord, try one raw intake loop such as `!capture need invoice sent today and sleep routine fixed`, then check `!focus`.
+8. In Discord, try one capture loop such as `!capture need invoice sent today and sleep routine fixed`, then check `!today` or WebUI `Today`.
 
 Seeded by default:
 
@@ -118,14 +118,13 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 
 ## How To Use It Effectively
 
-- Use Discord for capture and lightweight execution. It is the fastest place to ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
-- Use WebUI for configuration and review. `Mission Control`, `Today`, `Jobs`, `Approvals`, `Agents`, `Profile`, and `Settings` are main operator surfaces.
-- Use `Today` as daily control board. It now shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, and inbox-ready work in one place.
-- Use `!capture` for messy raw life input. The intake brain reads shared Wiki context, splits tasks/goals/habits/facts, assigns AI priority scores, auto-creates clear Life items, and sends durable facts to Wiki review.
-- Use `!commit` when you say you will do something. Clear commitments become tracked Life items with linked reminders; fuzzy ones ask for follow-up through `!commitfollow <inbox_id> <answer>`.
+- Use Discord for capture and lightweight execution. It is the fastest place to capture, ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
+- Use WebUI `Today` for daily review. It shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, capture questions, and memory review.
+- Use `!capture` for messy raw life input, promises, meeting notes, durable facts, reminders, goals, habits, and ideas. LifeOS auto-sorts the input into tracked work, clarification questions, or memory review.
+- Use `!commit` and `!meeting` only as power shortcuts. They route through the same unified capture path.
 - Use `!focus` for backend-ranked priority and `!focuscoach` when you want AI help choosing the next visible step.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
-- Use the Obsidian vault for durable shared knowledge. Session chat stays transient; promoted facts live in the vault and become available cross-agent by scope/domain.
+- Use the Obsidian vault for durable shared knowledge. Session chat stays transient; memory review proposals live in Today/Wiki review before they are applied to the vault.
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
 - Prefer approval queues for risky changes. New agents and natural-language job creation are safer when you queue them first and review them in `Approvals`.
 - Keep workspace access narrow. If an agent needs repo access, enable workspace support only for the paths it really needs, then use `Sync Workspace` and rely on archives for rollback.
@@ -158,8 +157,9 @@ Job authoring tips:
 | Page | What it is for |
 | --- | --- |
 | `Mission Control` | Health, readiness, approvals, jobs, prayer summary, and recent agent activity with realtime updates |
-| `Today` | Daily accountability board with scorecard, next prayer, rescue plan, quick logs, commitment radar, AI focus coach, focus items, due work, and inbox-ready items |
-| `Inbox` | Intake and commitment capture review, including clarifying/ready/processed entries |
+| `Today` | Daily accountability board with capture, scorecard, next prayer, rescue plan, quick logs, commitment radar, AI focus coach, due work, focus items, capture questions, and memory review |
+| `Inbox` | Advanced/internal capture review for clarifying, ready, and processed entries |
+| `Wiki` | Advanced/internal memory review for context events and Obsidian proposals |
 | `Prayer` | Weekly prayer dashboard with editable check-ins |
 | `Quran` | Page-based reading log and bookmark/progress |
 | `Life Items` | Tasks, goals, and habits across deen, family, work, health, and planning |

@@ -2,7 +2,7 @@
 
 This file is the short operational map for coding agents working in this repo.
 
-Read this first, then read [docs/SYSTEM_SETUP.md](/home/anasbe/LifeOS-clean/docs/SYSTEM_SETUP.md) for the full environment layout.
+Read this first, then read [docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md) for the full environment layout.
 
 ## Workspace Role
 
@@ -37,7 +37,7 @@ Use Codex in the exact worktree that matches the current task.
 - If current tree is dirty, avoid risky branch/promotion operations until the user confirms intent.
 - Prefer reading existing runbooks before inventing new commands.
 - Keep edits scoped to the repo/worktree that the user is actively using.
-- For VPS validation and promotion, follow [docs/FEATURE_STAGING_PLAYBOOK.md](/home/anasbe/LifeOS-feature-next/docs/FEATURE_STAGING_PLAYBOOK.md) and [docs/DEV_VPS_WORKFLOW.md](/home/anasbe/LifeOS-feature-next/docs/DEV_VPS_WORKFLOW.md).
+- For VPS validation and promotion, follow [docs/FEATURE_STAGING_PLAYBOOK.md](docs/FEATURE_STAGING_PLAYBOOK.md) and [docs/DEV_VPS_WORKFLOW.md](docs/DEV_VPS_WORKFLOW.md).
 
 ## Common Commands
 
@@ -54,7 +54,7 @@ curl http://localhost:8100/api/readiness
 Quick start for a fresh feature worktree:
 
 - run `./scripts/new_feature_worktree.sh my-feature-slug`
-- read [docs/NEW_FEATURE_WORKTREE.md](/home/anasbe/LifeOS-feature-next/docs/NEW_FEATURE_WORKTREE.md) for the short flow
+- read [docs/NEW_FEATURE_WORKTREE.md](docs/NEW_FEATURE_WORKTREE.md) for the short flow
 
 ## Deployment Flow
 

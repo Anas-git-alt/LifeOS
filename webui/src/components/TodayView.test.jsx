@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
     domain_summary: { work: 2, family: 1 },
     intake_summary: { ready: 1, clarifying: 0, parked: 0 },
     ready_intake: [{ id: 9, title: "Inbox capture", raw_text: "Inbox capture", status: "ready", domain: "planning", kind: "task" }],
+    memory_review: [{ id: 40, title: "Sleep principle", domain: "health", conflict_reason: "review_required" }],
     scorecard: {
       id: 1,
       local_date: "2026-03-03",
@@ -139,6 +140,16 @@ const apiMocks = vi.hoisted(() => ({
       ],
     },
   })),
+  captureLife: vi.fn(async () => ({
+    route: "intake",
+    response: "Captured.",
+    entries: [],
+    life_items: [],
+    wiki_proposals: [],
+    auto_promoted_count: 0,
+    needs_answer_count: 0,
+  })),
+  applyMemoryProposal: vi.fn(async () => ({ status: "applied" })),
 }));
 
 vi.mock("../api", () => apiMocks);
@@ -151,6 +162,8 @@ describe("TodayView", () => {
     expect(screen.getAllByText("Asr").length).toBeGreaterThan(0);
     expect(screen.getByText("7.5h")).toBeInTheDocument();
     expect(screen.getByText("Commitment Radar")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Capture" })).toBeInTheDocument();
+    expect(await screen.findByText("Memory Review")).toBeInTheDocument();
     expect(screen.getByText("AI Focus Coach")).toBeInTheDocument();
     expect(screen.getByText("Deep work block")).toBeInTheDocument();
     expect(screen.getByText("Caffeine cutoff 15:00")).toBeInTheDocument();

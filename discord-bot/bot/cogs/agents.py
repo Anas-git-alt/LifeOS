@@ -199,24 +199,26 @@ class AgentsCog(commands.Cog, name="Agents"):
         entry = result.get("entry") or {}
         entries = result.get("entries") or ([entry] if entry else [])
         life_items = result.get("life_items") or []
+        if result.get("life_item") and not life_items:
+            life_items = [result["life_item"]]
         wiki_proposals = result.get("wiki_proposals") or []
         clarifying_count = len([item for item in entries if item.get("status") == "clarifying"])
         if entries or life_items or wiki_proposals:
-            description_parts = [f"Captured {len(entries)} inbox item(s)."]
+            description_parts = [f"Captured via {result.get('route', 'capture')}."]
             if life_items:
-                description_parts.append(f"Auto-created {len(life_items)} life item(s).")
+                description_parts.append(f"Tracked {len(life_items)} item(s).")
             if clarifying_count:
-                description_parts.append(f"{clarifying_count} need follow-up.")
+                description_parts.append(f"{clarifying_count} need answer.")
             if wiki_proposals:
-                description_parts.append(f"{len(wiki_proposals)} wiki proposal(s).")
+                description_parts.append(f"{len(wiki_proposals)} memory review item(s).")
             description = " ".join(description_parts)
         else:
             description = self._clean_visible_response(result.get("response", "Captured."))
-        embed = discord.Embed(title=heading, description=description[:4000], color=0x7C3AED)
+        embed = discord.Embed(title=heading, description=description[:4000], color=0x2563EB)
         if entry.get("id"):
             priority = entry.get("promotion_payload") or {}
             embed.add_field(
-                name="Inbox Item",
+                name="Capture Item",
                 value=self._embed_value(
                     f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
                     f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}\n"
@@ -229,13 +231,13 @@ class AgentsCog(commands.Cog, name="Agents"):
                 f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')} ({item.get('priority_score', 50)}/100)"
                 for item in life_items[:5]
             ]
-            embed.add_field(name="Auto-created", value=self._embed_value("\n".join(lines)), inline=False)
+            embed.add_field(name="Tracked", value=self._embed_value("\n".join(lines)), inline=False)
         if wiki_proposals:
-            embed.add_field(name="Wiki Proposals", value=f"{len(wiki_proposals)} review-required proposal(s)", inline=False)
+            embed.add_field(name="Memory Review", value=f"{len(wiki_proposals)} review-required item(s)", inline=False)
         followups = entry.get("follow_up_questions") or []
         if followups:
             embed.add_field(
-                name="Follow-up",
+                name="Needs Answer",
                 value=self._embed_value("\n".join([f"• {question}" for question in followups[:3]])),
                 inline=False,
             )
@@ -245,7 +247,7 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     async def _send_commitment_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
-        life_item = result.get("life_item") or {}
+        life_item = result.get("life_item") or next(iter(result.get("life_items") or []), {})
         follow_up_job = result.get("follow_up_job") or {}
         description = self._clean_visible_response(result.get("response", "Captured."))
         if life_item.get("id") and not result.get("needs_follow_up"):
@@ -262,7 +264,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         embed = discord.Embed(title=heading, description=description[:4000], color=0x059669)
         if entry.get("id"):
             embed.add_field(
-                name="Inbox",
+                name="Capture Item",
                 value=(
                     f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
                     f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}"
@@ -518,44 +520,47 @@ class AgentsCog(commands.Cog, name="Agents"):
         async with ctx.typing():
             try:
                 result = await api_post(
-                    "/life/inbox/capture",
+                    "/life/capture",
                     {
                         "message": message,
                         "new_session": True,
                         "source": "discord_capture",
                     },
                 )
-                if result.get("session_id"):
+                route = result.get("route")
+                if result.get("session_id") and route == "intake":
                     self._set_active_session_id(ctx, INTAKE_AGENT_NAME, int(result["session_id"]))
-                await self._send_capture_embed(ctx, result, heading="Inbox Capture")
+                if result.get("session_id") and route == "commitment" and result.get("needs_follow_up"):
+                    self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
+                await self._send_capture_embed(ctx, result, heading="Capture")
             except Exception as exc:
-                await ctx.send(f"Failed to capture inbox item: {self._trim_error(exc)}")
+                await ctx.send(f"Failed to capture: {self._trim_error(exc)}")
 
     @commands.command(name="meeting")
     async def meeting(self, ctx, *, summary: str):
         async with ctx.typing():
             try:
                 result = await api_post(
-                    "/memory/intake/meeting",
+                    "/life/capture",
                     {
-                        "summary": summary,
+                        "message": summary,
                         "source": "discord_meeting",
-                        "source_agent": "wiki-curator",
+                        "route_hint": "memory",
                     },
                 )
                 event = result.get("event") or {}
-                proposals = result.get("proposals") or []
+                proposals = result.get("wiki_proposals") or []
                 embed = discord.Embed(
-                    title="Meeting Intake",
+                    title="Memory Review",
                     description=f"Captured context event #{event.get('id', '?')}.",
                     color=0x7C3AED,
                 )
                 embed.add_field(name="Domain", value=event.get("domain", "planning"), inline=True)
-                embed.add_field(name="Wiki Proposals", value=str(len(proposals)), inline=True)
-                if result.get("intake_entry_ids"):
+                embed.add_field(name="Memory Review", value=str(len(proposals)), inline=True)
+                if result.get("entries"):
                     embed.add_field(
-                        name="Action Intake",
-                        value=", ".join(f"#{item}" for item in result["intake_entry_ids"][:5]),
+                        name="Action Capture",
+                        value=", ".join(f"#{item['id']}" for item in result["entries"][:5]),
                         inline=False,
                     )
                 await ctx.send(embed=embed)
@@ -606,15 +611,16 @@ class AgentsCog(commands.Cog, name="Agents"):
         async with ctx.typing():
             try:
                 result = await api_post(
-                    "/life/inbox/capture",
+                    "/life/capture",
                     {
                         "message": message,
                         "session_id": session_id,
                         "new_session": False,
                         "source": "discord_capture_followup",
+                        "route_hint": "intake",
                     },
                 )
-                await self._send_capture_embed(ctx, result, heading="Inbox Follow-up")
+                await self._send_capture_embed(ctx, result, heading="Capture Follow-up")
             except Exception as exc:
                 await ctx.send(f"Failed to continue capture: {self._trim_error(exc)}")
 
@@ -638,7 +644,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         }
         async with ctx.typing():
             try:
-                result = await api_post("/life/commitments/capture", payload)
+                result = await api_post("/life/capture", {**payload, "route_hint": "commitment"})
                 if result.get("session_id") and result.get("needs_follow_up"):
                     self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
                 else:

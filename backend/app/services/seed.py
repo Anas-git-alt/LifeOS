@@ -8,6 +8,22 @@ from app.config import settings
 from app.services.provider_router import PROVIDERS
 from app.services.agent_payloads import default_agent_workspace_paths
 
+GROUNDING_PROMPT = (
+    "\n\nLIFEOS STATE PACKET RULES:\n"
+    "- Every chat and scheduled run receives a strict LifeOS state packet from the orchestrator.\n"
+    "- Treat that packet as the source of truth for current status, tasks, habits, commitments, reminders, and memory review.\n"
+    "- Never invent tasks, deadlines, personal facts, habit stats, prayer stats, or job results that are not in the packet.\n"
+    "- If the packet is missing the fact you need, ask one concise clarification instead of guessing."
+)
+
+
+def _with_grounding_prompt(prompt: str) -> str:
+    text = str(prompt or "").strip()
+    if "LIFEOS STATE PACKET RULES" in text:
+        return text
+    return f"{text}{GROUNDING_PROMPT}"
+
+
 # Per-agent scheduled nudge prompts — used by run_scheduled_agent() instead of
 # the generic fallback so each agent knows exactly what to produce on schedule.
 SCHEDULED_PROMPTS: dict[str, str] = {
@@ -508,6 +524,7 @@ async def seed_default_agents():
             )
             existing = result.scalar_one_or_none()
             if existing:
+                existing.system_prompt = _with_grounding_prompt(existing.system_prompt or agent_data["system_prompt"])
                 if not existing.workspace_paths_json:
                     existing.workspace_paths_json = default_workspace_paths
                 if existing.name == "sandbox":
@@ -540,7 +557,7 @@ async def seed_default_agents():
                         or "idea|task|goal|habit|commitment|routine|note" in (existing.system_prompt or "")
                         or "clarifying|ready|parked" in (existing.system_prompt or "")
                     ):
-                        existing.system_prompt = agent_data["system_prompt"]
+                        existing.system_prompt = _with_grounding_prompt(agent_data["system_prompt"])
                     if not existing.discord_channel:
                         existing.discord_channel = agent_data.get("discord_channel")
                     config_json = dict(existing.config_json or {})
@@ -568,7 +585,7 @@ async def seed_default_agents():
                 agent = Agent(
                     name=agent_data["name"],
                     description=agent_data["description"],
-                    system_prompt=agent_data["system_prompt"],
+                    system_prompt=_with_grounding_prompt(agent_data["system_prompt"]),
                     provider=provider,
                     model=model,
                     fallback_provider=agent_data.get("fallback_provider"),

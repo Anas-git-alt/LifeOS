@@ -176,4 +176,4 @@ ssh -L 13100:127.0.0.1:13100 ubuntu@your-vps
 ssh -L 3100:127.0.0.1:3100 ubuntu@your-vps
 ```
 
-More complete migration commands live in [docs/VPS_SPLIT_MIGRATION.md](/home/anasbe/LifeOS-feature-next/docs/VPS_SPLIT_MIGRATION.md).
+More complete migration commands live in [docs/VPS_SPLIT_MIGRATION.md](VPS_SPLIT_MIGRATION.md).

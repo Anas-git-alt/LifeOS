@@ -1,5 +1,7 @@
 """Life items and agenda router."""
 
+import re
+
 from sqlalchemy import select
 
 from app.database import async_session
@@ -29,8 +31,12 @@ from app.models import (
     SleepProtocolResponse,
     LifeItemUpdate,
     TodayAgendaResponse,
+    UnifiedCaptureRequest,
+    UnifiedCaptureResponse,
     WeeklyCommitmentReviewResponse,
     LifeItem,
+    ContextEventResponse,
+    MeetingIntakeRequest,
     ScheduledJobResponse,
     SharedMemoryProposalResponse,
 )
@@ -46,6 +52,7 @@ from app.services.intake import (
     update_intake_entry,
 )
 from app.services.life_synthesis import synthesize_intake_capture
+from app.services.context_events import capture_meeting_summary
 from app.services.life import (
     add_checkin,
     create_life_item,
@@ -60,6 +67,21 @@ from app.services.orchestrator import handle_message
 
 router = APIRouter()
 COMMITMENT_AGENT_NAME = "commitment-capture"
+_CAPTURE_COMMITMENT_RE = re.compile(
+    r"\b("
+    r"promise|promised|commit|committed|deadline|due|remind me|follow[- ]?up|"
+    r"owe|deliver|submit|send|finish|complete|ship|call|pay|invoice|"
+    r"today by|tomorrow by|today at|tomorrow at"
+    r")\b",
+    re.IGNORECASE,
+)
+_CAPTURE_MEMORY_RE = re.compile(
+    r"\b("
+    r"meeting|standup|retro|decision|decided|notes?|context|remember that|wiki|"
+    r"durable|preference|principle|learned|summary"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _infer_commitment_domain(text: str) -> str:
@@ -73,6 +95,30 @@ def _infer_commitment_domain(text: str) -> str:
     if any(token in lowered for token in ["sleep", "workout", "gym", "health", "meal"]):
         return "health"
     return "planning"
+
+
+def _title_from_capture(text: str) -> str:
+    for line in str(text or "").splitlines():
+        cleaned = line.strip(" #-*\t")
+        if len(cleaned) >= 4:
+            return cleaned[:120]
+    return "Capture"
+
+
+def _select_capture_route(data: UnifiedCaptureRequest) -> str:
+    hint = str(data.route_hint or "auto").strip().lower()
+    if hint in {"intake", "commitment", "memory"}:
+        return hint
+    text = str(data.message or "").strip()
+    if data.due_at is not None or _CAPTURE_COMMITMENT_RE.search(text):
+        return "commitment"
+    if _CAPTURE_MEMORY_RE.search(text):
+        return "memory"
+    return "intake"
+
+
+def _needs_answer(entries: list[IntakeEntryResponse]) -> int:
+    return len([entry for entry in entries if entry.status == "clarifying" or entry.follow_up_questions])
 
 
 async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
@@ -195,12 +241,108 @@ async def get_today():
         domain_summary=agenda["domain_summary"],
         intake_summary=agenda.get("intake_summary") or {},
         ready_intake=[IntakeEntryResponse.model_validate(item) for item in agenda.get("ready_intake") or []],
+        memory_review=[SharedMemoryProposalResponse.model_validate(item) for item in agenda.get("memory_review") or []],
         scorecard=DailyScorecardResponse.model_validate(agenda["scorecard"]) if agenda.get("scorecard") else None,
         next_prayer=NextPrayerResponse.model_validate(agenda["next_prayer"]) if agenda.get("next_prayer") else None,
         rescue_plan=RescuePlanResponse.model_validate(agenda["rescue_plan"]) if agenda.get("rescue_plan") else None,
         sleep_protocol=SleepProtocolResponse.model_validate(agenda["sleep_protocol"]) if agenda.get("sleep_protocol") else None,
         streaks=agenda.get("streaks") or [],
         trend_summary=agenda.get("trend_summary"),
+    )
+
+
+@router.post("/capture", response_model=UnifiedCaptureResponse, dependencies=[Depends(require_api_token)])
+async def capture_life(data: UnifiedCaptureRequest):
+    message = (data.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    route = _select_capture_route(data)
+    if route == "commitment":
+        result = await capture_commitment(
+            CommitmentCaptureRequest(
+                message=message,
+                raw_message=message,
+                session_id=data.session_id,
+                new_session=data.new_session,
+                source=data.source or "api",
+                due_at=data.due_at,
+                timezone=data.timezone,
+                target_channel=data.target_channel,
+                target_channel_id=data.target_channel_id,
+            )
+        )
+        entries = [result.entry] if result.entry else []
+        life_items = [result.life_item] if result.life_item else []
+        return UnifiedCaptureResponse(
+            route="commitment",
+            response=result.response,
+            session_id=result.session_id,
+            session_title=result.session_title,
+            entry=result.entry,
+            entries=entries,
+            life_item=result.life_item,
+            life_items=life_items,
+            follow_up_job=result.follow_up_job,
+            auto_promoted_count=1 if result.auto_promoted else 0,
+            needs_follow_up=result.needs_follow_up,
+            needs_answer_count=_needs_answer(entries),
+        )
+
+    if route == "memory":
+        try:
+            event, proposals, intake_entry_ids = await capture_meeting_summary(
+                MeetingIntakeRequest(
+                    summary=message,
+                    title=_title_from_capture(message),
+                    domain=_infer_commitment_domain(message),
+                    source=data.source or "api",
+                    source_agent="wiki-curator",
+                    session_id=data.session_id,
+                    tags=["unified-capture"],
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        entries = []
+        for entry_id in intake_entry_ids[:5]:
+            entry = await get_intake_entry(entry_id)
+            if entry:
+                entries.append(IntakeEntryResponse.model_validate(entry))
+        return UnifiedCaptureResponse(
+            route="memory",
+            response=(
+                f"Captured memory review event #{event.id}. "
+                f"{len(proposals)} memory review item(s) ready."
+            ),
+            event=ContextEventResponse.model_validate(event),
+            entries=entries,
+            entry=entries[0] if entries else None,
+            wiki_proposals=[SharedMemoryProposalResponse.model_validate(row) for row in proposals],
+            needs_answer_count=_needs_answer(entries),
+        )
+
+    result = await capture_inbox(
+        IntakeCaptureRequest(
+            message=message,
+            session_id=data.session_id,
+            new_session=data.new_session,
+            source=data.source or "api",
+        )
+    )
+    entries = result.entries or ([result.entry] if result.entry else [])
+    return UnifiedCaptureResponse(
+        route="intake",
+        response=result.response,
+        session_id=result.session_id,
+        session_title=result.session_title,
+        entry=result.entry,
+        entries=entries,
+        life_items=result.life_items,
+        wiki_proposals=result.wiki_proposals,
+        auto_promoted_count=result.auto_promoted_count,
+        needs_follow_up=bool(_needs_answer(entries)),
+        needs_answer_count=_needs_answer(entries),
     )
 
 
@@ -250,6 +392,8 @@ async def capture_inbox(data: IntakeCaptureRequest):
         raise HTTPException(status_code=404, detail=result["response"])
     if result.get("error_code") == "memory_unavailable":
         raise HTTPException(status_code=503, detail=result["response"])
+    if result.get("error_code") == "state_packet_unavailable":
+        raise HTTPException(status_code=503, detail=result["response"])
 
     entry = None
     if result.get("session_id"):
@@ -296,6 +440,8 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     if result.get("error_code") == "session_not_found":
         raise HTTPException(status_code=404, detail=result["response"])
     if result.get("error_code") == "memory_unavailable":
+        raise HTTPException(status_code=503, detail=result["response"])
+    if result.get("error_code") == "state_packet_unavailable":
         raise HTTPException(status_code=503, detail=result["response"])
 
     entry = None

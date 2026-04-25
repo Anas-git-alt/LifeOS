@@ -143,6 +143,8 @@ async def chat_with_agent(data: ChatRequest):
         raise HTTPException(status_code=404, detail=result["response"])
     if result.get("error_code") == "memory_unavailable":
         raise HTTPException(status_code=503, detail=result["response"])
+    if result.get("error_code") == "state_packet_unavailable":
+        raise HTTPException(status_code=503, detail=result["response"])
     return ChatResponse(
         agent_name=data.agent_name,
         response=result["response"],
@@ -151,6 +153,7 @@ async def chat_with_agent(data: ChatRequest):
         session_id=result.get("session_id"),
         session_title=result.get("session_title"),
         warnings=result.get("warnings") or [],
+        grounding=result.get("grounding"),
     )
 
 

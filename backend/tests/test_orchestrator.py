@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.models import AuditLog, PendingAction
+from app.services.agent_state import AgentStateUnavailableError
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message, run_scheduled_agent
 from app.services.risk_engine import (
@@ -75,6 +76,27 @@ def _make_agent(*, workspace_enabled: bool = False):
 
 def _make_session(session_id: int, title: str):
     return SimpleNamespace(id=session_id, title=title)
+
+
+@pytest.fixture(autouse=True)
+def _ground_state_packet(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.orchestrator.build_agent_state_packet",
+        AsyncMock(
+            return_value={
+                "grounded": True,
+                "strict": True,
+                "generated_at": "2026-04-25T00:00:00+00:00",
+                "sources": ["today_agenda"],
+                "warnings": [],
+                "shared_memory_hits": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestrator.render_agent_state_packet",
+        lambda packet: "[LIFEOS STATE PACKET]\n{\"grounded\": true}",
+    )
 
 
 def test_classify_risk_low():
@@ -233,6 +255,29 @@ async def test_handle_message_does_not_create_pending_for_informational_chat(mon
     assert result["pending_action_id"] is None
     assert any(isinstance(row, AuditLog) for row in factory.session.added)
     assert not any(isinstance(row, PendingAction) for row in factory.session.added)
+    assert result["grounding"]["grounded"] is True
+
+
+@pytest.mark.asyncio
+async def test_handle_message_fails_closed_when_state_packet_unavailable(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr(
+        "app.services.orchestrator.build_agent_state_packet",
+        AsyncMock(side_effect=AgentStateUnavailableError("today agenda failed")),
+    )
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what should I do today?",
+        approval_policy="never",
+        session_enabled=False,
+    )
+
+    assert result["error_code"] == "state_packet_unavailable"
+    assert result["risk_level"] == "high"
+    assert result["grounding"]["grounded"] is False
 
 
 @pytest.mark.asyncio

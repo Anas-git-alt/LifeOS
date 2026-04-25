@@ -25,11 +25,8 @@ const NAV_GROUPS = [
     items: [
       { id: "dashboard", icon: "⊞", label: "Mission Control" },
       { id: "today", icon: "◈", label: "Today" },
-      { id: "inbox", icon: "✦", label: "Inbox" },
-      { id: "wiki", icon: "◇", label: "Wiki" },
       { id: "prayer-dashboard", icon: "☽", label: "Prayer" },
       { id: "quran", icon: "◎", label: "Quran" },
-      { id: "life", icon: "⋮", label: "Life Items" },
     ],
   },
   {
@@ -59,7 +56,7 @@ const PAGE_META = {
   },
   today: {
     title: "Today Focus",
-    subtitle: "Plan the day with priorities, due items, and current context.",
+    subtitle: "Capture once, review what matters, and stay grounded in current status.",
   },
   inbox: {
     title: "Inbox",

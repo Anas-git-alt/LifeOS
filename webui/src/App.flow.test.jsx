@@ -7,11 +7,8 @@ import App from "./App";
 const NAV_EXPECTATIONS = [
   { label: /^Mission Control$/i, heading: "Mission Control" },
   { label: /^Today$/i, heading: "Today Focus" },
-  { label: /^Inbox$/i, heading: "Inbox" },
-  { label: /^Wiki$/i, heading: "Wiki Context" },
   { label: /^Prayer$/i, heading: "Prayer Dashboard" },
   { label: /^Quran$/i, heading: "Quran Log" },
-  { label: /^Life Items$/i, heading: "Life Items" },
   { label: /^Agents$/i, heading: "Agents" },
   { label: /^Spawn Agent$/i, heading: "Spawn Agent" },
   { label: /^Jobs$/i, heading: "Scheduled Jobs" },
@@ -88,6 +85,7 @@ const apiMocks = vi.hoisted(() => ({
     domain_summary: { work: 1 },
     intake_summary: { ready: 1, clarifying: 0, parked: 0 },
     ready_intake: [{ id: 21, title: "Inbox capture", raw_text: "Inbox capture", status: "ready", domain: "planning", kind: "task" }],
+    memory_review: [],
     scorecard: {
       id: 1,
       local_date: "2026-03-03",
@@ -123,6 +121,7 @@ const apiMocks = vi.hoisted(() => ({
   getIntakeInbox: vi.fn(async () => [{ id: 21, title: "Inbox capture", status: "ready", domain: "planning", kind: "task", updated_at: "2026-03-03T08:00:00Z", linked_life_item_id: null, source_session_id: null }]),
   getAgentSessionMessages: vi.fn(async () => []),
   captureIntake: vi.fn(async () => ({ session_id: 77, entry: { id: 21 } })),
+  captureLife: vi.fn(async () => ({ route: "intake", response: "Captured.", entries: [], life_items: [], wiki_proposals: [], auto_promoted_count: 0, needs_answer_count: 0 })),
   updateIntakeEntry: vi.fn(async () => ({})),
   promoteIntakeEntry: vi.fn(async () => ({ life_item: { id: 31, title: "Inbox capture" } })),
   captureMeetingSummary: vi.fn(async () => ({ event: { id: 44, domain: "work", status: "curated" }, proposals: [], intake_entry_ids: [] })),

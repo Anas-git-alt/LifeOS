@@ -308,6 +308,22 @@ export const captureIntake = (message, sessionId = null, newSession = false, sou
     }),
     timeoutMs: 30000,
   });
+export const captureLife = (message, options = {}) =>
+  request("/life/capture", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      session_id: options.sessionId ?? null,
+      new_session: options.newSession ?? true,
+      source: options.source || "webui_capture",
+      route_hint: options.routeHint || "auto",
+      due_at: options.dueAt || null,
+      timezone: options.timezone || null,
+      target_channel: options.targetChannel || null,
+      target_channel_id: options.targetChannelId || null,
+    }),
+    timeoutMs: 30000,
+  });
 export const captureCommitment = (data) =>
   request("/life/commitments/capture", {
     method: "POST",

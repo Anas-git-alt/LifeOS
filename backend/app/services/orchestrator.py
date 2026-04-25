@@ -15,6 +15,12 @@ from app.services.chat_sessions import build_session_reference_context, ensure_s
 from app.services.deen_metrics import build_prayer_agent_context, build_weekly_deen_context
 from app.services.discord_notify import send_channel_message_result
 from app.services.action_executor import execute_pending_action
+from app.services.agent_state import (
+    AgentStateUnavailableError,
+    build_agent_state_packet,
+    grounding_metadata,
+    render_agent_state_packet,
+)
 from app.services.events import publish_event
 from app.services.intake import upsert_fallback_intake_entry, upsert_intake_entry_from_agent
 from app.services.memory import get_context, save_message, summarise_session
@@ -324,6 +330,8 @@ async def handle_message(
     """Process user text through an agent with policy-based approvals."""
     active_session = None
     response_warnings: list[str] = []
+    state_packet: dict | None = None
+    grounding: dict = {"grounded": False, "sources": []}
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
@@ -335,6 +343,7 @@ async def handle_message(
                 "risk_level": "low",
                 "session_id": active_session.id if active_session else None,
                 "session_title": active_session.title if active_session else None,
+                "grounding": grounding,
             }
         if not agent.enabled:
             return {
@@ -343,6 +352,7 @@ async def handle_message(
                 "risk_level": "low",
                 "session_id": active_session.id if active_session else None,
                 "session_title": active_session.title if active_session else None,
+                "grounding": grounding,
             }
 
         if session_enabled:
@@ -354,6 +364,7 @@ async def handle_message(
                     "pending_action_id": None,
                     "risk_level": "low",
                     "error_code": "session_not_found",
+                    "grounding": grounding,
                 }
 
         referenced_session_id = _extract_session_reference_id(user_message)
@@ -384,6 +395,33 @@ async def handle_message(
             f"Current date/time: {_today_utc()}\n"
             "Use the date above for all date-sensitive responses.\n"
         )
+        try:
+            state_packet = await build_agent_state_packet(
+                agent=agent,
+                user_message=user_message,
+                source=source,
+            )
+            grounding = grounding_metadata(state_packet)
+            system_prompt = f"{system_prompt}\n{render_agent_state_packet(state_packet)}\n"
+            for warning in grounding.get("warnings") or []:
+                _append_unique_warning(response_warnings, warning)
+        except AgentStateUnavailableError as exc:
+            safe_error = redact_sensitive(str(exc))
+            grounding = grounding_metadata(None, error=safe_error)
+            return {
+                "response": (
+                    "I could not answer safely because the LifeOS state packet is unavailable. "
+                    "Please retry after Today/status context is healthy.\n\n"
+                    f"Details: {safe_error}"
+                ),
+                "pending_action_id": None,
+                "risk_level": "high",
+                "error_code": "state_packet_unavailable",
+                "session_id": active_session.id if active_session else None,
+                "session_title": active_session.title if active_session else None,
+                "warnings": response_warnings,
+                "grounding": grounding,
+            }
         workspace_paths = get_agent_workspace_paths(agent)
         if agent.workspace_enabled:
             if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or ""):
@@ -506,6 +544,7 @@ async def handle_message(
                     "error_code": "llm_unavailable",
                     "session_id": active_session.id if active_session else None,
                     "session_title": active_session.title if active_session else None,
+                    "grounding": grounding,
                 }
             except Exception as exc:
                 safe_error = redact_sensitive(str(exc))
@@ -516,6 +555,7 @@ async def handle_message(
                     "risk_level": "high",
                     "session_id": active_session.id if active_session else None,
                     "session_title": active_session.title if active_session else None,
+                    "grounding": grounding,
                 }
 
         cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
@@ -714,6 +754,7 @@ async def handle_message(
             "session_id": active_session.id if active_session else None,
             "session_title": active_session.title if active_session else None,
             "warnings": response_warnings,
+            "grounding": grounding,
         }
 
 
@@ -840,7 +881,7 @@ async def run_scheduled_agent(
         approval_policy="auto",
         source="scheduler",
     )
-    if run_result.get("error_code") in {"llm_unavailable", "memory_unavailable"}:
+    if run_result.get("error_code") in {"llm_unavailable", "memory_unavailable", "state_packet_unavailable"}:
         logger.warning("Scheduled run skipped for '%s': %s", agent_name, run_result.get("error_code"))
         return {"status": "skipped", "reason": run_result.get("error_code")}
     if run_result.get("pending_action_id"):
@@ -864,4 +905,5 @@ async def run_scheduled_agent(
         "notification_channel": target_channel,
         "notification_channel_id": delivery.get("channel_id") or target_channel_id,
         "notification_message_id": delivery.get("message_id"),
+        "grounding": run_result.get("grounding") or {},
     }

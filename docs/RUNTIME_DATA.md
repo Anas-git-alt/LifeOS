@@ -16,7 +16,7 @@ Goal: keep repo clean while keeping user data safe.
 
 `docker-compose.yml` supports host-side runtime path overrides through a repo-root `.env` file.
 
-Copy [compose.env.example](/wsl.localhost/Ubuntu/home/anasbe/LifeOS-clean/compose.env.example) to `.env` and set absolute paths:
+Copy [compose.env.example](../compose.env.example) to `.env` and set absolute paths:
 
 ```dotenv
 COMPOSE_PROJECT_NAME=lifeos-local

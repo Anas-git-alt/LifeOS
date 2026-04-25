@@ -48,7 +48,7 @@ Never reuse the same Discord bot token in both environments. If a token is share
 Example:
 
 ```bash
-cd /home/anasbe/LifeOS-feature-next
+cd /home/anasbe/LifeOS-feature-<slug>
 git status --short --branch
 ```
 

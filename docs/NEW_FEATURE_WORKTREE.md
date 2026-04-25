@@ -7,7 +7,7 @@ Use this when starting a fresh feature from clean `main`.
 From any LifeOS worktree:
 
 ```bash
-cd /home/anasbe/LifeOS-feature-next
+cd /home/anasbe/LifeOS-main-merge
 ./scripts/new_feature_worktree.sh calendar-upgrade
 ```
 
