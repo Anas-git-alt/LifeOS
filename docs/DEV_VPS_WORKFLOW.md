@@ -108,10 +108,10 @@ Behavior:
 - every deploy pushes branch first
 - staging deploy checks `http://127.0.0.1:18100/api/readiness`
 - prod deploy checks `http://127.0.0.1:8100/api/readiness`
-- staging default services: `openviking backend webui tts-worker`
+- staging default services: `openviking backend discord-bot webui tts-worker`
 - prod default services: `openviking backend discord-bot webui tts-worker`
 
-If staging should run the Discord bot too, use the separate staging bot token/server configured in `/srv/lifeos/staging/.venv/.env`, then deploy with:
+Staging Discord uses the separate staging bot token/server configured in `/srv/lifeos/staging/.venv/.env`. To override the default service list:
 
 ```bash
 LIFEOS_VPS_STAGING_SERVICES="openviking backend discord-bot webui tts-worker" \

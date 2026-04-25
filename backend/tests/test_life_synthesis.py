@@ -9,15 +9,16 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.main import app
-from app.models import Agent, IntakeEntry
+from app.models import Agent, IntakeEntry, SharedMemoryProposal
+from app.services.vault import classify_note_path
 
 
 def _headers() -> dict:
     return {"X-LifeOS-Token": settings.api_secret_key}
 
 
-async def _insert_synthesis_entry(*, session_id: int, raw_text: str):
-    payload = {
+def _default_payload() -> dict:
+    return {
         "items": [
             {
                 "title": "Ship client invoice",
@@ -53,6 +54,10 @@ async def _insert_synthesis_entry(*, session_id: int, raw_text: str):
             }
         ],
     }
+
+
+async def _insert_synthesis_entry(*, session_id: int, raw_text: str, payload: dict | None = None):
+    payload = payload or _default_payload()
     async with async_session() as db:
         agent = await db.scalar(select(Agent).where(Agent.name == "intake-inbox"))
         if agent is None:
@@ -149,3 +154,127 @@ def test_inbox_capture_synthesizes_priorities_and_auto_creates_items(monkeypatch
     assert payload["life_items"][0]["context_links"][0]["title"] == "Work operating principle"
     assert payload["entries"][1]["status"] == "clarifying"
     assert payload["wiki_proposals"][0]["title"] == "Invoice follow-through matters"
+
+
+def test_inbox_capture_infers_due_time_from_raw_message(monkeypatch):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Raw life dump"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.search_shared_memory", lambda **_kwargs: [])
+    monkeypatch.setattr("app.services.life_synthesis.create_shared_memory_review_proposal", lambda *_args, **_kwargs: None)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={"message": "Need invoice sent today before 5pm and sleep routine fixed", "new_session": True},
+        )
+
+    assert response.status_code == 200
+    life_item = response.json()["life_items"][0]
+    assert life_item["due_at"] is not None
+    assert life_item["priority_score"] >= 90
+
+
+def test_inbox_capture_uses_raw_followup_to_rescue_sleep_and_family(monkeypatch):
+    followup_payload = {
+        "items": [
+            {
+                "title": "Fix sleep routine",
+                "kind": "habit",
+                "domain": "health",
+                "status": "clarifying",
+                "summary": "Sleep routine needs a concrete target.",
+                "follow_up_questions": ["What bedtime and wake time?"],
+                "priority": "medium",
+            }
+        ],
+        "wiki_facts": [],
+    }
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=followup_payload)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Follow-up"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.search_shared_memory", lambda **_kwargs: [])
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={"message": "sleep target is bed 23:30 wake 07:10, family call is tomorrow after Asr", "new_session": True},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    titles = {item["title"] for item in payload["life_items"]}
+    assert payload["auto_promoted_count"] == 2
+    assert "Fix sleep routine" in titles
+    assert "Call family tomorrow after Asr" in titles
+
+
+def test_inbox_capture_skips_duplicate_pending_wiki_proposal(monkeypatch):
+    title = "Sleep routine priority"
+    target_path = classify_note_path(scope="shared_domain", domain="health", agent_name="wiki-curator", title=title)
+    duplicate_payload = {
+        "items": [
+            {
+                "title": "Review sleep routine",
+                "kind": "habit",
+                "domain": "health",
+                "status": "clarifying",
+                "follow_up_questions": ["What target?"],
+            }
+        ],
+        "wiki_facts": [
+            {
+                "title": title,
+                "domain": "health",
+                "content": "User treats sleep routine as a core priority.",
+            }
+        ],
+    }
+
+    async def _seed_duplicate():
+        async with async_session() as db:
+            db.add(
+                SharedMemoryProposal(
+                    source_agent="wiki-curator",
+                    scope="shared_domain",
+                    domain="health",
+                    title=title,
+                    target_path=str(target_path),
+                    proposal_path="/tmp/proposal.md",
+                    conflict_reason="review_required",
+                    status="pending",
+                    proposed_content="existing",
+                    note_metadata_json={},
+                )
+            )
+            await db.commit()
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=duplicate_payload)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Duplicate"}
+
+    async def _should_not_create(*_args, **_kwargs):
+        raise AssertionError("duplicate wiki proposal should be skipped")
+
+    import anyio
+
+    anyio.run(_seed_duplicate)
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.create_shared_memory_review_proposal", _should_not_create)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={"message": "sleep routine target still matters", "new_session": True},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["wiki_proposals"] == []

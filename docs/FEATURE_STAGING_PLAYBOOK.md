@@ -84,7 +84,7 @@ What this does:
 1. pushes branch to `origin`
 2. SSHes to VPS
 3. updates `/srv/lifeos/staging/app` to branch tip
-4. runs `docker compose --env-file /srv/lifeos/staging/.env up --build -d openviking backend webui tts-worker`
+4. runs `docker compose --env-file /srv/lifeos/staging/.env up --build -d openviking backend discord-bot webui tts-worker`
 5. waits for `http://127.0.0.1:18100/api/readiness`
 
 ### 4. Verify staging

@@ -67,7 +67,7 @@ case "$target" in
     vps_repo="${LIFEOS_VPS_STAGING_REPO:-$deploy_root/app}"
     compose_env_file="${LIFEOS_VPS_STAGING_COMPOSE_ENV_FILE:-$deploy_root/.env}"
     readiness_url="${LIFEOS_VPS_STAGING_READINESS_URL:-http://127.0.0.1:18100/api/readiness}"
-    services_string="${LIFEOS_VPS_STAGING_SERVICES:-openviking backend webui tts-worker}"
+    services_string="${LIFEOS_VPS_STAGING_SERVICES:-openviking backend discord-bot webui tts-worker}"
     ;;
   prod)
     deploy_root="${LIFEOS_VPS_PROD_ROOT:-/srv/lifeos/prod}"

@@ -3,20 +3,30 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import async_session
-from app.models import Agent, IntakeEntry, LifeItem, SharedMemoryPromoteRequest
+from app.models import Agent, IntakeEntry, LifeItem, SharedMemoryPromoteRequest, SharedMemoryProposal
 from app.services.intake import promote_intake_entry
 from app.services.shared_memory import create_shared_memory_review_proposal, search_shared_memory
+from app.services.vault import classify_note_path
 
 VALID_DOMAINS = {"deen", "family", "work", "health", "planning"}
 VALID_KINDS = {"idea", "task", "goal", "habit", "commitment", "routine", "note"}
 PROMOTABLE_KINDS = {"task", "goal", "habit", "commitment", "routine"}
 PRIORITY_BY_SCORE = ((75, "high"), (40, "medium"), (0, "low"))
 BASE_SCORE = {"high": 78, "medium": 52, "low": 25}
+TIME_PHRASE_RE = re.compile(
+    r"\b(today|tomorrow)\s+(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+    re.IGNORECASE,
+)
+BED_RE = re.compile(r"\bbed(?:time| target)?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
+WAKE_RE = re.compile(r"\bwake(?:\s*(?:time|target))?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
 
 
 def _clean(value: Any, *, limit: int | None = None) -> str | None:
@@ -65,6 +75,128 @@ def _coerce_due_at(value: Any) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _resolve_tz() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.timezone)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _parse_clock(hour_text: str, minute_text: str | None, meridian_text: str | None) -> tuple[int, int] | None:
+    hour = int(hour_text)
+    minute = int(minute_text or 0)
+    meridian = (meridian_text or "").lower()
+    if meridian == "pm" and hour < 12:
+        hour += 12
+    if meridian == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _infer_due_at(raw_message: str, item: dict[str, Any], *, now_utc: datetime) -> datetime | None:
+    explicit = _coerce_due_at(item.get("due_at"))
+    if explicit:
+        return explicit
+    text = " ".join(
+        str(value or "")
+        for value in [
+            raw_message,
+            item.get("title"),
+            item.get("summary"),
+            item.get("desired_outcome"),
+            item.get("next_action"),
+        ]
+    )
+    match = TIME_PHRASE_RE.search(text)
+    if not match:
+        return None
+    clock = _parse_clock(match.group(2), match.group(3), match.group(4))
+    if not clock:
+        return None
+    tz = _resolve_tz()
+    local_now = now_utc.astimezone(tz)
+    due_date = local_now.date() + timedelta(days=1 if match.group(1).lower() == "tomorrow" else 0)
+    due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
+    return due_local.astimezone(timezone.utc)
+
+
+def _sleep_target(raw_message: str) -> tuple[str, str] | None:
+    bed = BED_RE.search(raw_message)
+    wake = WAKE_RE.search(raw_message)
+    if not bed or not wake:
+        return None
+    return bed.group(1), wake.group(1)
+
+
+def _looks_like_sleep_item(item: dict[str, Any]) -> bool:
+    text = " ".join(str(item.get(key) or "") for key in ("title", "summary", "desired_outcome", "next_action")).lower()
+    return "sleep" in text or "bedtime" in text
+
+
+def _looks_like_family_call_item(item: dict[str, Any]) -> bool:
+    text = " ".join(str(item.get(key) or "") for key in ("title", "summary", "desired_outcome", "next_action")).lower()
+    return ("family" in text or _safe_domain(item.get("domain")) == "family") and "call" in text
+
+
+def _family_call_detected(raw_message: str) -> bool:
+    text = raw_message.lower()
+    return "family" in text and "call" in text
+
+
+def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, Any]:
+    enriched = dict(item)
+    sleep_target = _sleep_target(raw_message)
+    if sleep_target and _looks_like_sleep_item(enriched):
+        bed, wake = sleep_target
+        enriched.update(
+            {
+                "title": enriched.get("title") or "Fix bedtime routine",
+                "kind": "habit",
+                "domain": "health",
+                "status": "ready",
+                "desired_outcome": enriched.get("desired_outcome") or f"Sleep by {bed} and wake by {wake} consistently.",
+                "next_action": enriched.get("next_action") or f"Set phone cutoff plus bedtime/wake alarms for {bed}/{wake}.",
+                "follow_up_questions": [],
+                "priority": enriched.get("priority") or "high",
+                "priority_score": enriched.get("priority_score") or 86,
+                "priority_reason": enriched.get("priority_reason")
+                or "Sleep target is concrete and affects energy, prayer timing, and next-day execution.",
+            }
+        )
+    if _family_call_detected(raw_message) and _looks_like_family_call_item(enriched):
+        enriched.update(
+            {
+                "title": enriched.get("title") or "Call family tomorrow after Asr",
+                "kind": "task",
+                "domain": "family",
+                "status": "ready",
+                "desired_outcome": enriched.get("desired_outcome") or "Family call completed.",
+                "next_action": enriched.get("next_action") or "Call family tomorrow after Asr.",
+                "follow_up_questions": [],
+                "priority": enriched.get("priority") or "medium",
+                "priority_score": enriched.get("priority_score") or 66,
+                "priority_reason": enriched.get("priority_reason") or "Family action is concrete and tied to tomorrow after Asr.",
+            }
+        )
+    return enriched
+
+
+def _augment_items_from_raw(items: list[dict[str, Any]], raw_message: str) -> list[dict[str, Any]]:
+    enriched = [_augment_item_from_raw(item, raw_message) for item in items]
+    if _sleep_target(raw_message) and not any(_looks_like_sleep_item(item) for item in enriched):
+        enriched.append(_augment_item_from_raw({"title": "Fix bedtime routine", "kind": "habit", "domain": "health"}, raw_message))
+    if _family_call_detected(raw_message) and not any(_looks_like_family_call_item(item) for item in enriched):
+        enriched.append(
+            _augment_item_from_raw(
+                {"title": "Call family tomorrow after Asr", "kind": "task", "domain": "family"},
+                raw_message,
+            )
+        )
+    return enriched
 
 
 def _item_list_from_payload(payload: dict[str, Any], entry: IntakeEntry, raw_message: str) -> list[dict[str, Any]]:
@@ -217,6 +349,19 @@ async def _create_wiki_proposals(*, payload: dict[str, Any], session_id: int | N
         content = _clean(fact.get("content") or fact.get("summary"), limit=4000)
         if not title or not content:
             continue
+        domain = _safe_domain(fact.get("domain"))
+        target_path = classify_note_path(scope="shared_domain", domain=domain, agent_name="wiki-curator", title=title)
+        async with async_session() as db:
+            existing = await db.scalar(
+                select(SharedMemoryProposal.id)
+                .where(
+                    SharedMemoryProposal.target_path == str(target_path),
+                    SharedMemoryProposal.status == "pending",
+                )
+                .limit(1)
+            )
+        if existing:
+            continue
         try:
             proposals.append(
                 await create_shared_memory_review_proposal(
@@ -225,7 +370,7 @@ async def _create_wiki_proposals(*, payload: dict[str, Any], session_id: int | N
                         title=title,
                         content=content,
                         scope="shared_domain",
-                        domain=_safe_domain(fact.get("domain")),
+                        domain=domain,
                         session_id=session_id,
                         source_uri=f"lifeos://intake-session/{session_id}" if session_id else "lifeos://intake",
                         tags=["lifeos", "shared-memory", "raw-input"],
@@ -244,12 +389,15 @@ async def synthesize_intake_capture(*, raw_message: str, primary_entry: IntakeEn
 
     agent = await _get_intake_agent()
     payload = dict(primary_entry.structured_data_json or {})
-    items = _item_list_from_payload(payload, primary_entry, raw_message)
+    items = _augment_items_from_raw(_item_list_from_payload(payload, primary_entry, raw_message), raw_message)
     entries: list[IntakeEntry] = []
     life_items: list[LifeItem] = []
     now_utc = datetime.now(timezone.utc)
 
     for index, item in enumerate(items[:8]):
+        inferred_due_at = _infer_due_at(raw_message, item, now_utc=now_utc)
+        if inferred_due_at and not item.get("due_at"):
+            item = {**item, "due_at": inferred_due_at.isoformat()}
         entry = await _make_or_update_entry(base_entry=primary_entry, raw_message=raw_message, item=item, index=index)
         query = " ".join(
             str(item.get(key) or "")
