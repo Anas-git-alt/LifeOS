@@ -47,6 +47,23 @@ def _freeze_life_datetime(monkeypatch, frozen_at: datetime):
     monkeypatch.setattr("app.services.life.datetime", FrozenDateTime)
 
 
+@pytest.mark.asyncio
+async def test_rescue_plan_hydration_action_uses_remaining_count(monkeypatch):
+    _freeze_life_datetime(monkeypatch, datetime(2026, 3, 3, 16, 30, tzinfo=timezone.utc))
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value=_fake_schedule()))
+    monkeypatch.setattr(
+        "app.services.life._load_open_items_snapshot",
+        AsyncMock(return_value={"open_items": [], "top_focus": [], "due_today": [], "overdue": [], "domain_summary": {}}),
+    )
+
+    await log_daily_signal(DailyLogCreate(kind="hydration", count=1))
+
+    summary = await get_today_agenda()
+
+    assert "Log one more water in the next hour." in summary["rescue_plan"]["actions"]
+    assert "Log water twice in the next hour." not in summary["rescue_plan"]["actions"]
+
+
 def test_daily_log_api_updates_scorecard_and_today_payload(monkeypatch):
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value=_fake_schedule()))
 

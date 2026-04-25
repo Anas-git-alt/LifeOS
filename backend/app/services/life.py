@@ -704,7 +704,11 @@ def _build_rescue_plan(
 
     if now_local.hour >= 15 and scorecard.hydration_count < 2:
         issues.append("Hydration is behind.")
-        actions.append("Log water twice in the next hour.")
+        remaining_water = max(1, 2 - int(scorecard.hydration_count or 0))
+        if remaining_water == 1:
+            actions.append("Log one more water in the next hour.")
+        else:
+            actions.append("Log water twice in the next hour.")
 
     if now_local.hour >= 14 and scorecard.top_priority_completed_count == 0 and any(
         item.priority == "high" for item in top_focus + due_today
