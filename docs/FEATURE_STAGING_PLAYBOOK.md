@@ -37,9 +37,9 @@ LIFEOS_TTS_MODEL_CACHE_DIR=/srv/lifeos/staging/storage/tts-models
 LIFEOS_OBSIDIAN_VAULT_DIR=/srv/lifeos/staging/data/obsidian-vault
 ```
 
-Staging default: do not run `discord-bot`.
+Staging and prod Discord bots may run at the same time when they use separate Discord bot tokens and separate Discord servers/channels.
 
-If staging temporarily uses the same Discord bot token as prod for manual testing, pause the prod Discord bot first and start only one bot at a time. Two running bots with the same token will fight over the gateway session and make test results noisy.
+Never reuse the same Discord bot token in both environments. If a token is shared by mistake, fix `/srv/lifeos/staging/.venv/.env` or `/srv/lifeos/prod/.venv/.env` before starting both bots.
 
 ## Every New Feature
 
@@ -108,20 +108,16 @@ Then open:
 
 - `http://127.0.0.1:13100`
 
-If testing Discord on staging with the shared prod token:
+If testing Discord on staging, use the staging bot token and staging Discord server configured in `/srv/lifeos/staging/.venv/.env`:
 
 ```bash
-cd /srv/lifeos/prod/app
-docker compose --env-file /srv/lifeos/prod/.env stop discord-bot
 cd /srv/lifeos/staging/app
 docker compose --env-file /srv/lifeos/staging/.env up -d discord-bot
 ```
 
-After testing, return to prod:
+Prod can stay online in its own server:
 
 ```bash
-cd /srv/lifeos/staging/app
-docker compose --env-file /srv/lifeos/staging/.env stop discord-bot
 cd /srv/lifeos/prod/app
 docker compose --env-file /srv/lifeos/prod/.env up -d discord-bot
 ```

@@ -40,8 +40,8 @@ Rules:
 - staging and prod do not share database, storage, OpenViking, or vault paths
 - staging and prod use different Compose project names
 - staging and prod use different localhost ports
-- staging defaults to no Discord bot deploy unless you explicitly opt in with a separate token
-- if staging must temporarily use the prod Discord token for manual testing, stop prod `discord-bot` before starting staging `discord-bot`, then stop staging and restart prod when testing is done
+- staging and prod Discord bots may run at the same time when they use separate Discord bot tokens and separate Discord servers/channels
+- never reuse the same Discord bot token in staging and prod; fix the relevant `.venv/.env` before starting both bots if a token is shared by mistake
 - `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` should match `id -u ubuntu` and `id -g ubuntu` on the VPS
 
 ## 3. Required VPS Env Files
@@ -111,7 +111,7 @@ Behavior:
 - staging default services: `openviking backend webui tts-worker`
 - prod default services: `openviking backend discord-bot webui tts-worker`
 
-If staging should run the Discord bot too, use a separate staging bot token in `/srv/lifeos/staging/.venv/.env`, then deploy with:
+If staging should run the Discord bot too, use the separate staging bot token/server configured in `/srv/lifeos/staging/.venv/.env`, then deploy with:
 
 ```bash
 LIFEOS_VPS_STAGING_SERVICES="openviking backend discord-bot webui tts-worker" \

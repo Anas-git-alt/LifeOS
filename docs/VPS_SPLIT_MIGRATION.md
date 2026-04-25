@@ -118,13 +118,13 @@ cp /home/ubuntu/LifeOS/.venv/.env /srv/lifeos/prod/.venv/.env
 Then update:
 
 - staging ports stay in `/srv/lifeos/staging/.env`, not here
-- staging bot should use separate token or stay disabled
+- staging bot should use its own token and staging Discord server/channel configuration
 - prod keeps real prod token and secrets
 - `DATABASE_URL` stays container-local, for example `sqlite+aiosqlite:////app/storage/lifeos.db`
 - `OBSIDIAN_VAULT_ROOT=/obsidian-vault` if vault mount used
 - `LIFEOS_RUNTIME_UID` and `LIFEOS_RUNTIME_GID` in compose env should match `id -u ubuntu` and `id -g ubuntu`
 
-Staging safest default: do not run `discord-bot` service.
+Staging `discord-bot` can run continuously beside prod when it uses its own Discord token and server/channel configuration.
 
 ## 6. Bring Up Staging First
 
