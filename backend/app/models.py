@@ -1251,6 +1251,8 @@ class LifeItemCreate(BaseModel):
 
 
 class LifeItemUpdate(BaseModel):
+    domain: Optional[str] = None
+    kind: Optional[str] = None
     title: Optional[str] = None
     notes: Optional[str] = None
     priority: Optional[str] = None

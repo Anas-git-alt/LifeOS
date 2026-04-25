@@ -1,6 +1,8 @@
 """Life items and agenda router."""
 
+from datetime import datetime, timedelta, timezone
 import re
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -34,6 +36,7 @@ from app.models import (
     UnifiedCaptureRequest,
     UnifiedCaptureResponse,
     WeeklyCommitmentReviewResponse,
+    IntakeEntry,
     LifeItem,
     ContextEventResponse,
     MeetingIntakeRequest,
@@ -82,19 +85,124 @@ _CAPTURE_MEMORY_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_CAPTURE_TIME_RE = re.compile(
+    r"\b(today|tomorrow)\s+(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+    re.IGNORECASE,
+)
+_CAPTURE_STANDALONE_TIME_RE = re.compile(
+    r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+    re.IGNORECASE,
+)
+_FAMILY_DETAIL_RE = re.compile(
+    r"\b(send|text|message)\b.*\b(mom|mother|mama|mum|dad|father|parent|parents|wife|family)\b",
+    re.IGNORECASE,
+)
+_MESSAGE_CONTENT_RE = re.compile(
+    r"\b(say|tell|ask|about|regarding|that)\b|[\"“”']",
+    re.IGNORECASE,
+)
 
 
 def _infer_commitment_domain(text: str) -> str:
     lowered = str(text or "").lower()
-    if any(token in lowered for token in ["invoice", "payment", "client", "presentation", "one pager", "video", "mockup", "work"]):
+    if any(token in lowered for token in ["invoice", "payment", "client", "presentation", "one pager", "video", "mockup", "canva", "work"]):
         return "work"
     if any(token in lowered for token in ["pray", "quran", "deen", "salah"]):
         return "deen"
-    if any(token in lowered for token in ["wife", "family", "kids", "home"]):
+    if any(token in lowered for token in ["wife", "family", "kids", "home", "mother", "mom", "mama", "mum", "father", "dad", "parent"]):
         return "family"
     if any(token in lowered for token in ["sleep", "workout", "gym", "health", "meal"]):
         return "health"
     return "planning"
+
+
+def _resolve_tz(timezone_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone_name or "Africa/Casablanca")
+    except Exception:
+        return ZoneInfo("Africa/Casablanca")
+
+
+def _parse_capture_clock(hour_text: str, minute_text: str | None, meridian_text: str | None) -> tuple[int, int] | None:
+    hour = int(hour_text)
+    minute = int(minute_text or 0)
+    meridian = (meridian_text or "").lower()
+    if meridian == "pm" and hour < 12:
+        hour += 12
+    if meridian == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _due_from_capture_match(match: re.Match[str], *, timezone_name: str, now_utc: datetime | None = None) -> datetime | None:
+    clock = _parse_capture_clock(match.group(2), match.group(3), match.group(4))
+    if not clock:
+        return None
+    tz = _resolve_tz(timezone_name)
+    local_now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    due_date = local_now.date() + timedelta(days=1 if match.group(1).lower() == "tomorrow" else 0)
+    due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
+    return due_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _standalone_due_from_capture_match(
+    match: re.Match[str],
+    *,
+    text: str,
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> datetime | None:
+    lowered = text.lower()
+    if "today" not in lowered and "tomorrow" not in lowered:
+        return None
+    clock = _parse_capture_clock(match.group(1), match.group(2), match.group(3))
+    if not clock:
+        return None
+    tz = _resolve_tz(timezone_name)
+    local_now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    due_date = local_now.date() + timedelta(days=1 if "tomorrow" in lowered and "today" not in lowered else 0)
+    due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
+    return due_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def _infer_capture_due_at(message: str, provided_due_at: datetime | None, timezone_name: str | None) -> datetime | None:
+    if provided_due_at is not None:
+        return provided_due_at
+    effective_timezone = await get_commitment_timezone(timezone_name)
+    match = _CAPTURE_TIME_RE.search(message)
+    if match:
+        return _due_from_capture_match(match, timezone_name=effective_timezone)
+    standalone = _CAPTURE_STANDALONE_TIME_RE.search(message)
+    if standalone:
+        return _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone)
+    return None
+
+
+def _priority_overrides_for_capture(message: str, due_at: datetime | None) -> dict:
+    domain = _infer_commitment_domain(message)
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    due_utc = due_at.astimezone(timezone.utc).replace(tzinfo=None) if due_at and due_at.tzinfo else due_at
+    due_soon = due_utc is not None and due_utc <= now_utc + timedelta(hours=24)
+    priority = "high" if due_soon else "medium"
+    score = 82 if due_soon else 55
+    signals = ["explicit deadline within 24h"] if due_soon else ["captured commitment"]
+    if domain in {"family", "deen", "health"}:
+        score = min(100, score + 8)
+        signals.append(f"life anchor:{domain}")
+    return {
+        "domain": domain,
+        "priority": priority,
+        "priority_score": score,
+        "priority_reason": f"Priority {score}/100 from {', '.join(signals)}.",
+    }
+
+
+def _detail_questions_for_capture(message: str, domain: str) -> list[str]:
+    if domain != "family" or not _FAMILY_DETAIL_RE.search(message) or _MESSAGE_CONTENT_RE.search(message):
+        return []
+    return ["What should the message say, or what topic should it cover?"]
 
 
 def _title_from_capture(text: str) -> str:
@@ -124,6 +232,7 @@ def _needs_answer(entries: list[IntakeEntryResponse]) -> int:
 async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
     clean_title = str(title or "").strip()[:300] or "Captured commitment"
     domain = _infer_commitment_domain(clean_title)
+    priority_overrides = _priority_overrides_for_capture(clean_title, None)
     return await update_intake_entry(
         entry_id,
         IntakeEntryUpdate(
@@ -139,11 +248,43 @@ async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
                 "title": clean_title,
                 "kind": "task",
                 "domain": domain,
-                "priority": "medium",
+                "priority": priority_overrides["priority"],
+                "priority_score": priority_overrides["priority_score"],
+                "priority_reason": priority_overrides["priority_reason"],
                 "next_action": f"Start the first visible step for: {clean_title}",
             },
         ),
     )
+
+
+async def _apply_commitment_capture_overrides(
+    *,
+    entry_id: int | None,
+    life_item_id: int | None,
+    message: str,
+    due_at: datetime | None,
+) -> None:
+    overrides = _priority_overrides_for_capture(message, due_at)
+    questions = _detail_questions_for_capture(message, overrides["domain"])
+    if life_item_id:
+        update_values = {
+            "domain": overrides["domain"],
+            "priority": overrides["priority"],
+            "priority_score": overrides["priority_score"],
+            "priority_reason": overrides["priority_reason"],
+        }
+        if due_at is not None:
+            update_values["due_at"] = due_at
+        update_payload = LifeItemUpdate(**update_values)
+        await update_life_item(life_item_id, update_payload)
+    if entry_id and questions:
+        await update_intake_entry(
+            entry_id,
+            IntakeEntryUpdate(
+                status="clarifying",
+                follow_up_questions=questions,
+            ),
+        )
 
 
 def _should_promote_commitment_entry(entry, *, due_at) -> bool:
@@ -259,6 +400,7 @@ async def capture_life(data: UnifiedCaptureRequest):
 
     route = _select_capture_route(data)
     if route == "commitment":
+        inferred_due_at = await _infer_capture_due_at(message, data.due_at, data.timezone)
         result = await capture_commitment(
             CommitmentCaptureRequest(
                 message=message,
@@ -266,7 +408,7 @@ async def capture_life(data: UnifiedCaptureRequest):
                 session_id=data.session_id,
                 new_session=data.new_session,
                 source=data.source or "api",
-                due_at=data.due_at,
+                due_at=inferred_due_at,
                 timezone=data.timezone,
                 target_channel=data.target_channel,
                 target_channel_id=data.target_channel_id,
@@ -455,13 +597,15 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     follow_up_job = None
     auto_promoted = False
     effective_timezone = await get_commitment_timezone(data.timezone)
-    if entry and data.due_at is not None and not entry.linked_life_item_id and not _should_promote_commitment_entry(entry, due_at=data.due_at):
+    inferred_due_at = await _infer_capture_due_at(raw_message, data.due_at, effective_timezone)
+    priority_overrides = _priority_overrides_for_capture(raw_message, inferred_due_at)
+    if entry and inferred_due_at is not None and not entry.linked_life_item_id and not _should_promote_commitment_entry(entry, due_at=inferred_due_at):
         entry = await _force_ready_deadlined_commitment(entry.id, title=message)
     if entry and entry.linked_life_item_id:
-        if data.due_at is not None:
+        if inferred_due_at is not None:
             await update_life_item(
                 entry.linked_life_item_id,
-                LifeItemUpdate(due_at=data.due_at, status="open"),
+                LifeItemUpdate(due_at=inferred_due_at, status="open"),
             )
         async with async_session() as db:
             item_result = await db.execute(select(LifeItem).where(LifeItem.id == entry.linked_life_item_id))
@@ -476,10 +620,10 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             async with async_session() as db:
                 refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
                 life_item = refreshed.scalar_one_or_none()
-    elif entry and _should_promote_commitment_entry(entry, due_at=data.due_at):
-        overrides = {}
-        if data.due_at is not None:
-            overrides["due_at"] = data.due_at
+    elif entry and _should_promote_commitment_entry(entry, due_at=inferred_due_at):
+        overrides = dict(priority_overrides)
+        if inferred_due_at is not None:
+            overrides["due_at"] = inferred_due_at
         entry, life_item = await promote_intake_entry(entry.id, overrides=overrides)
         auto_promoted = bool(life_item)
         if life_item:
@@ -492,6 +636,18 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             async with async_session() as db:
                 refreshed = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
                 life_item = refreshed.scalar_one_or_none()
+    if entry and life_item:
+        await _apply_commitment_capture_overrides(
+            entry_id=entry.id,
+            life_item_id=life_item.id,
+            message=raw_message,
+            due_at=inferred_due_at,
+        )
+        async with async_session() as db:
+            refreshed_entry = await db.execute(select(IntakeEntry).where(IntakeEntry.id == entry.id))
+            refreshed_item = await db.execute(select(LifeItem).where(LifeItem.id == life_item.id))
+            entry = refreshed_entry.scalar_one_or_none()
+            life_item = refreshed_item.scalar_one_or_none()
 
     needs_follow_up = bool(entry and entry.status == "clarifying")
     return CommitmentCaptureResponse(
