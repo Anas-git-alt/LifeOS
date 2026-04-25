@@ -178,6 +178,79 @@ def test_inbox_capture_infers_due_time_from_raw_message(monkeypatch):
     assert life_item["priority_score"] >= 90
 
 
+def test_inbox_capture_does_not_apply_invoice_deadline_to_all_split_items(monkeypatch):
+    payload_with_mixed_kinds = {
+        "items": [
+            {
+                "title": "Send client invoice today before 5pm",
+                "kind": "habit",
+                "domain": "work",
+                "status": "ready",
+                "summary": "Client invoice due today.",
+                "next_action": "Send invoice today.",
+                "follow_up_questions": [],
+                "priority": "high",
+                "priority_score": 90,
+                "priority_reason": "High leverage.",
+            },
+            {
+                "title": "Establish sleep routine",
+                "kind": "habit",
+                "domain": "health",
+                "status": "clarifying",
+                "summary": "Sleep target: 23:30.",
+                "next_action": "Set bedtime routine.",
+                "follow_up_questions": [],
+                "priority": "medium",
+                "priority_score": 60,
+            },
+            {
+                "title": "Family call tomorrow after Asr",
+                "kind": "habit",
+                "domain": "family",
+                "status": "ready",
+                "summary": "Family call tomorrow.",
+                "next_action": "Prepare for call.",
+                "follow_up_questions": [],
+                "priority": "low",
+                "priority_score": 40,
+            },
+        ],
+        "wiki_facts": [],
+    }
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=payload_with_mixed_kinds)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Raw life dump"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.search_shared_memory", lambda **_kwargs: [])
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={
+                "message": (
+                    "send client invoice today before 5pm, sleep target bed 23:30 wake 07:10, "
+                    "family call tomorrow after Asr"
+                ),
+                "new_session": True,
+            },
+        )
+
+    assert response.status_code == 200
+    by_title = {item["title"]: item for item in response.json()["life_items"]}
+    assert by_title["Send client invoice today before 5pm"]["kind"] == "task"
+    assert by_title["Send client invoice today before 5pm"]["due_at"] is not None
+    assert by_title["Establish sleep routine"]["kind"] == "habit"
+    assert by_title["Establish sleep routine"]["due_at"] is None
+    assert by_title["Establish sleep routine"]["priority"] == "high"
+    assert by_title["Family call tomorrow after Asr"]["kind"] == "task"
+    assert by_title["Family call tomorrow after Asr"]["due_at"] is None
+    assert by_title["Family call tomorrow after Asr"]["priority"] == "medium"
+
+
 def test_inbox_capture_uses_raw_followup_to_rescue_sleep_and_family(monkeypatch):
     followup_payload = {
         "items": [

@@ -197,7 +197,21 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
-        description = self._clean_visible_response(result.get("response", "Captured."))
+        entries = result.get("entries") or ([entry] if entry else [])
+        life_items = result.get("life_items") or []
+        wiki_proposals = result.get("wiki_proposals") or []
+        clarifying_count = len([item for item in entries if item.get("status") == "clarifying"])
+        if entries or life_items or wiki_proposals:
+            description_parts = [f"Captured {len(entries)} inbox item(s)."]
+            if life_items:
+                description_parts.append(f"Auto-created {len(life_items)} life item(s).")
+            if clarifying_count:
+                description_parts.append(f"{clarifying_count} need follow-up.")
+            if wiki_proposals:
+                description_parts.append(f"{len(wiki_proposals)} wiki proposal(s).")
+            description = " ".join(description_parts)
+        else:
+            description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x7C3AED)
         if entry.get("id"):
             priority = entry.get("promotion_payload") or {}
@@ -210,14 +224,12 @@ class AgentsCog(commands.Cog, name="Agents"):
                 ),
                 inline=False,
             )
-        life_items = result.get("life_items") or []
         if life_items:
             lines = [
                 f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')} ({item.get('priority_score', 50)}/100)"
                 for item in life_items[:5]
             ]
             embed.add_field(name="Auto-created", value=self._embed_value("\n".join(lines)), inline=False)
-        wiki_proposals = result.get("wiki_proposals") or []
         if wiki_proposals:
             embed.add_field(name="Wiki Proposals", value=f"{len(wiki_proposals)} review-required proposal(s)", inline=False)
         followups = entry.get("follow_up_questions") or []

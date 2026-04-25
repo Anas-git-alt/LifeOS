@@ -27,6 +27,21 @@ TIME_PHRASE_RE = re.compile(
 )
 BED_RE = re.compile(r"\bbed(?:time| target)?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
 WAKE_RE = re.compile(r"\bwake(?:\s*(?:time|target))?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
+WORD_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+STOP_WORDS = {
+    "after",
+    "before",
+    "today",
+    "tomorrow",
+    "target",
+    "routine",
+    "status",
+    "summary",
+    "priority",
+    "high",
+    "medium",
+    "low",
+}
 
 
 def _clean(value: Any, *, limit: int | None = None) -> str | None:
@@ -97,23 +112,23 @@ def _parse_clock(hour_text: str, minute_text: str | None, meridian_text: str | N
     return hour, minute
 
 
-def _infer_due_at(raw_message: str, item: dict[str, Any], *, now_utc: datetime) -> datetime | None:
-    explicit = _coerce_due_at(item.get("due_at"))
-    if explicit:
-        return explicit
-    text = " ".join(
-        str(value or "")
-        for value in [
-            raw_message,
-            item.get("title"),
-            item.get("summary"),
-            item.get("desired_outcome"),
-            item.get("next_action"),
-        ]
-    )
-    match = TIME_PHRASE_RE.search(text)
-    if not match:
-        return None
+def _item_text(item: dict[str, Any]) -> str:
+    return " ".join(str(item.get(key) or "") for key in ("title", "summary", "desired_outcome", "next_action"))
+
+
+def _item_tokens(item: dict[str, Any]) -> set[str]:
+    return {token for token in WORD_RE.findall(_item_text(item).lower()) if token not in STOP_WORDS}
+
+
+def _time_match_belongs_to_item(raw_message: str, match: re.Match[str], item: dict[str, Any]) -> bool:
+    tokens = _item_tokens(item)
+    if not tokens:
+        return False
+    context = raw_message[max(0, match.start() - 80):match.end()].lower()
+    return bool(tokens.intersection(WORD_RE.findall(context)))
+
+
+def _due_from_match(match: re.Match[str], *, now_utc: datetime) -> datetime | None:
     clock = _parse_clock(match.group(2), match.group(3), match.group(4))
     if not clock:
         return None
@@ -122,6 +137,19 @@ def _infer_due_at(raw_message: str, item: dict[str, Any], *, now_utc: datetime) 
     due_date = local_now.date() + timedelta(days=1 if match.group(1).lower() == "tomorrow" else 0)
     due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
     return due_local.astimezone(timezone.utc)
+
+
+def _infer_due_at(raw_message: str, item: dict[str, Any], *, now_utc: datetime) -> datetime | None:
+    explicit = _coerce_due_at(item.get("due_at"))
+    if explicit:
+        return explicit
+    item_match = TIME_PHRASE_RE.search(_item_text(item))
+    if item_match:
+        return _due_from_match(item_match, now_utc=now_utc)
+    for raw_match in TIME_PHRASE_RE.finditer(raw_message):
+        if _time_match_belongs_to_item(raw_message, raw_match, item):
+            return _due_from_match(raw_match, now_utc=now_utc)
+    return None
 
 
 def _sleep_target(raw_message: str) -> tuple[str, str] | None:
@@ -147,8 +175,25 @@ def _family_call_detected(raw_message: str) -> bool:
     return "family" in text and "call" in text
 
 
+def _max_score(value: Any, floor: int) -> int:
+    coerced = _coerce_score(value)
+    return max(floor, coerced or 0)
+
+
+def _canonical_kind(item: dict[str, Any]) -> str:
+    kind = _safe_kind(item.get("kind"))
+    text = _item_text(item).lower()
+    if kind == "habit" and any(token in text for token in ("invoice", "call family", "family call", "send ", "follow up")):
+        return "task"
+    return kind
+
+
 def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, Any]:
     enriched = dict(item)
+    enriched["kind"] = _canonical_kind(enriched)
+    if "invoice" in _item_text(enriched).lower():
+        enriched["kind"] = "task"
+        enriched["domain"] = "work"
     sleep_target = _sleep_target(raw_message)
     if sleep_target and _looks_like_sleep_item(enriched):
         bed, wake = sleep_target
@@ -161,8 +206,8 @@ def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, 
                 "desired_outcome": enriched.get("desired_outcome") or f"Sleep by {bed} and wake by {wake} consistently.",
                 "next_action": enriched.get("next_action") or f"Set phone cutoff plus bedtime/wake alarms for {bed}/{wake}.",
                 "follow_up_questions": [],
-                "priority": enriched.get("priority") or "high",
-                "priority_score": enriched.get("priority_score") or 86,
+                "priority": "high",
+                "priority_score": _max_score(enriched.get("priority_score"), 86),
                 "priority_reason": enriched.get("priority_reason")
                 or "Sleep target is concrete and affects energy, prayer timing, and next-day execution.",
             }
@@ -177,8 +222,8 @@ def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, 
                 "desired_outcome": enriched.get("desired_outcome") or "Family call completed.",
                 "next_action": enriched.get("next_action") or "Call family tomorrow after Asr.",
                 "follow_up_questions": [],
-                "priority": enriched.get("priority") or "medium",
-                "priority_score": enriched.get("priority_score") or 66,
+                "priority": "medium",
+                "priority_score": _max_score(enriched.get("priority_score"), 55),
                 "priority_reason": enriched.get("priority_reason") or "Family action is concrete and tied to tomorrow after Asr.",
             }
         )
@@ -272,7 +317,7 @@ def _score_item(item: dict[str, Any], *, context_links: list[dict[str, Any]], no
     if domain in {"deen", "family", "health"}:
         score += 8
         factors["signals"].append(f"life_anchor:{domain}")
-    if any(token in text for token in ("urgent", "today", "tomorrow", "deadline", "promised", "owe", "invoice")):
+    if any(token in text for token in ("urgent", "today", "deadline", "promised", "owe", "invoice")):
         score += 12
         factors["signals"].append("explicit_pressure")
     if context_links:
