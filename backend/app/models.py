@@ -1461,7 +1461,7 @@ class UnifiedCaptureRequest(BaseModel):
 
 
 class UnifiedCaptureResponse(BaseModel):
-    route: Literal["intake", "commitment", "memory"]
+    route: Literal["intake", "commitment", "memory", "daily_log"]
     response: str
     session_id: Optional[int] = None
     session_title: Optional[str] = None
@@ -1475,6 +1475,8 @@ class UnifiedCaptureResponse(BaseModel):
     auto_promoted_count: int = 0
     needs_follow_up: bool = False
     needs_answer_count: int = 0
+    logged_signals: list[str] = Field(default_factory=list)
+    completed_items: list[LifeItemResponse] = Field(default_factory=list)
 
 
 class IntakePromoteRequest(BaseModel):

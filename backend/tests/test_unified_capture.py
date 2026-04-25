@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.models import CommitmentCaptureResponse, IntakeCaptureResponse, UnifiedCaptureRequest
+from unittest.mock import AsyncMock
+
+from sqlalchemy import select
+
+from app.database import async_session
+from app.models import CommitmentCaptureResponse, IntakeCaptureResponse, IntakeEntry, LifeItemCreate, UnifiedCaptureRequest
 from app.routers.life import (
     _detail_questions_for_capture,
     _infer_commitment_domain,
@@ -10,6 +15,11 @@ from app.routers.life import (
     _select_capture_route,
     capture_life,
 )
+from app.services.life import create_life_item, get_today_agenda
+
+
+def _fake_schedule():
+    return {"next_prayer": None, "windows": []}
 
 
 def test_unified_capture_route_selector_sorts_common_inputs():
@@ -85,3 +95,54 @@ async def test_unified_capture_intake_facade(monkeypatch):
 
     assert result.route == "intake"
     assert result.response == "Captured."
+
+
+@pytest.mark.asyncio
+async def test_unified_capture_status_update_logs_and_closes_family_message(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value=_fake_schedule()))
+    item = await create_life_item(
+        LifeItemCreate(
+            domain="family",
+            title="Send message to mother",
+            kind="task",
+            priority="high",
+            priority_score=90,
+        )
+    )
+    async with async_session() as db:
+        entry = IntakeEntry(
+            source="agent_capture",
+            source_agent="commitment-capture",
+            raw_text="Send message to my mother today at 5pm",
+            title="Send message to mother",
+            domain="family",
+            kind="commitment",
+            status="clarifying",
+            follow_up_questions_json=["What should the message say?"],
+            linked_life_item_id=item.id,
+        )
+        db.add(entry)
+        await db.commit()
+
+    result = await capture_life(
+        UnifiedCaptureRequest(
+            message="Message sent to ask about her health, meal i ate a sandwitch, and i drank 1 cup of water",
+            source="discord_capture",
+        )
+    )
+
+    assert result.route == "daily_log"
+    assert result.completed_items[0].id == item.id
+    assert set(result.logged_signals) >= {"completed family message", "family", "meal", "hydration x1", "priority"}
+
+    agenda = await get_today_agenda()
+    assert agenda["scorecard"].family_action_done is True
+    assert agenda["scorecard"].meals_count == 1
+    assert agenda["scorecard"].hydration_count == 1
+    assert agenda["scorecard"].top_priority_completed_count == 1
+    assert all(row.id != item.id for row in agenda["top_focus"])
+    async with async_session() as db:
+        entry_result = await db.execute(select(IntakeEntry).where(IntakeEntry.linked_life_item_id == item.id))
+        updated_entry = entry_result.scalar_one()
+    assert updated_entry.status == "processed"
+    assert updated_entry.follow_up_questions_json == []

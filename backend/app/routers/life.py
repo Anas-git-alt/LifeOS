@@ -17,6 +17,7 @@ from app.models import (
     DailyLogResponse,
     DailyScorecardResponse,
     GoalProgressResponse,
+    IntakeEntry,
     IntakeCaptureRequest,
     IntakeCaptureResponse,
     IntakeEntryResponse,
@@ -36,7 +37,6 @@ from app.models import (
     UnifiedCaptureRequest,
     UnifiedCaptureResponse,
     WeeklyCommitmentReviewResponse,
-    IntakeEntry,
     LifeItem,
     ContextEventResponse,
     MeetingIntakeRequest,
@@ -99,6 +99,26 @@ _FAMILY_DETAIL_RE = re.compile(
 )
 _MESSAGE_CONTENT_RE = re.compile(
     r"\b(say|tell|ask|about|regarding|that)\b|[\"“”']",
+    re.IGNORECASE,
+)
+_CAPTURE_DONE_MESSAGE_RE = re.compile(
+    r"\b(message sent|sent (?:a )?message|texted|sent text|called|spoke to|asked about (?:her|his|their) health)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_MEAL_RE = re.compile(
+    r"\b(ate|meal|breakfast|lunch|dinner|sandwich|sandwitch|food)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_WATER_RE = re.compile(
+    r"\b(water|hydration|drank|drink|cup|cups|glass|glasses|bottle|bottles)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_WATER_COUNT_RE = re.compile(
+    r"\b(\d+)\s*(?:cup|cups|glass|glasses|bottle|bottles)\b",
+    re.IGNORECASE,
+)
+_NEW_CAPTURE_INTENT_RE = re.compile(
+    r"\b(need to|want to|remind me|tomorrow|deadline|due|follow[- ]?up|invoice|deliver|submit|finish|ship|pay)\b",
     re.IGNORECASE,
 )
 
@@ -203,6 +223,80 @@ def _detail_questions_for_capture(message: str, domain: str) -> list[str]:
     if domain != "family" or not _FAMILY_DETAIL_RE.search(message) or _MESSAGE_CONTENT_RE.search(message):
         return []
     return ["What should the message say, or what topic should it cover?"]
+
+
+def _hydration_count_from_capture(message: str) -> int:
+    match = _CAPTURE_WATER_COUNT_RE.search(message)
+    if not match:
+        return 1
+    return max(1, min(12, int(match.group(1))))
+
+
+def _looks_like_capture_update_only(message: str, *, handled: bool) -> bool:
+    if not handled:
+        return False
+    return not _NEW_CAPTURE_INTENT_RE.search(message)
+
+
+async def _complete_matching_family_message_item(message: str) -> LifeItem | None:
+    if not _CAPTURE_DONE_MESSAGE_RE.search(message):
+        return None
+    async with async_session() as db:
+        result = await db.execute(
+            select(LifeItem)
+            .where(LifeItem.status == "open")
+            .where(LifeItem.domain == "family")
+            .order_by(LifeItem.due_at.is_(None), LifeItem.due_at.asc(), LifeItem.updated_at.asc())
+        )
+        candidates = list(result.scalars().all())
+    if not candidates:
+        return None
+    message_candidates = [
+        item
+        for item in candidates
+        if any(token in f"{item.title} {item.notes or ''}".lower() for token in ["message", "text", "mother", "mom", "family"])
+    ]
+    item = (message_candidates or candidates)[0]
+    _, updated = await add_checkin(
+        item.id,
+        LifeCheckinCreate(result="done", note=message.strip()[:500]),
+    )
+    async with async_session() as db:
+        entry_result = await db.execute(select(IntakeEntry).where(IntakeEntry.linked_life_item_id == item.id))
+        entries = list(entry_result.scalars().all())
+    for entry in entries:
+        await update_intake_entry(entry.id, IntakeEntryUpdate(status="processed", follow_up_questions=[]))
+    return updated
+
+
+async def _apply_quick_updates_from_capture(message: str) -> dict:
+    logged_signals: list[str] = []
+    completed_items: list[LifeItem] = []
+
+    completed = await _complete_matching_family_message_item(message)
+    if completed:
+        completed_items.append(completed)
+        logged_signals.append("completed family message")
+        await log_daily_signal(DailyLogCreate(kind="family", done=True, note=message.strip()[:500]))
+        logged_signals.append("family")
+        if completed.priority == "high":
+            await log_daily_signal(DailyLogCreate(kind="priority", count=1, note=f"Completed #{completed.id}: {completed.title}"))
+            logged_signals.append("priority")
+
+    if _CAPTURE_MEAL_RE.search(message):
+        await log_daily_signal(DailyLogCreate(kind="meal", count=1, note=message.strip()[:500]))
+        logged_signals.append("meal")
+
+    if _CAPTURE_WATER_RE.search(message):
+        count = _hydration_count_from_capture(message)
+        await log_daily_signal(DailyLogCreate(kind="hydration", count=count, note=message.strip()[:500]))
+        logged_signals.append(f"hydration x{count}")
+
+    return {
+        "handled": bool(logged_signals or completed_items),
+        "logged_signals": logged_signals,
+        "completed_items": completed_items,
+    }
 
 
 def _title_from_capture(text: str) -> str:
@@ -397,6 +491,25 @@ async def capture_life(data: UnifiedCaptureRequest):
     message = (data.message or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
+
+    quick_updates = await _apply_quick_updates_from_capture(message)
+    if _looks_like_capture_update_only(message, handled=quick_updates["handled"]):
+        completed_items = [
+            LifeItemResponse.model_validate(item)
+            for item in quick_updates["completed_items"]
+            if item is not None
+        ]
+        signals = quick_updates["logged_signals"]
+        return UnifiedCaptureResponse(
+            route="daily_log",
+            response=(
+                "Updated Today: "
+                f"{', '.join(signals) if signals else 'daily status'}. "
+                f"Completed {len(completed_items)} item(s)."
+            ),
+            logged_signals=signals,
+            completed_items=completed_items,
+        )
 
     route = _select_capture_route(data)
     if route == "commitment":

@@ -198,12 +198,21 @@ class AgentsCog(commands.Cog, name="Agents"):
     async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
         entries = result.get("entries") or ([entry] if entry else [])
+        logged_signals = result.get("logged_signals") or []
+        completed_items = result.get("completed_items") or []
         life_items = result.get("life_items") or []
         if result.get("life_item") and not life_items:
             life_items = [result["life_item"]]
         wiki_proposals = result.get("wiki_proposals") or []
         clarifying_count = len([item for item in entries if item.get("status") == "clarifying"])
-        if entries or life_items or wiki_proposals:
+        if logged_signals or completed_items:
+            description_parts = ["Updated Today."]
+            if completed_items:
+                description_parts.append(f"Completed {len(completed_items)} item(s).")
+            if logged_signals:
+                description_parts.append(f"Logged: {', '.join(logged_signals)}.")
+            description = " ".join(description_parts)
+        elif entries or life_items or wiki_proposals:
             description_parts = [f"Captured via {result.get('route', 'capture')}."]
             if life_items:
                 description_parts.append(f"Tracked {len(life_items)} item(s).")
@@ -215,6 +224,14 @@ class AgentsCog(commands.Cog, name="Agents"):
         else:
             description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x2563EB)
+        if completed_items:
+            lines = [
+                f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('status', 'done')}"
+                for item in completed_items[:5]
+            ]
+            embed.add_field(name="Completed", value=self._embed_value("\n".join(lines)), inline=False)
+        if logged_signals:
+            embed.add_field(name="Logged", value=self._embed_value(", ".join(logged_signals)), inline=False)
         if entry.get("id"):
             priority = entry.get("promotion_payload") or {}
             embed.add_field(
