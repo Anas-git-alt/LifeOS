@@ -799,6 +799,10 @@ def _apply_daily_log_to_scorecard(scorecard: DailyScorecard, data: DailyLogCreat
         scorecard.protein_hit = bool(scorecard.protein_hit or protein_hit)
         if note:
             notes["last_meal_note"] = note
+    elif data.kind == "protein":
+        scorecard.protein_hit = True
+        if note:
+            notes["protein_note"] = note
     elif data.kind == "training":
         status = data.status or "done"
         if status not in TRAINING_STATUSES:

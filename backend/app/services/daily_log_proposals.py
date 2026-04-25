@@ -9,6 +9,7 @@ from typing import Any
 from app.models import Agent, DailyLogCreate
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 
+ALLOWED_KINDS = {"sleep", "meal", "protein", "training", "hydration", "shutdown", "family", "priority"}
 CHECKIN_SIGNAL_RE = re.compile(
     r"\b("
     r"i|we|just|done|completed|finished|drank|drink|ate|eat|had|meal|water|cup|glass|"
@@ -21,19 +22,37 @@ COMPLETED_CHECKIN_RE = re.compile(
     r"\b(done|completed|finished)\b",
     re.IGNORECASE,
 )
-PLANNING_OR_QUESTION_RE = re.compile(r"\?|(\b(should|need to|plan to|want to|tomorrow|later|remind me)\b)", re.IGNORECASE)
+PLANNING_OR_QUESTION_RE = re.compile(
+    r"\?|"
+    r"^\s*(find|what|how|recommend|suggest|help me|can you|tell me|give me)\b|"
+    r"\b(should|need to|plan to|want to|tomorrow|later|remind me|cheapest|budget|recipe|meal i can make|max protein)\b",
+    re.IGNORECASE,
+)
 WATER_RE = re.compile(r"\b(water|hydration|drank|drink|cup|cups|glass|glasses|bottle|bottles)\b", re.IGNORECASE)
 WATER_COUNT_RE = re.compile(r"\b(\d+)\s*(?:cup|cups|glass|glasses|bottle|bottles)\b", re.IGNORECASE)
 MEAL_RE = re.compile(
-    r"\b(ate|eat|meal|breakfast|lunch|dinner|shawarma|sandwich|sandwitch|food|protein)\b",
+    r"\b(ate|eat|meal|breakfast|lunch|dinner|shawarma|sandwich|sandwitch|food)\b",
     re.IGNORECASE,
 )
+CONCRETE_MEAL_RE = re.compile(r"\b(meal|breakfast|lunch|dinner|shawarma|sandwich|sandwitch|food)\b", re.IGNORECASE)
+PROTEIN_HIT_RE = re.compile(r"\b(enough protein|hit protein|protein hit|protein goal|protein target|got protein)\b", re.IGNORECASE)
 TRAINING_RE = re.compile(r"\b(trained|workout|worked out|gym|walk|stretch|stretching)\b", re.IGNORECASE)
 REST_RE = re.compile(r"\b(rested|rest day|explicit rest)\b", re.IGNORECASE)
 FAMILY_RE = re.compile(r"\b(sent|called|texted|messaged|spoke)\b.*\b(mother|mom|father|dad|wife|family|parents)\b", re.IGNORECASE)
 PRIORITY_RE = re.compile(r"\b(finished|completed|shipped|done)\b.*\b(priority|invoice|task|commitment)\b", re.IGNORECASE)
 NEGATED_WATER_RE = re.compile(r"\b(no|not|didn'?t|did not|haven'?t|have not)\b.{0,24}\b(water|drink|drank|hydration)\b", re.IGNORECASE)
 NEGATED_MEAL_RE = re.compile(r"\b(no|not|didn'?t|did not|haven'?t|have not)\b.{0,24}\b(ate|eat|meal|food)\b", re.IGNORECASE)
+NEGATED_PROTEIN_RE = re.compile(r"\b(no|not|didn'?t|did not|haven'?t|have not)\b.{0,24}\b(protein)\b", re.IGNORECASE)
+ONLY_KIND_PATTERNS: list[tuple[str, set[str]]] = [
+    (r"\b(?:log|keep|count)?\s*only\s+(?:the\s+)?(?:water|hydration)\b|\b(?:water|hydration)\s+only\b", {"hydration"}),
+    (r"\b(?:log|keep|count)?\s*only\s+(?:the\s+)?(?:meal|food|shawarma|sandwich|sandwitch)\b", {"meal"}),
+    (r"\b(?:log|keep|count)?\s*only\s+(?:the\s+)?protein\b|\bprotein\s+only\b", {"protein"}),
+]
+EXCLUDE_KIND_PATTERNS: list[tuple[str, str]] = [
+    ("meal", r"\b(remove|drop|skip|ignore|don'?t log|do not log|don'?t count|do not count)\b.{0,30}\b(meal|food|shawarma|sandwich|sandwitch)\b|\b(meal|food|shawarma|sandwich|sandwitch)\b.{0,30}\b(already counted|already logged)\b"),
+    ("hydration", r"\b(remove|drop|skip|ignore|don'?t log|do not log|don'?t count|do not count)\b.{0,30}\b(water|hydration|drink|drank)\b|\b(water|hydration|drink|drank)\b.{0,30}\b(already counted|already logged)\b"),
+    ("protein", r"\b(remove|drop|skip|ignore|don'?t log|do not log|don'?t count|do not count)\b.{0,30}\bprotein\b|\bprotein\b.{0,30}\b(already counted|already logged)\b"),
+]
 
 
 def _water_count(text: str) -> int:
@@ -43,16 +62,48 @@ def _water_count(text: str) -> int:
     return max(1, min(12, int(match.group(1))))
 
 
-def _normalise_logs(raw_logs: Any, *, note: str) -> list[dict[str, Any]]:
+def _only_kinds(text: str) -> set[str] | None:
+    for pattern, kinds in ONLY_KIND_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return set(kinds)
+    return None
+
+
+def _excluded_kinds(text: str) -> set[str]:
+    excluded: set[str] = set()
+    for kind, pattern in EXCLUDE_KIND_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            excluded.add(kind)
+    if NEGATED_WATER_RE.search(text):
+        excluded.add("hydration")
+    if NEGATED_MEAL_RE.search(text):
+        excluded.add("meal")
+    if NEGATED_PROTEIN_RE.search(text):
+        excluded.add("protein")
+    return excluded
+
+
+def _normalise_logs(
+    raw_logs: Any,
+    *,
+    note: str,
+    only_kinds: set[str] | None = None,
+    excluded_kinds: set[str] | None = None,
+) -> list[dict[str, Any]]:
     if not isinstance(raw_logs, list):
         return []
+    excluded_kinds = excluded_kinds or set()
     logs: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in raw_logs:
         if not isinstance(item, dict):
             continue
         kind = str(item.get("kind") or "").strip().lower()
-        if kind not in {"sleep", "meal", "training", "hydration", "shutdown", "family", "priority"}:
+        if kind not in ALLOWED_KINDS:
+            continue
+        if only_kinds is not None and kind not in only_kinds:
+            continue
+        if kind in excluded_kinds:
             continue
         key = kind
         if key in seen:
@@ -82,9 +133,16 @@ def _normalise_logs(raw_logs: Any, *, note: str) -> list[dict[str, Any]]:
 def _fallback_logs(text: str) -> list[dict[str, Any]]:
     logs: list[dict[str, Any]] = []
     note = text.strip()[:500]
-    if WATER_RE.search(text) and not NEGATED_WATER_RE.search(text):
+    only_kinds = _only_kinds(text)
+    excluded_kinds = _excluded_kinds(text)
+    if only_kinds:
+        excluded_kinds -= only_kinds
+    protein_only = PROTEIN_HIT_RE.search(text) and not CONCRETE_MEAL_RE.search(text)
+    if WATER_RE.search(text) and "hydration" not in excluded_kinds:
         logs.append({"kind": "hydration", "count": _water_count(text), "note": note})
-    if MEAL_RE.search(text) and not NEGATED_MEAL_RE.search(text):
+    if protein_only and "protein" not in excluded_kinds:
+        logs.append({"kind": "protein", "note": note})
+    elif MEAL_RE.search(text) and "meal" not in excluded_kinds:
         logs.append({"kind": "meal", "count": 1, "note": note, "protein_hit": "protein" in text.lower()})
     if TRAINING_RE.search(text):
         logs.append({"kind": "training", "status": "done", "note": note})
@@ -94,7 +152,7 @@ def _fallback_logs(text: str) -> list[dict[str, Any]]:
         logs.append({"kind": "family", "done": True, "note": note})
     if PRIORITY_RE.search(text):
         logs.append({"kind": "priority", "count": 1, "note": note})
-    return _normalise_logs(logs, note=note)
+    return _normalise_logs(logs, note=note, only_kinds=only_kinds, excluded_kinds=excluded_kinds)
 
 
 async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) -> dict[str, Any] | None:
@@ -104,13 +162,24 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
     if PLANNING_OR_QUESTION_RE.search(message) and not COMPLETED_CHECKIN_RE.search(message):
         return None
 
+    only_kinds = _only_kinds(message)
+    excluded_kinds = _excluded_kinds(message)
+    if only_kinds:
+        excluded_kinds -= only_kinds
+    protein_only = PROTEIN_HIT_RE.search(message) and not CONCRETE_MEAL_RE.search(message)
+    if protein_only:
+        logs = _fallback_logs(message)
+        return {"logs": logs, "source_text": message} if logs else None
+
     logs: list[dict[str, Any]] = []
     if agent:
         system = (
             "Extract LifeOS daily quick logs from the user's check-in. "
-            "Return only JSON: {\"logs\":[...]} with allowed kinds: meal, hydration, training, family, priority, shutdown, sleep. "
+            "Return only JSON: {\"logs\":[...]} with allowed kinds: meal, protein, hydration, training, family, priority, shutdown, sleep. "
             "Use count for meal/hydration/priority, done for family/shutdown, status done/rest/missed for training. "
-            "If the user is asking for advice, planning future actions, or negating an action, return {\"logs\":[]}."
+            "If the user says only/keep/remove/already counted, obey that correction exactly. "
+            "If they only say they hit enough protein, return protein and do not add meal. "
+            "If the user asks for advice, planning, recipes, budget options, or future actions, return {\"logs\":[]}."
         )
         try:
             raw = await chat_completion(
@@ -125,7 +194,12 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
             start = raw.find("{")
             end = raw.rfind("}")
             parsed = json.loads(raw[start : end + 1]) if start >= 0 and end >= start else {}
-            logs = _normalise_logs(parsed.get("logs"), note=message)
+            logs = _normalise_logs(
+                parsed.get("logs"),
+                note=message,
+                only_kinds=only_kinds,
+                excluded_kinds=excluded_kinds,
+            )
         except (LLMProvidersExhaustedError, json.JSONDecodeError, ValueError, TypeError):
             logs = []
         except Exception:
@@ -144,6 +218,8 @@ def format_daily_log_proposal(payload: dict[str, Any]) -> str:
         kind = item.get("kind")
         if kind in {"hydration", "meal", "priority"}:
             labels.append(f"{kind} x{item.get('count', 1)}")
+        elif kind == "protein":
+            labels.append("protein")
         elif kind == "training":
             labels.append(f"training:{item.get('status', 'done')}")
         elif kind in {"family", "shutdown"}:

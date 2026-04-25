@@ -766,7 +766,11 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @commands.command(name="capturefollow")
     async def capture_follow(self, ctx, *, message: str):
-        session_id = self._get_active_session_id(ctx, INTAKE_AGENT_NAME)
+        session_id = self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
+        route_hint = "commitment"
+        if not session_id:
+            session_id = self._get_active_session_id(ctx, INTAKE_AGENT_NAME)
+            route_hint = "intake"
         if not session_id:
             await ctx.send("No active capture session. Start with `!capture ...`.")
             return
@@ -779,9 +783,12 @@ class AgentsCog(commands.Cog, name="Agents"):
                         "session_id": session_id,
                         "new_session": False,
                         "source": "discord_capture_followup",
-                        "route_hint": "intake",
+                        "route_hint": route_hint,
                     },
                 )
+                if result.get("session_id"):
+                    agent_name = COMMITMENT_SESSION_NAME if route_hint == "commitment" else INTAKE_AGENT_NAME
+                    self._set_active_session_id(ctx, agent_name, int(result["session_id"]))
                 await self._send_capture_embed(ctx, result, heading="Capture Follow-up")
             except Exception as exc:
                 await ctx.send(f"Failed to continue capture: {self._trim_error(exc)}")

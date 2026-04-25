@@ -61,6 +61,42 @@ async def test_daily_log_proposal_ignores_advice_question():
 
 
 @pytest.mark.asyncio
+async def test_daily_log_proposal_ignores_recipe_or_budget_request():
+    payload = await propose_daily_log_payload(
+        "find me the cheapest meal i can make with max protein in Morocco casablanca i am on a budget"
+    )
+
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_honors_only_and_remove_corrections():
+    payload = await propose_daily_log_payload(
+        "log only water half a shawarma already counted as 1 meal so 2 halfs is now 1 full shawarma"
+    )
+    payload2 = await propose_daily_log_payload("remove meal keep only water")
+
+    assert payload is not None
+    assert payload["logs"] == [
+        {
+            "kind": "hydration",
+            "count": 1,
+            "note": "log only water half a shawarma already counted as 1 meal so 2 halfs is now 1 full shawarma",
+        }
+    ]
+    assert payload2 is not None
+    assert payload2["logs"] == [{"kind": "hydration", "count": 1, "note": "remove meal keep only water"}]
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_treats_protein_as_scorecard_hit_not_meal():
+    payload = await propose_daily_log_payload("i ate enough protein")
+
+    assert payload is not None
+    assert payload["logs"] == [{"kind": "protein", "note": "i ate enough protein"}]
+
+
+@pytest.mark.asyncio
 async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
     _freeze_life_datetime(monkeypatch, datetime(2026, 3, 3, 20, 0, tzinfo=timezone.utc))
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value=_fake_schedule()))
@@ -79,6 +115,7 @@ async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
                 "logs": [
                     {"kind": "hydration", "count": 1, "note": "drank water"},
                     {"kind": "meal", "count": 1, "note": "ate shawarma"},
+                    {"kind": "protein", "note": "enough protein"},
                 ]
             }
         ),
@@ -94,6 +131,7 @@ async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
         scorecard = result.scalar_one()
     assert scorecard.hydration_count == 1
     assert scorecard.meals_count == 1
+    assert scorecard.protein_hit is True
 
 
 @pytest.mark.asyncio

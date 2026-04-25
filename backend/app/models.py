@@ -1633,7 +1633,7 @@ class WeeklyCommitmentReviewResponse(BaseModel):
 
 
 class DailyLogCreate(BaseModel):
-    kind: Literal["sleep", "meal", "training", "hydration", "shutdown", "family", "priority"]
+    kind: Literal["sleep", "meal", "protein", "training", "hydration", "shutdown", "family", "priority"]
     note: Optional[str] = None
     count: Optional[int] = Field(default=None, ge=1)
     done: Optional[bool] = None

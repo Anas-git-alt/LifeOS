@@ -265,6 +265,33 @@ async def test_daily_log_proposal_reply_replaces_with_correction(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_capturefollow_uses_active_commitment_capture_session(monkeypatch):
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/life/capture"
+        assert payload["session_id"] == 77
+        assert payload["new_session"] is False
+        assert payload["route_hint"] == "commitment"
+        assert payload["message"] == "using workday, before 4pm"
+        return {
+            "route": "commitment",
+            "response": "Captured.",
+            "session_id": 77,
+            "entry": {"id": 5, "title": "Submit tax return paper request", "status": "processed"},
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+    cog._set_active_session_id(ctx, "commitment-capture", 77)
+
+    await cog.capture_follow.callback(cog, ctx, message="using workday, before 4pm")
+
+    assert len(ctx.sent_embeds) == 1
+    assert ctx.sent_embeds[0].title == "Capture Follow-up"
+
+
+@pytest.mark.asyncio
 async def test_commit_command_posts_commitment_capture(monkeypatch):
     async def _fake_api_post(path: str, payload: dict):
         assert path == "/life/capture"
