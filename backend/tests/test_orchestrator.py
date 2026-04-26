@@ -260,6 +260,48 @@ async def test_handle_message_does_not_create_pending_for_informational_chat(mon
 
 
 @pytest.mark.asyncio
+async def test_handle_message_answers_memory_recall_without_llm(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.name = "work-ai-influencer"
+    factory = _FakeSessionFactory(agent)
+    raw_text = (
+        "remind me to send a request to HR for tax return papers:\n"
+        "Attestation de salaire annuel (36 mois)\n"
+        "Attestation de salaire mensuel\n"
+        "Attestation de travail\n"
+        "Copie du contrat de travail\n"
+        "Attestation de declaration de salaire a la CNSS\n"
+        "Follow-up answer: Tomorrow before 2pm yes workday"
+    )
+    hit = SimpleNamespace(
+        raw_text=raw_text,
+        snippet=raw_text,
+        title="Send request to HR",
+    )
+    chat_completion = AsyncMock(return_value="should not be used")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[hit]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="work-ai-influencer",
+        user_message="what papers did I say I need from HR?",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert chat_completion.await_count == 0
+    assert "Mode B" not in result["response"]
+    assert "Attestation de salaire annuel" in result["response"]
+    assert "Copie du contrat de travail" in result["response"]
+    assert "Tomorrow before 2pm yes workday" in result["response"]
+
+
+@pytest.mark.asyncio
 async def test_handle_message_fails_closed_when_state_packet_unavailable(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
     factory = _FakeSessionFactory(agent)

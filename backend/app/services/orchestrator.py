@@ -106,6 +106,20 @@ _DAILY_LOG_PROPOSAL_PATTERN = re.compile(
     r"\b(I can log this in Today|React with ✅|react with .? to apply|Please react with|proposed logging your|propose logging)\b",
     re.IGNORECASE,
 )
+_MEMORY_RECALL_QUERY_PATTERN = re.compile(
+    r"\b("
+    r"what\s+(?:did\s+i\s+say|did\s+i\s+mention|papers?|documents?|list|items?)|"
+    r"what\s+.*\b(?:i\s+said|i\s+mentioned|i\s+need|from\s+hr)|"
+    r"i\s+(?:do\s+not|don't|dont)\s+remember|"
+    r"previous\s+(?:conversation|chat|message|capture)|"
+    r"earlier\s+(?:conversation|chat|message|capture)"
+    r")\b",
+    re.IGNORECASE,
+)
+_LIST_ITEM_START_RE = re.compile(
+    r"^(?:[-*]\s*)?(?:attestation|copie|copy|certificate|form|document|paper|liste\b)",
+    re.IGNORECASE,
+)
 
 
 def _profile_location_instruction(state_packet: dict | None) -> str:
@@ -236,6 +250,71 @@ def _filter_context_for_transient_note(
             continue
         filtered.append(message)
     return filtered
+
+
+def _looks_like_memory_recall_query(text: str) -> bool:
+    return bool(_MEMORY_RECALL_QUERY_PATTERN.search(text or ""))
+
+
+def _extract_captured_list(raw_text: str) -> list[str]:
+    lines = [line.strip(" \t-*•📌:") for line in str(raw_text or "").splitlines()]
+    lines = [line for line in lines if line]
+    collected: list[str] = []
+    in_list = False
+    for line in lines:
+        lowered = line.lower()
+        if "liste des documents" in lowered or "list of papers" in lowered or "papers to request" in lowered:
+            in_list = True
+            continue
+        if in_list and _LIST_ITEM_START_RE.search(line):
+            collected.append(line)
+            continue
+        if in_list and collected and not _LIST_ITEM_START_RE.search(line):
+            break
+    if len(collected) >= 2:
+        return list(dict.fromkeys(collected))
+
+    collapsed = re.sub(r"\s+", " ", str(raw_text or "")).strip()
+    marker = re.search(r"(Attestation|Copie|Copy|Certificate|Form|Document|Paper)\b", collapsed, re.IGNORECASE)
+    if not marker:
+        return []
+    tail = collapsed[marker.start() :]
+    starts = list(re.finditer(r"\b(?:Attestation|Copie|Copy|Certificate|Form|Document|Paper)\b", tail, re.IGNORECASE))
+    items: list[str] = []
+    for idx, match in enumerate(starts):
+        end = starts[idx + 1].start() if idx + 1 < len(starts) else len(tail)
+        item = tail[match.start() : end].strip(" ;,.")
+        if item:
+            items.append(item)
+    return list(dict.fromkeys(items)) if len(items) >= 2 else []
+
+
+def _extract_followup_hint(raw_text: str) -> str:
+    text = re.sub(r"\s+", " ", str(raw_text or "")).strip()
+    match = re.search(r"Follow-up answer:\s*(.+)$", text, re.IGNORECASE)
+    if not match:
+        return ""
+    hint = match.group(1).strip()
+    return hint[:180]
+
+
+def _memory_recall_direct_answer(user_message: str, hits: list[object]) -> str | None:
+    if not _looks_like_memory_recall_query(user_message) or not hits:
+        return None
+    top = hits[0]
+    raw_text = str(getattr(top, "raw_text", "") or "")
+    items = _extract_captured_list(raw_text)
+    if items:
+        lines = ["You said you need these from HR:"]
+        lines.extend(f"- {item}" for item in items[:12])
+        followup = _extract_followup_hint(raw_text)
+        if followup:
+            lines.append(f"\nFollow-up saved: {followup}")
+        return "\n".join(lines)
+    snippet = str(getattr(top, "snippet", "") or raw_text).strip()
+    if snippet:
+        return f"From memory, closest saved detail:\n{snippet[:900]}"
+    return None
 
 
 def _memory_unavailable_result(active_session, exc: Exception) -> dict:
@@ -665,136 +744,140 @@ async def handle_message(
                         "OpenViking memory was unavailable for this turn, so the reply was generated without prior session context.",
                     )
                     context = []
-            turn_plan = TurnPlan()
-            if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
-                turn_plan = await plan_turn_for_tools(
-                    agent=agent,
-                    user_message=user_message,
-                    context=context,
-                    current_datetime=_today_utc(),
-                    state_packet=state_packet,
-                )
-            context = _filter_context_for_transient_note(context, transient_system_note)
-            messages = [{"role": "system", "content": system_prompt}, *context]
-            if referenced_session_context:
-                messages.append({"role": "system", "content": referenced_session_context})
-
-            final_user_content = user_message
-            if agent_name == "prayer-deen":
-                try:
-                    prayer_context = await build_prayer_agent_context()
-                    final_user_content = f"{prayer_context}\n\nUser Query: {user_message}"
-                except Exception as exc:
-                    logger.warning("Failed building prayer context: %s", exc)
-            elif agent_name == "weekly-review":
-                try:
-                    deen_context = await build_weekly_deen_context()
-                    final_user_content = (
-                        f"{deen_context}\n\n"
-                        "Include a dedicated Deen section with prayer accuracy, retroactive logs, Quran, tahajjud, and adhkar.\n\n"
-                        f"User Query: {user_message}"
-                    )
-                except Exception as exc:
-                    logger.warning("Failed building weekly deen context: %s", exc)
-            if _should_fetch_shared_memory_context(agent_name, user_message, referenced_session_id):
-                try:
-                    shared_memory_context = await build_shared_memory_context(
+            try:
+                ledger_hits_for_turn = await search_memory_events(query=user_message, agent=agent, limit=6)
+                direct_memory_answer = _memory_recall_direct_answer(user_message, ledger_hits_for_turn)
+            except Exception as exc:
+                logger.warning("Direct memory recall failed for agent '%s': %s", agent_name, exc)
+                ledger_hits_for_turn = []
+                direct_memory_answer = None
+            if direct_memory_answer:
+                response_text = direct_memory_answer
+            if response_text is None:
+                turn_plan = TurnPlan()
+                if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
+                    turn_plan = await plan_turn_for_tools(
                         agent=agent,
-                        query=user_message,
+                        user_message=user_message,
+                        context=context,
+                        current_datetime=_today_utc(),
+                        state_packet=state_packet,
                     )
-                except OpenVikingUnavailableError as exc:
-                    logger.warning(
-                        "Shared-memory retrieval unavailable for agent '%s'; continuing without optional context: %s",
-                        agent_name,
-                        redact_sensitive(str(exc)),
-                    )
-                    shared_memory_context = ""
-                except Exception as exc:
-                    logger.warning("Shared-memory context failed for agent '%s': %s", agent_name, exc)
-                    shared_memory_context = ""
-                if shared_memory_context:
-                    final_user_content = f"{shared_memory_context}\n\n{final_user_content}"
-            try:
-                ledger_context = render_memory_ledger_context(
-                    await search_memory_events(query=user_message, agent=agent, limit=6)
-                )
-            except Exception as exc:
-                logger.warning("Memory ledger context failed for agent '%s': %s", agent_name, exc)
-                ledger_context = ""
-            if ledger_context:
-                final_user_content = f"{ledger_context}\n\n{final_user_content}"
-            if agent.workspace_enabled and _should_fetch_workspace_context(user_message, referenced_session_id):
-                try:
-                    openviking_context = await get_openviking_context(
-                        agent_name=agent_name,
-                        query=user_message,
-                        session_id=active_session.id if active_session else None,
-                        workspace_paths=workspace_paths,
-                    )
-                except OpenVikingUnavailableError as exc:
-                    logger.warning(
-                        "Workspace retrieval unavailable for agent '%s'; continuing without optional context: %s",
-                        agent_name,
-                        redact_sensitive(str(exc)),
-                    )
-                    openviking_context = ""
-                if openviking_context:
-                    final_user_content = f"{openviking_context}\n\n{final_user_content}"
-            search_query = None
-            if turn_plan.needs_web_search and turn_plan.web_search_query:
-                search_query = turn_plan.web_search_query
-            elif _should_search_web(agent, user_message, referenced_session_id):
-                search_query = user_message
-            if search_query:
-                search_context = await _get_search_context(search_query)
-                if search_context:
-                    final_user_content = (
-                        f"{final_user_content}\n\n"
-                        f"Web search query used: {search_query}\n"
-                        f"{search_context}\n"
-                        "Answer using provided real-time data where relevant. "
-                        "Include a short Sources section with the URLs you used."
-                    )
-                else:
-                    final_user_content = (
-                        f"{final_user_content}\n\n"
-                        f"Web search query attempted: {search_query}\n"
-                        "No web search results were returned. Say that search returned no usable results; do not guess."
-                    )
-            messages.append({"role": "user", "content": final_user_content})
+                context = _filter_context_for_transient_note(context, transient_system_note)
+                messages = [{"role": "system", "content": system_prompt}, *context]
+                if referenced_session_context:
+                    messages.append({"role": "system", "content": referenced_session_context})
 
-            try:
-                response_text = await chat_completion(
-                    messages=messages,
-                    provider=agent.provider,
-                    model=agent.model,
-                    fallback_provider=agent.fallback_provider,
-                    fallback_model=agent.fallback_model,
-                    temperature=_agent_temperature(agent),
-                    max_tokens=_agent_max_tokens(agent),
-                )
-            except LLMProvidersExhaustedError as exc:
-                logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
-                return {
-                    "response": LLM_UNAVAILABLE_MESSAGE,
-                    "pending_action_id": None,
-                    "risk_level": "high",
-                    "error_code": "llm_unavailable",
-                    "session_id": active_session.id if active_session else None,
-                    "session_title": active_session.title if active_session else None,
-                    "grounding": grounding,
-                }
-            except Exception as exc:
-                safe_error = redact_sensitive(str(exc))
-                logger.error("LLM call failed for agent '%s': %s", agent_name, safe_error)
-                return {
-                    "response": f"LLM error: {safe_error}",
-                    "pending_action_id": None,
-                    "risk_level": "high",
-                    "session_id": active_session.id if active_session else None,
-                    "session_title": active_session.title if active_session else None,
-                    "grounding": grounding,
-                }
+                final_user_content = user_message
+                if agent_name == "prayer-deen":
+                    try:
+                        prayer_context = await build_prayer_agent_context()
+                        final_user_content = f"{prayer_context}\n\nUser Query: {user_message}"
+                    except Exception as exc:
+                        logger.warning("Failed building prayer context: %s", exc)
+                elif agent_name == "weekly-review":
+                    try:
+                        deen_context = await build_weekly_deen_context()
+                        final_user_content = (
+                            f"{deen_context}\n\n"
+                            "Include a dedicated Deen section with prayer accuracy, retroactive logs, Quran, tahajjud, and adhkar.\n\n"
+                            f"User Query: {user_message}"
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed building weekly deen context: %s", exc)
+                if _should_fetch_shared_memory_context(agent_name, user_message, referenced_session_id):
+                    try:
+                        shared_memory_context = await build_shared_memory_context(
+                            agent=agent,
+                            query=user_message,
+                        )
+                    except OpenVikingUnavailableError as exc:
+                        logger.warning(
+                            "Shared-memory retrieval unavailable for agent '%s'; continuing without optional context: %s",
+                            agent_name,
+                            redact_sensitive(str(exc)),
+                        )
+                        shared_memory_context = ""
+                    except Exception as exc:
+                        logger.warning("Shared-memory context failed for agent '%s': %s", agent_name, exc)
+                        shared_memory_context = ""
+                    if shared_memory_context:
+                        final_user_content = f"{shared_memory_context}\n\n{final_user_content}"
+                ledger_context = render_memory_ledger_context(ledger_hits_for_turn)
+                if ledger_context:
+                    final_user_content = f"{ledger_context}\n\n{final_user_content}"
+                if agent.workspace_enabled and _should_fetch_workspace_context(user_message, referenced_session_id):
+                    try:
+                        openviking_context = await get_openviking_context(
+                            agent_name=agent_name,
+                            query=user_message,
+                            session_id=active_session.id if active_session else None,
+                            workspace_paths=workspace_paths,
+                        )
+                    except OpenVikingUnavailableError as exc:
+                        logger.warning(
+                            "Workspace retrieval unavailable for agent '%s'; continuing without optional context: %s",
+                            agent_name,
+                            redact_sensitive(str(exc)),
+                        )
+                        openviking_context = ""
+                    if openviking_context:
+                        final_user_content = f"{openviking_context}\n\n{final_user_content}"
+                search_query = None
+                if turn_plan.needs_web_search and turn_plan.web_search_query:
+                    search_query = turn_plan.web_search_query
+                elif _should_search_web(agent, user_message, referenced_session_id):
+                    search_query = user_message
+                if search_query:
+                    search_context = await _get_search_context(search_query)
+                    if search_context:
+                        final_user_content = (
+                            f"{final_user_content}\n\n"
+                            f"Web search query used: {search_query}\n"
+                            f"{search_context}\n"
+                            "Answer using provided real-time data where relevant. "
+                            "Include a short Sources section with the URLs you used."
+                        )
+                    else:
+                        final_user_content = (
+                            f"{final_user_content}\n\n"
+                            f"Web search query attempted: {search_query}\n"
+                            "No web search results were returned. Say that search returned no usable results; do not guess."
+                        )
+                messages.append({"role": "user", "content": final_user_content})
+
+                try:
+                    response_text = await chat_completion(
+                        messages=messages,
+                        provider=agent.provider,
+                        model=agent.model,
+                        fallback_provider=agent.fallback_provider,
+                        fallback_model=agent.fallback_model,
+                        temperature=_agent_temperature(agent),
+                        max_tokens=_agent_max_tokens(agent),
+                    )
+                except LLMProvidersExhaustedError as exc:
+                    logger.error("LLM providers exhausted for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
+                    return {
+                        "response": LLM_UNAVAILABLE_MESSAGE,
+                        "pending_action_id": None,
+                        "risk_level": "high",
+                        "error_code": "llm_unavailable",
+                        "session_id": active_session.id if active_session else None,
+                        "session_title": active_session.title if active_session else None,
+                        "grounding": grounding,
+                    }
+                except Exception as exc:
+                    safe_error = redact_sensitive(str(exc))
+                    logger.error("LLM call failed for agent '%s': %s", agent_name, safe_error)
+                    return {
+                        "response": f"LLM error: {safe_error}",
+                        "pending_action_id": None,
+                        "risk_level": "high",
+                        "session_id": active_session.id if active_session else None,
+                        "session_title": active_session.title if active_session else None,
+                        "grounding": grounding,
+                    }
 
         cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
         intake_result = await _extract_and_upsert_intake_entry(
