@@ -125,7 +125,19 @@ _ACTION_CONFIRMATION_RE = re.compile(
     r"\b(yes|yep|yeah|proceed|go ahead|confirm|approve|approved|looks good|do it|apply|create it|submit it)\b",
     re.IGNORECASE,
 )
+_TASK_ADD_CONFIRMATION_RE = re.compile(
+    r"\b(approved|approve|proceed|go ahead|do it|apply|create (?:it|them|the tasks?)|"
+    r"add (?:it|them|the|these|those|two)|just add|submit (?:it|them))\b",
+    re.IGNORECASE,
+)
+_ACTION_NEGATION_RE = re.compile(r"\b(do not|don't|dont|no|not yet|hold off|cancel|stop)\b", re.IGNORECASE)
 _STRUCTURED_LIFE_ACTION_TYPES = {"task_create", "life_item_create"}
+_NATURAL_TASK_PROPOSAL_RE = re.compile(
+    r"\b(proposed pending actions?|proposed pending approvals?|pending approvals?|to add these to (?:your )?lifeos)\b",
+    re.IGNORECASE,
+)
+_TASK_FIELD_RE = re.compile(r"^(task|domain|due|notes?)\s*:\s*(.+)$", re.IGNORECASE)
+_CANONICAL_DOMAINS = {"deen", "family", "work", "health", "planning"}
 
 
 def _profile_location_instruction(state_packet: dict | None) -> str:
@@ -374,7 +386,13 @@ def _normalise_structured_action(payload: dict | None) -> dict | None:
 
 
 def _is_action_confirmation(user_message: str) -> bool:
-    return bool(_ACTION_CONFIRMATION_RE.search(user_message or ""))
+    text = user_message or ""
+    return bool(_ACTION_CONFIRMATION_RE.search(text)) and not bool(_ACTION_NEGATION_RE.search(text))
+
+
+def _is_task_add_confirmation(user_message: str) -> bool:
+    text = user_message or ""
+    return bool(_TASK_ADD_CONFIRMATION_RE.search(text)) and not bool(_ACTION_NEGATION_RE.search(text))
 
 
 def _format_structured_pending_response(action: dict, pending_id: int) -> str:
@@ -383,6 +401,134 @@ def _format_structured_pending_response(action: dict, pending_id: int) -> str:
     due_at = details.get("due_at")
     due_text = f" · due {due_at}" if due_at else ""
     return f"Ready to track: {title}{due_text}.\nApprove action #{pending_id} to apply it."
+
+
+def _clean_natural_task_line(line: str) -> str:
+    return re.sub(r"^[\s>*•\-📅👔💍]+", "", str(line or "")).strip()
+
+
+def _normalise_life_domain(value: str | None) -> str:
+    domain = re.sub(r"[^a-z]", "", str(value or "").lower())
+    if domain in _CANONICAL_DOMAINS:
+        return domain
+    if domain in {"personal", "admin", "errand", "event", "events"}:
+        return "planning"
+    return "planning"
+
+
+def _parse_due_value(value: str) -> str | None:
+    cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", str(value or "")).strip()
+    cleaned = cleaned.replace(" @ ", "T").replace(" at ", "T")
+    iso_match = re.search(r"\d{4}-\d{2}-\d{2}T\d{1,2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:\d{2}|Z)?", cleaned)
+    if iso_match:
+        due = iso_match.group(0).replace("Z", "+00:00")
+        if re.match(r"\d{4}-\d{2}-\d{2}T\d{1}:", due):
+            due = due[:11] + "0" + due[11:]
+        if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?:[+-]\d{2}:\d{2})$", due):
+            due = f"{due[:16]}:00{due[16:]}"
+        elif re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$", due):
+            due = f"{due}:00"
+        return due
+    return None
+
+
+def _normalise_structured_actions(actions: list[dict]) -> list[dict]:
+    normalised: list[dict] = []
+    seen: set[tuple[str, str | None]] = set()
+    for action in actions:
+        item = _normalise_structured_action(action)
+        if not item:
+            continue
+        details = dict(item["details"])
+        details["domain"] = _normalise_life_domain(details.get("domain"))
+        details.setdefault("kind", "task")
+        details.setdefault("priority", "medium")
+        key = (str(details.get("title") or "").strip().lower(), str(details.get("due_at") or ""))
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        item["details"] = details
+        normalised.append(item)
+    return normalised
+
+
+def _extract_natural_task_actions_from_text(text: str) -> list[dict]:
+    if not _NATURAL_TASK_PROPOSAL_RE.search(text or ""):
+        return []
+    actions: list[dict] = []
+    current: dict[str, object] | None = None
+    for raw_line in str(text or "").splitlines():
+        line = _clean_natural_task_line(raw_line)
+        if not line:
+            continue
+        match = _TASK_FIELD_RE.match(line)
+        if not match:
+            continue
+        field = match.group(1).lower()
+        value = match.group(2).strip()
+        if field == "task":
+            if current and current.get("title"):
+                actions.append(
+                    {
+                        "action_type": "task_create",
+                        "summary": f"Create task: {current['title']}",
+                        "risk_level": "low",
+                        "details": current,
+                    }
+                )
+            current = {"title": value, "kind": "task", "priority": "medium", "domain": "planning"}
+            continue
+        if not current:
+            continue
+        if field == "domain":
+            current["domain"] = _normalise_life_domain(value)
+        elif field == "due":
+            due_at = _parse_due_value(value)
+            if due_at:
+                current["due_at"] = due_at
+        elif field.startswith("note"):
+            current["notes"] = value
+    if current and current.get("title"):
+        actions.append(
+            {
+                "action_type": "task_create",
+                "summary": f"Create task: {current['title']}",
+                "risk_level": "low",
+                "details": current,
+            }
+        )
+    return _normalise_structured_actions(actions)
+
+
+def _extract_latest_task_actions_from_context(context: list[dict[str, object]] | None) -> list[dict]:
+    for message in reversed(context or []):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        actions = _extract_natural_task_actions_from_text(str(message.get("content") or ""))
+        if actions:
+            return actions
+    return []
+
+
+async def _execute_structured_actions_now(*, actions: list[dict], agent_name: str, source: str) -> tuple[bool, str]:
+    messages: list[str] = []
+    ok_all = True
+    for action in actions:
+        details_text = json.dumps(action["details"], ensure_ascii=True)
+        pending = PendingAction(
+            agent_name=agent_name,
+            action_type=action["action_type"],
+            summary=action["summary"],
+            details=details_text,
+            status=ActionStatus.APPROVED,
+            risk_level=action["risk_level"],
+            reviewed_by=source,
+            review_source=source,
+        )
+        ok, result = await execute_pending_action(pending)
+        ok_all = ok_all and ok
+        messages.append(result if ok else f"Could not apply {action['summary']}: {result}")
+    return ok_all, "\n".join(messages)
 
 
 def _memory_unavailable_result(active_session, exc: Exception) -> dict:
@@ -821,6 +967,15 @@ async def handle_message(
                 direct_memory_answer = None
             if direct_memory_answer:
                 response_text = direct_memory_answer
+            if response_text is None and _is_task_add_confirmation(user_message):
+                context_actions = _extract_latest_task_actions_from_context(context)
+                if context_actions:
+                    execution_ok, execution_result = await _execute_structured_actions_now(
+                        actions=context_actions,
+                        agent_name=agent_name,
+                        source=source,
+                    )
+                    response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
             if response_text is None:
                 turn_plan = TurnPlan()
                 if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
@@ -957,7 +1112,8 @@ async def handle_message(
         if intake_result:
             cleaned_response = intake_result["cleaned_text"]
         cleaned_response, pending_payload = _extract_pending_approval_payload(cleaned_response)
-        structured_action = _normalise_structured_action(pending_payload)
+        machine_actions = _normalise_structured_actions([pending_payload]) if pending_payload else []
+        natural_actions = _extract_natural_task_actions_from_text(cleaned_response)
         inferred_workspace_action = False
         if (
             agent.workspace_enabled
@@ -1011,47 +1167,45 @@ async def handle_message(
         final_response_text = _append_response_notes(cleaned_response, workspace_notes)
 
         structured_action_handled = False
-        if structured_action and is_approval_eligible_action_type(structured_action["action_type"]):
+        actions_to_apply = machine_actions or (natural_actions if _is_task_add_confirmation(user_message) else [])
+        if actions_to_apply and all(is_approval_eligible_action_type(action["action_type"]) for action in actions_to_apply):
             structured_action_handled = True
-            action_type = structured_action["action_type"]
-            risk_level = structured_action["risk_level"]
-            details_text = json.dumps(structured_action["details"], ensure_ascii=True)
-            if _is_action_confirmation(user_message):
-                action = PendingAction(
+            action_type = actions_to_apply[0]["action_type"]
+            risk_level = actions_to_apply[0]["risk_level"]
+            should_execute = _is_action_confirmation(user_message) if machine_actions else _is_task_add_confirmation(user_message)
+            if should_execute:
+                execution_ok, execution_result = await _execute_structured_actions_now(
+                    actions=actions_to_apply,
                     agent_name=agent_name,
-                    action_type=action_type,
-                    summary=structured_action["summary"],
-                    details=details_text,
-                    status=ActionStatus.APPROVED,
-                    risk_level=risk_level,
-                    reviewed_by=source,
-                    review_source=source,
+                    source=source,
                 )
-                execution_ok, execution_result = await execute_pending_action(action)
                 final_response_text = (
-                    execution_result if execution_ok else f"Could not apply action: {execution_result}"
+                    execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
                 )
                 if not execution_ok:
                     risk_level = "medium"
             else:
-                pending = PendingAction(
-                    agent_name=agent_name,
-                    action_type=action_type,
-                    summary=structured_action["summary"],
-                    details=details_text,
-                    status=ActionStatus.PENDING,
-                    risk_level=risk_level,
-                )
-                db.add(pending)
-                await db.commit()
-                await db.refresh(pending)
-                pending_id = pending.id
-                await publish_event(
-                    "approvals.pending.updated",
-                    {"kind": "approval", "id": str(pending.id)},
-                    {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
-                )
-                final_response_text = _format_structured_pending_response(structured_action, pending.id)
+                queued_lines: list[str] = []
+                for action in actions_to_apply:
+                    pending = PendingAction(
+                        agent_name=agent_name,
+                        action_type=action["action_type"],
+                        summary=action["summary"],
+                        details=json.dumps(action["details"], ensure_ascii=True),
+                        status=ActionStatus.PENDING,
+                        risk_level=action["risk_level"],
+                    )
+                    db.add(pending)
+                    await db.commit()
+                    await db.refresh(pending)
+                    pending_id = pending_id or pending.id
+                    await publish_event(
+                        "approvals.pending.updated",
+                        {"kind": "approval", "id": str(pending.id)},
+                        {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
+                    )
+                    queued_lines.append(_format_structured_pending_response(action, pending.id))
+                final_response_text = "\n".join(queued_lines)
 
         # Always persist the user turn immediately.
         try:

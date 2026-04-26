@@ -13,7 +13,9 @@ from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.orchestrator import (
     _extract_and_upsert_intake_entry,
     _extract_intake_payload,
+    _extract_natural_task_actions_from_text,
     _extract_pending_approval_payload,
+    _is_task_add_confirmation,
     _memory_recall_direct_answer,
     handle_message,
     run_scheduled_agent,
@@ -345,6 +347,33 @@ def test_extract_pending_approval_payload_strips_json_block():
     assert payload["details"]["title"] == "Prepare file"
 
 
+def test_extract_natural_task_actions_from_agent_proposal():
+    actions = _extract_natural_task_actions_from_text(
+        "Proposed pending approvals:\n\n"
+        "Task: Drop off suit at ironing shop\n"
+        "Domain: personal\n"
+        "Due: 2026-04-30T10:00:00+01:00 (Thursday morning)\n"
+        "Notes: For wedding suit pickup Saturday morning\n\n"
+        "Task: Pick up suit from ironing shop\n"
+        "Domain: personal\n"
+        "Due: 2026-05-02T11:00:00+01:00 (Saturday morning)\n"
+        "Notes: Wedding prep\n"
+    )
+
+    assert len(actions) == 2
+    assert actions[0]["details"]["title"] == "Drop off suit at ironing shop"
+    assert actions[0]["details"]["domain"] == "planning"
+    assert actions[0]["details"]["due_at"] == "2026-04-30T10:00:00+01:00"
+    assert actions[1]["details"]["title"] == "Pick up suit from ironing shop"
+
+
+def test_task_add_confirmation_requires_mutation_language():
+    assert _is_task_add_confirmation("approved") is True
+    assert _is_task_add_confirmation("it's okay just add the two tasks") is True
+    assert _is_task_add_confirmation("yes the dates are correct") is False
+    assert _is_task_add_confirmation("do not add them") is False
+
+
 @pytest.mark.asyncio
 async def test_handle_message_executes_confirmed_structured_task(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
@@ -381,6 +410,56 @@ async def test_handle_message_executes_confirmed_structured_task(monkeypatch):
     assert "[PENDING_APPROVAL]" not in result["response"]
     assert result["response"] == "Tracked #7: Prepare Milton goal-setting file for 2026"
     assert executed.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_message_executes_task_proposal_from_context(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    proposal_context = [
+        {
+            "role": "assistant",
+            "content": (
+                "Proposed pending approvals:\n"
+                "Task: Drop off suit at ironing shop\n"
+                "Domain: personal\n"
+                "Due: 2026-04-30T10:00:00+01:00\n"
+                "Notes: Wedding suit prep\n\n"
+                "Task: Pick up suit from ironing shop\n"
+                "Domain: personal\n"
+                "Due: 2026-05-02T11:00:00+01:00\n"
+                "Notes: Wedding suit prep\n"
+            ),
+        }
+    ]
+    chat_completion = AsyncMock(return_value="should not be used")
+    executor = AsyncMock(
+        return_value=(
+            True,
+            "Tracked #8: Drop off suit at ironing shop\nTracked #9: Pick up suit from ironing shop",
+        )
+    )
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=proposal_context))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator._execute_structured_actions_now", executor)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="approved",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert chat_completion.await_count == 0
+    assert executor.await_count == 1
+    assert "Drop off suit" in result["response"]
+    assert "Pick up suit" in result["response"]
+    assert result["pending_action_id"] is None
 
 
 @pytest.mark.asyncio

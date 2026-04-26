@@ -7,7 +7,7 @@ import json
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import Agent, AgentCreate, DailyLogCreate, LifeItemCreate, PendingAction, ScheduledJobCreate
+from app.models import Agent, AgentCreate, DailyLogCreate, LifeItem, LifeItemCreate, PendingAction, ScheduledJobCreate
 from app.services.agent_payloads import build_agent_row
 from app.services.jobs import create_job
 from app.services.workspace import execute_workspace_delete_action
@@ -73,7 +73,21 @@ async def execute_pending_action(action: PendingAction) -> tuple[bool, str]:
             data.setdefault("kind", "task")
             data.setdefault("priority", "medium")
             data.setdefault("source_agent", action.agent_name)
-            item = await create_life_item(LifeItemCreate.model_validate(data))
+            item_data = LifeItemCreate.model_validate(data)
+            async with async_session() as db:
+                result = await db.execute(
+                    select(LifeItem).where(
+                        LifeItem.title == item_data.title,
+                        LifeItem.domain == item_data.domain,
+                        LifeItem.status == "open",
+                    )
+                )
+                for existing in result.scalars().all():
+                    existing_due = existing.due_at.isoformat() if existing.due_at else ""
+                    requested_due = item_data.due_at.isoformat() if item_data.due_at else ""
+                    if existing_due == requested_due:
+                        return True, f"Already tracked #{existing.id}: {existing.title}"
+            item = await create_life_item(item_data)
             try:
                 await record_capture_memory(
                     raw_text=(
