@@ -10,7 +10,14 @@ import pytest
 from app.models import AuditLog, PendingAction
 from app.services.agent_state import AgentStateUnavailableError
 from app.services.openviking_client import OpenVikingUnavailableError
-from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message, run_scheduled_agent
+from app.services.orchestrator import (
+    _extract_and_upsert_intake_entry,
+    _extract_intake_payload,
+    _extract_pending_approval_payload,
+    _memory_recall_direct_answer,
+    handle_message,
+    run_scheduled_agent,
+)
 from app.services.turn_planner import TurnPlan
 from app.services.risk_engine import (
     classify_risk,
@@ -157,6 +164,7 @@ def test_approval_auto_ignores_schedule_keyword_from_search_results():
 def test_only_executable_actions_are_approval_eligible():
     assert is_approval_eligible_action_type("create_job") is True
     assert is_approval_eligible_action_type("create_agent") is True
+    assert is_approval_eligible_action_type("task_create") is True
     assert is_approval_eligible_action_type("workspace_delete") is True
     assert is_approval_eligible_action_type("message") is False
     assert is_approval_eligible_action_type("deadline") is False
@@ -299,6 +307,80 @@ async def test_handle_message_answers_memory_recall_without_llm(monkeypatch):
     assert "Attestation de salaire annuel" in result["response"]
     assert "Copie du contrat de travail" in result["response"]
     assert "Tomorrow before 2pm yes workday" in result["response"]
+
+
+def test_memory_recall_skips_current_question_echo():
+    question_hit = SimpleNamespace(
+        raw_text="what papers did I say I need from HR?",
+        snippet="what papers did I say I need from HR?",
+        title="Papers did say need",
+    )
+    raw_text = (
+        "remind me to send a request to HR for tax return papers:\n"
+        "Attestation de salaire annuel (36 mois)\n"
+        "Attestation de salaire mensuel\n"
+        "Attestation de travail\n"
+        "Copie du contrat de travail\n"
+        "Attestation de declaration de salaire a la CNSS"
+    )
+    answer = _memory_recall_direct_answer(
+        "what papers did I say I need from HR?",
+        [question_hit, SimpleNamespace(raw_text=raw_text, snippet=raw_text)],
+    )
+
+    assert answer is not None
+    assert "closest saved detail" not in answer
+    assert "Attestation de salaire annuel" in answer
+
+
+def test_extract_pending_approval_payload_strips_json_block():
+    cleaned, payload = _extract_pending_approval_payload(
+        "Sure.\n\n"
+        "[PENDING_APPROVAL]\n"
+        '{"action_type":"task_create","summary":"Create task","risk_level":"low","details":{"title":"Prepare file","domain":"work"}}'
+    )
+
+    assert cleaned == "Sure."
+    assert payload["action_type"] == "task_create"
+    assert payload["details"]["title"] == "Prepare file"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_executes_confirmed_structured_task(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    executed = AsyncMock(return_value=(True, "Tracked #7: Prepare Milton goal-setting file for 2026"))
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(
+            return_value=(
+                "[PENDING_APPROVAL]\n"
+                '{"action_type":"task_create","summary":"Create task: Prepare Milton goal-setting file for 2026",'
+                '"risk_level":"low","details":{"title":"Prepare Milton goal-setting file for 2026",'
+                '"domain":"work","kind":"task","priority":"high","due_at":"2026-04-27T17:00:00+01:00"}}'
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.execute_pending_action", executed)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="yes proceed",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] is None
+    assert result["pending_action_type"] is None
+    assert "[PENDING_APPROVAL]" not in result["response"]
+    assert result["response"] == "Tracked #7: Prepare Milton goal-setting file for 2026"
+    assert executed.await_count == 1
 
 
 @pytest.mark.asyncio

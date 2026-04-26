@@ -120,6 +120,12 @@ _LIST_ITEM_START_RE = re.compile(
     r"^(?:[-*]\s*)?(?:attestation|copie|copy|certificate|form|document|paper|liste\b)",
     re.IGNORECASE,
 )
+_PENDING_APPROVAL_MARKER_RE = re.compile(r"\[PENDING_APPROVAL\]", re.IGNORECASE)
+_ACTION_CONFIRMATION_RE = re.compile(
+    r"\b(yes|yep|yeah|proceed|go ahead|confirm|approve|approved|looks good|do it|apply|create it|submit it)\b",
+    re.IGNORECASE,
+)
+_STRUCTURED_LIFE_ACTION_TYPES = {"task_create", "life_item_create"}
 
 
 def _profile_location_instruction(state_packet: dict | None) -> str:
@@ -298,23 +304,85 @@ def _extract_followup_hint(raw_text: str) -> str:
     return hint[:180]
 
 
+def _hit_is_question_echo(user_message: str, hit: object) -> bool:
+    raw_text = re.sub(r"\s+", " ", str(getattr(hit, "raw_text", "") or "")).strip().lower()
+    snippet = re.sub(r"\s+", " ", str(getattr(hit, "snippet", "") or "")).strip().lower()
+    query = re.sub(r"\s+", " ", str(user_message or "")).strip().lower()
+    if not query:
+        return False
+    return raw_text == query or snippet == query
+
+
 def _memory_recall_direct_answer(user_message: str, hits: list[object]) -> str | None:
     if not _looks_like_memory_recall_query(user_message) or not hits:
         return None
-    top = hits[0]
-    raw_text = str(getattr(top, "raw_text", "") or "")
-    items = _extract_captured_list(raw_text)
-    if items:
-        lines = ["You said you need these from HR:"]
-        lines.extend(f"- {item}" for item in items[:12])
-        followup = _extract_followup_hint(raw_text)
-        if followup:
-            lines.append(f"\nFollow-up saved: {followup}")
-        return "\n".join(lines)
-    snippet = str(getattr(top, "snippet", "") or raw_text).strip()
-    if snippet:
-        return f"From memory, closest saved detail:\n{snippet[:900]}"
+    non_echo_hits = [hit for hit in hits if not _hit_is_question_echo(user_message, hit)]
+    for hit in non_echo_hits:
+        raw_text = str(getattr(hit, "raw_text", "") or "")
+        items = _extract_captured_list(raw_text)
+        if items:
+            lines = ["You said you need these from HR:"]
+            lines.extend(f"- {item}" for item in items[:12])
+            followup = _extract_followup_hint(raw_text)
+            if followup:
+                lines.append(f"\nFollow-up saved: {followup}")
+            return "\n".join(lines)
+    for hit in non_echo_hits:
+        raw_text = str(getattr(hit, "raw_text", "") or "")
+        snippet = str(getattr(hit, "snippet", "") or raw_text).strip()
+        if snippet:
+            return f"From memory, closest saved detail:\n{snippet[:900]}"
     return None
+
+
+def _extract_pending_approval_payload(response_text: str) -> tuple[str, dict | None]:
+    text = response_text or ""
+    match = _PENDING_APPROVAL_MARKER_RE.search(text)
+    if not match:
+        return text.strip(), None
+    before = text[: match.start()].strip()
+    after = text[match.end() :].strip()
+    try:
+        payload, end_index = json.JSONDecoder().raw_decode(after)
+    except json.JSONDecodeError:
+        return before or text.strip(), None
+    if not isinstance(payload, dict):
+        return before or text.strip(), None
+    tail = after[end_index:].strip()
+    cleaned = "\n\n".join(part for part in [before, tail] if part).strip()
+    return cleaned, payload
+
+
+def _normalise_structured_action(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    action_type = str(payload.get("action_type") or "").strip().lower()
+    if action_type not in _STRUCTURED_LIFE_ACTION_TYPES:
+        return None
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return None
+    title = str(details.get("title") or payload.get("summary") or "").strip()
+    if not title:
+        return None
+    return {
+        "action_type": action_type,
+        "summary": str(payload.get("summary") or f"Create task: {title}")[:200],
+        "risk_level": str(payload.get("risk_level") or "low").strip().lower() or "low",
+        "details": details,
+    }
+
+
+def _is_action_confirmation(user_message: str) -> bool:
+    return bool(_ACTION_CONFIRMATION_RE.search(user_message or ""))
+
+
+def _format_structured_pending_response(action: dict, pending_id: int) -> str:
+    details = action.get("details") or {}
+    title = details.get("title") or action.get("summary") or "item"
+    due_at = details.get("due_at")
+    due_text = f" · due {due_at}" if due_at else ""
+    return f"Ready to track: {title}{due_text}.\nApprove action #{pending_id} to apply it."
 
 
 def _memory_unavailable_result(active_session, exc: Exception) -> dict:
@@ -888,6 +956,8 @@ async def handle_message(
         )
         if intake_result:
             cleaned_response = intake_result["cleaned_text"]
+        cleaned_response, pending_payload = _extract_pending_approval_payload(cleaned_response)
+        structured_action = _normalise_structured_action(pending_payload)
         inferred_workspace_action = False
         if (
             agent.workspace_enabled
@@ -939,6 +1009,49 @@ async def handle_message(
             cleaned_response = _build_workspace_noop_response()
 
         final_response_text = _append_response_notes(cleaned_response, workspace_notes)
+
+        structured_action_handled = False
+        if structured_action and is_approval_eligible_action_type(structured_action["action_type"]):
+            structured_action_handled = True
+            action_type = structured_action["action_type"]
+            risk_level = structured_action["risk_level"]
+            details_text = json.dumps(structured_action["details"], ensure_ascii=True)
+            if _is_action_confirmation(user_message):
+                action = PendingAction(
+                    agent_name=agent_name,
+                    action_type=action_type,
+                    summary=structured_action["summary"],
+                    details=details_text,
+                    status=ActionStatus.APPROVED,
+                    risk_level=risk_level,
+                    reviewed_by=source,
+                    review_source=source,
+                )
+                execution_ok, execution_result = await execute_pending_action(action)
+                final_response_text = (
+                    execution_result if execution_ok else f"Could not apply action: {execution_result}"
+                )
+                if not execution_ok:
+                    risk_level = "medium"
+            else:
+                pending = PendingAction(
+                    agent_name=agent_name,
+                    action_type=action_type,
+                    summary=structured_action["summary"],
+                    details=details_text,
+                    status=ActionStatus.PENDING,
+                    risk_level=risk_level,
+                )
+                db.add(pending)
+                await db.commit()
+                await db.refresh(pending)
+                pending_id = pending.id
+                await publish_event(
+                    "approvals.pending.updated",
+                    {"kind": "approval", "id": str(pending.id)},
+                    {"action_id": pending.id, "status": pending.status.value, "agent_name": pending.agent_name},
+                )
+                final_response_text = _format_structured_pending_response(structured_action, pending.id)
 
         # Always persist the user turn immediately.
         try:
@@ -1034,6 +1147,8 @@ async def handle_message(
         if workspace_action_type:
             risk_level = workspace_risk_level
             action_type = workspace_action_type
+        elif structured_action_handled:
+            pass
         else:
             effective_approval_policy = "never" if agent_name in _NO_APPROVAL_AGENTS else approval_policy
             needs_approval, risk_level, action_type = should_require_approval(
@@ -1110,7 +1225,7 @@ async def approve_action(action_id: int, reviewer: Optional[str] = None, source:
         await db.commit()
     execution_ok = False
     execution_result = ""
-    if action.action_type in {"create_job", "create_agent", "workspace_delete", "daily_log_batch"}:
+    if action.action_type in {"create_job", "create_agent", "workspace_delete", "daily_log_batch", "life_item_create", "task_create"}:
         execution_ok, execution_result = await execute_pending_action(action)
         async with async_session() as db:
             result = await db.execute(select(PendingAction).where(PendingAction.id == action_id))

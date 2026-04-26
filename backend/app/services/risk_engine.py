@@ -27,6 +27,8 @@ _HIGH_RISK_PATTERNS = re.compile(
 _APPROVAL_ELIGIBLE_ACTION_TYPES = {
     "create_agent",
     "create_job",
+    "life_item_create",
+    "task_create",
     "workspace_delete",
     "workspace_mutation",
     "workspace_restore",
