@@ -94,7 +94,7 @@ async def test_agentic_capture_followup_creates_life_items(monkeypatch):
             return_value=(
                 '{"intent":"create_life_items","response":"Split into 3 tasks.",'
                 '"actions":['
-                '{"title":"Take suit to ironing shop","domain":"planning","kind":"task","priority":"medium","due_at":"2026-04-30T10:00:00+01:00","notes":"Wedding suit prep."},'
+                '{"title":"Take suit to ironing shop","domain":"health","kind":"task","priority":"medium","due_at":"2026-04-30T10:00:00+01:00","notes":"Wedding suit prep."},'
                 '{"title":"Pick up suit from ironing shop","domain":"planning","kind":"task","priority":"medium","due_at":"2026-05-02T10:00:00+01:00","notes":"Saturday morning pickup."},'
                 '{"title":"Attend wedding","domain":"planning","kind":"task","priority":"medium","due_at":"2026-05-03T12:00:00+01:00","notes":"Exact wedding time was not captured."}'
                 "]}"
@@ -120,6 +120,7 @@ async def test_agentic_capture_followup_creates_life_items(monkeypatch):
     ]
     assert result.life_items[0].due_at is not None
     assert result.life_items[0].due_at.day == 30
+    assert {item.domain for item in result.life_items} == {"planning"}
     async with async_session() as db:
         updated = (await db.execute(select(IntakeEntry).where(IntakeEntry.source_session_id == session_id))).scalar_one()
     assert updated.status == "processed"

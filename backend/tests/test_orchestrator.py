@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -442,6 +443,45 @@ async def test_handle_message_executes_confirmed_structured_task(monkeypatch):
     assert "[PENDING_APPROVAL]" not in result["response"]
     assert result["response"] == "Tracked #7: Prepare Milton goal-setting file for 2026"
     assert executed.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_message_executes_explicit_direct_task_request(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    executed = AsyncMock(return_value=(True, "Tracked #12: Review staging UAT notes"))
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.services.orchestrator.chat_completion",
+        AsyncMock(
+            return_value=(
+                '{"intent":"task_create","actions":[{"action_type":"task_create",'
+                '"summary":"Create task: Review staging UAT notes","risk_level":"low",'
+                '"details":{"title":"Review staging UAT notes","domain":"health","kind":"task",'
+                '"priority":"medium","due_at":"2026-04-28T10:00:00+01:00","notes":"Staging UAT review."}}]}'
+            )
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.execute_pending_action", executed)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="create a task for me to review staging UAT notes tomorrow at 10am",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["pending_action_id"] is None
+    assert result["response"] == "Tracked #12: Review staging UAT notes"
+    details = json.loads(executed.await_args.args[0].details)
+    assert details["domain"] == "planning"
+    assert details["due_at"] == "2026-04-28T10:00:00+01:00"
 
 
 @pytest.mark.asyncio
@@ -897,6 +937,8 @@ async def test_handle_message_adds_profile_location_instruction(monkeypatch):
     system_text = captured["messages"][0]["content"]
     assert "Default user location is Casablanca, Morocco" in system_text
     assert "Prefer local units/currency" in system_text
+    assert "MAD when giving prices" in system_text
+    assert "no tables unless asked" in system_text
 
 
 @pytest.mark.asyncio

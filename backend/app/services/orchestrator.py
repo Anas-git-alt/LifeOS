@@ -139,6 +139,14 @@ _NATURAL_TASK_PROPOSAL_RE = re.compile(
 )
 _TASK_FIELD_RE = re.compile(r"^(task|domain|due|notes?)\s*:\s*(.+)$", re.IGNORECASE)
 _CANONICAL_DOMAINS = {"deen", "family", "work", "health", "planning"}
+_PLANNING_CONTEXT_RE = re.compile(
+    r"\b(admin|errand|event|wedding|appointment|paper|papers|document|documents|"
+    r"contract|tax|hr|treasury|dgi|shop|store|pickup|pick up|drop off|ironing|"
+    r"suit|clothes|clothing|uat|staging|notes?)\b",
+    re.IGNORECASE,
+)
+_HEALTH_CONTEXT_RE = re.compile(r"\b(sleep|workout|gym|health|meal|protein|water|medicine|doctor)\b", re.IGNORECASE)
+_FAMILY_CONTEXT_RE = re.compile(r"\b(wife|family|kids|mother|mom|mama|mum|father|dad|parent|brother|sister)\b", re.IGNORECASE)
 _GREETING_ONLY_RE = re.compile(r"^\s*(hello|hi|hey|salam|salam alaikum|assalamu alaikum)[!. ]*\s*$", re.IGNORECASE)
 _MONTH_DATE_RE = (
     r"(January|February|March|April|May|June|July|August|September|October|November|December)"
@@ -169,7 +177,10 @@ def _profile_location_instruction(state_packet: dict | None) -> str:
         parts.append(f"Default user timezone is {timezone_name}.")
     parts.append(
         "Use that location for local recommendations, weather, availability, and budget advice unless the user names another place. "
-        "Prefer local units/currency and do not default to US prices."
+        "Prefer local units/currency and do not default to US prices. "
+        "For cheap meals, shopping, or budget advice, use local Morocco/Casablanca context and MAD when giving prices; "
+        "if exact local prices are unavailable, say prices vary locally instead of using USD or US averages. "
+        "Keep budget-food answers compact: no tables unless asked, usually 8 bullets or fewer."
     )
     return " ".join(parts)
 
@@ -413,7 +424,7 @@ def _looks_like_lifeos_task_request(user_message: str) -> bool:
         return False
     return bool(
         re.search(
-            r"\b(task|tasks|reminder|reminders|commitment|commitments|today item|life item|follow[- ]?up)\b",
+            r"\b(task|tasks|reminder|reminders|remind me|commitment|commitments|today item|life item|follow[- ]?up)\b",
             text,
             re.IGNORECASE,
         )
@@ -432,9 +443,14 @@ def _clean_natural_task_line(line: str) -> str:
     return re.sub(r"^[\s>*•\-📅👔💍]+", "", str(line or "")).strip()
 
 
-def _normalise_life_domain(value: str | None) -> str:
+def _normalise_life_domain(value: str | None, text: str = "") -> str:
     domain = re.sub(r"[^a-z]", "", str(value or "").lower())
     if domain in _CANONICAL_DOMAINS:
+        lowered = str(text or "").lower()
+        if domain == "health" and _PLANNING_CONTEXT_RE.search(lowered) and not _HEALTH_CONTEXT_RE.search(lowered):
+            return "planning"
+        if domain == "family" and _PLANNING_CONTEXT_RE.search(lowered) and not _FAMILY_CONTEXT_RE.search(lowered):
+            return "planning"
         return domain
     if domain in {"personal", "admin", "errand", "event", "events"}:
         return "planning"
@@ -465,7 +481,8 @@ def _normalise_structured_actions(actions: list[dict]) -> list[dict]:
         if not item:
             continue
         details = dict(item["details"])
-        details["domain"] = _normalise_life_domain(details.get("domain"))
+        domain_text = " ".join(str(details.get(key) or "") for key in ("title", "summary", "notes", "desired_outcome", "next_action"))
+        details["domain"] = _normalise_life_domain(details.get("domain"), domain_text)
         details.setdefault("kind", "task")
         details.setdefault("priority", "medium")
         key = (str(details.get("title") or "").strip().lower(), str(details.get("due_at") or ""))
@@ -600,6 +617,69 @@ def _extract_conversational_task_actions_from_context(context: list[dict[str, ob
         if actions:
             return actions
     return []
+
+
+def _extract_json_object(raw: str) -> dict | None:
+    text = str(raw or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _plan_direct_life_actions(
+    *,
+    agent: Agent,
+    user_message: str,
+    state_packet: dict | None,
+    context: list[dict[str, object]] | None,
+) -> list[dict]:
+    if not _looks_like_lifeos_task_request(user_message) and not _TASK_CREATE_REQUEST_RE.search(user_message or ""):
+        return []
+    if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or "") and not _looks_like_lifeos_task_request(user_message):
+        return []
+    profile = state_packet.get("profile") if isinstance(state_packet, dict) else {}
+    system = (
+        "You are LifeOS direct action planner. Detect only explicit requests to create/add/track a LifeOS task, "
+        "reminder, commitment, or follow-up. Return JSON only.\n"
+        "Schema: {\"intent\":\"task_create|none\",\"actions\":[{\"action_type\":\"task_create\","
+        "\"summary\":\"Create task: ...\",\"risk_level\":\"low\",\"details\":{\"title\":\"...\","
+        "\"domain\":\"deen|family|work|health|planning\",\"kind\":\"task\",\"priority\":\"low|medium|high\","
+        "\"due_at\":\"ISO-8601 with timezone offset or null\",\"notes\":\"...\"}}]}.\n"
+        "Use intent none for advice, questions, workspace/file mutations, deletion, external messages, purchases, or ambiguous wishes. "
+        "Use planning for admin, errands, events, HR/tax paperwork, UAT/staging review notes, and personal logistics. "
+        "Resolve relative dates from current date/time and profile timezone. Do not ask for approval; explicit low-risk LifeOS tracking may execute now."
+    )
+    user = (
+        f"Current UTC datetime: {_today_utc()}\n"
+        f"Profile JSON: {json.dumps(profile if isinstance(profile, dict) else {}, ensure_ascii=True)}\n"
+        f"Recent context JSON: {json.dumps((context or [])[-6:], ensure_ascii=True, default=str)[:4000]}\n\n"
+        f"User message:\n{user_message}"
+    )
+    try:
+        raw = await chat_completion(
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            provider=agent.provider,
+            model=agent.model,
+            fallback_provider=agent.fallback_provider,
+            fallback_model=agent.fallback_model,
+            temperature=0.0,
+            max_tokens=700,
+        )
+    except Exception:
+        return []
+    payload = _extract_json_object(raw)
+    if not payload or str(payload.get("intent") or "").strip().lower() != "task_create":
+        return []
+    raw_actions = payload.get("actions")
+    if not isinstance(raw_actions, list):
+        return []
+    return _normalise_structured_actions([action for action in raw_actions if isinstance(action, dict)])
 
 
 async def _execute_structured_actions_now(*, actions: list[dict], agent_name: str, source: str) -> tuple[bool, str]:
@@ -1063,6 +1143,7 @@ async def handle_message(
                 response_text = _assistant_greeting_reply(agent_name, user_message)
             if response_text is None and (
                 _is_task_add_confirmation(user_message)
+                or _looks_like_lifeos_task_request(user_message)
                 or _TASK_CREATE_REQUEST_RE.search(user_message or "")
                 or _ACTION_CONFIRMATION_RE.search(user_message or "")
             ):
@@ -1076,6 +1157,20 @@ async def handle_message(
                         source=source,
                     )
                     response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
+                elif _looks_like_lifeos_task_request(user_message):
+                    direct_actions = await _plan_direct_life_actions(
+                        agent=agent,
+                        user_message=user_message,
+                        state_packet=state_packet,
+                        context=context,
+                    )
+                    if direct_actions:
+                        execution_ok, execution_result = await _execute_structured_actions_now(
+                            actions=direct_actions,
+                            agent_name=agent_name,
+                            source=source,
+                        )
+                        response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
             if response_text is None:
                 turn_plan = TurnPlan()
                 if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):

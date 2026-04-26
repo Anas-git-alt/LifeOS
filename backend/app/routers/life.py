@@ -75,6 +75,17 @@ from app.services.orchestrator import handle_message
 
 router = APIRouter()
 COMMITMENT_AGENT_NAME = "commitment-capture"
+_CAPTURE_PLANNING_CONTEXT_RE = re.compile(
+    r"\b(admin|errand|event|wedding|appointment|paper|papers|document|documents|"
+    r"contract|tax|hr|treasury|dgi|shop|store|pickup|pick up|drop off|ironing|"
+    r"suit|clothes|clothing|uat|staging|notes?)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_HEALTH_CONTEXT_RE = re.compile(r"\b(sleep|workout|gym|health|meal|protein|water|medicine|doctor)\b", re.IGNORECASE)
+_CAPTURE_FAMILY_CONTEXT_RE = re.compile(
+    r"\b(wife|family|kids|mother|mom|mama|mum|father|dad|parent|brother|sister)\b",
+    re.IGNORECASE,
+)
 _CAPTURE_COMMITMENT_RE = re.compile(
     r"\b("
     r"promise|promised|commit|committed|deadline|due|remind me|follow[- ]?up|"
@@ -157,6 +168,18 @@ def _infer_commitment_domain(text: str) -> str:
     if any(token in lowered for token in ["sleep", "workout", "gym", "health", "meal"]):
         return "health"
     return "planning"
+
+
+def _normalise_capture_domain(value: str | None, text: str = "") -> str:
+    domain = re.sub(r"[^a-z]", "", str(value or "planning").lower())
+    if domain not in {"deen", "family", "work", "health", "planning"}:
+        domain = "planning"
+    lowered = str(text or "").lower()
+    if domain == "health" and _CAPTURE_PLANNING_CONTEXT_RE.search(lowered) and not _CAPTURE_HEALTH_CONTEXT_RE.search(lowered):
+        return "planning"
+    if domain == "family" and _CAPTURE_PLANNING_CONTEXT_RE.search(lowered) and not _CAPTURE_FAMILY_CONTEXT_RE.search(lowered):
+        return "planning"
+    return domain
 
 
 def _resolve_tz(timezone_name: str | None) -> ZoneInfo:
@@ -500,10 +523,12 @@ async def _plan_capture_followup(
         "Use continue_capture when the user is answering details for the existing capture. "
         "Do not invent external actions like sending messages or contacting people; only LifeOS task/reminder items may be planned.\n"
         "For each action include title, domain, kind, priority, due_at, notes. "
-        "Domain must be one of deen, family, work, health, planning. Use planning for personal/admin/errand/event. "
+        "Domain must be one of deen, family, work, health, planning. Use planning for personal/admin/errand/event/logistics, "
+        "including wedding, suit, ironing, HR/tax paperwork, UAT, and staging review tasks unless user explicitly frames another domain. "
         "Kind should usually be task. due_at must be ISO-8601 with timezone offset, or null when unknown. "
         "Resolve relative dates using current local date/time. If exact time is missing but morning is stated, use 10:00. "
-        "If event time is missing, use 12:00 and mention exact time not captured in notes."
+        "If event time is missing, use 12:00 and mention exact time not captured in notes. "
+        "If the user asks to split into N tasks, create exactly N concrete tasks. Do not add extra prep/check tasks not explicit in the capture."
     )
     user = (
         f"Current local datetime: {now_local.isoformat()}\n"
@@ -533,9 +558,8 @@ def _normalise_planned_life_item(raw: dict, *, source_agent: str) -> LifeItemCre
     title = str(raw.get("title") or "").strip()
     if len(title) < 3:
         return None
-    domain = re.sub(r"[^a-z]", "", str(raw.get("domain") or "planning").lower())
-    if domain not in {"deen", "family", "work", "health", "planning"}:
-        domain = "planning"
+    domain_text = " ".join(str(raw.get(key) or "") for key in ("title", "summary", "notes", "desired_outcome", "next_action"))
+    domain = _normalise_capture_domain(str(raw.get("domain") or "planning"), domain_text)
     kind = re.sub(r"[^a-z]", "", str(raw.get("kind") or "task").lower()) or "task"
     if kind not in {"task", "habit", "goal", "routine", "commitment"}:
         kind = "task"

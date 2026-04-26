@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import async_session
 from app.main import app
 from app.models import Agent, IntakeEntry, SharedMemoryProposal
+from app.services.life_synthesis import _augment_item_from_raw, _score_item
 from app.services.vault import classify_note_path
 
 
@@ -54,6 +55,21 @@ def _default_payload() -> dict:
             }
         ],
     }
+
+
+def test_synthesis_coerces_event_logistics_out_of_health_domain():
+    item = _augment_item_from_raw(
+        {"title": "Pick up suit from ironing shop", "kind": "task", "domain": "health", "priority": "high"},
+        "Wedding next Sunday; take suit to ironing shop Thursday and pick it up Saturday morning.",
+    )
+
+    assert item["domain"] == "planning"
+
+    score, factors, reason = _score_item(item, context_links=[], now_utc=datetime(2026, 4, 26, tzinfo=timezone.utc))
+
+    assert "life_anchor:health" not in factors["signals"]
+    assert "health" not in reason.lower()
+    assert score >= 0
 
 
 async def _insert_synthesis_entry(*, session_id: int, raw_text: str, payload: dict | None = None):

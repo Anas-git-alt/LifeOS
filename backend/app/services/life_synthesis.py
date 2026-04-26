@@ -28,6 +28,14 @@ TIME_PHRASE_RE = re.compile(
 BED_RE = re.compile(r"\bbed(?:time| target)?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
 WAKE_RE = re.compile(r"\bwake(?:\s*(?:time|target))?(?:\s+(?:is|at))?\s*(\d{1,2}:\d{2})\b", re.IGNORECASE)
 WORD_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+PLANNING_CONTEXT_RE = re.compile(
+    r"\b(admin|errand|event|wedding|appointment|paper|papers|document|documents|"
+    r"contract|tax|hr|treasury|dgi|shop|store|pickup|pick up|drop off|ironing|"
+    r"suit|clothes|clothing|uat|staging|notes?)\b",
+    re.IGNORECASE,
+)
+HEALTH_CONTEXT_RE = re.compile(r"\b(sleep|workout|gym|health|meal|protein|water|medicine|doctor)\b", re.IGNORECASE)
+FAMILY_CONTEXT_RE = re.compile(r"\b(wife|family|kids|mother|mom|mama|mum|father|dad|parent|brother|sister)\b", re.IGNORECASE)
 STOP_WORDS = {
     "after",
     "before",
@@ -54,6 +62,16 @@ def _clean(value: Any, *, limit: int | None = None) -> str | None:
 def _safe_domain(value: Any) -> str:
     candidate = str(value or "planning").strip().lower()
     return candidate if candidate in VALID_DOMAINS else "planning"
+
+
+def _safe_domain_for_text(value: Any, text: str) -> str:
+    domain = _safe_domain(value)
+    lowered = str(text or "").lower()
+    if domain == "health" and PLANNING_CONTEXT_RE.search(lowered) and not HEALTH_CONTEXT_RE.search(lowered):
+        return "planning"
+    if domain == "family" and PLANNING_CONTEXT_RE.search(lowered) and not FAMILY_CONTEXT_RE.search(lowered):
+        return "planning"
+    return domain
 
 
 def _safe_kind(value: Any) -> str:
@@ -227,6 +245,10 @@ def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, 
                 "priority_reason": enriched.get("priority_reason") or "Family action is concrete and tied to tomorrow after Asr.",
             }
         )
+    enriched["domain"] = _safe_domain_for_text(
+        enriched.get("domain"),
+        " ".join([_item_text(enriched), str(raw_message or "")]),
+    )
     return enriched
 
 
@@ -312,8 +334,8 @@ def _score_item(item: dict[str, Any], *, context_links: list[dict[str, Any]], no
             score += 12
             factors["signals"].append("deadline")
 
-    domain = _safe_domain(item.get("domain"))
     text = " ".join(str(item.get(key) or "") for key in ("title", "summary", "desired_outcome", "next_action")).lower()
+    domain = _safe_domain_for_text(item.get("domain"), text)
     if domain in {"deen", "family", "health"}:
         score += 8
         factors["signals"].append(f"life_anchor:{domain}")
@@ -362,7 +384,7 @@ async def _make_or_update_entry(
 
         entry.title = _clean(item.get("title"), limit=300) or _clean(raw_message, limit=300) or "Captured life input"
         entry.summary = _clean(item.get("summary"), limit=1000)
-        entry.domain = _safe_domain(item.get("domain"))
+        entry.domain = _safe_domain_for_text(item.get("domain"), _item_text(item))
         entry.kind = _safe_kind(item.get("kind"))
         entry.status = _safe_status(item.get("status"))
         entry.desired_outcome = _clean(item.get("desired_outcome"), limit=1000)
