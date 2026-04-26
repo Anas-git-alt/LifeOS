@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import CommitmentCaptureResponse, IntakeCaptureResponse, IntakeEntry, LifeItemCreate, UnifiedCaptureRequest
+from app.models import Agent, ChatSession, CommitmentCaptureResponse, IntakeCaptureResponse, IntakeEntry, LifeItemCreate, UnifiedCaptureRequest
 from app.routers.life import (
     _commitment_followup_note,
     _detail_questions_for_capture,
@@ -26,10 +26,142 @@ def _fake_schedule():
     return {"next_prayer": None, "windows": []}
 
 
+async def _create_agent_session(agent_name: str) -> int:
+    async with async_session() as db:
+        agent = Agent(name=agent_name, system_prompt="Test agent", provider="test", model="test", enabled=True)
+        session = ChatSession(agent_name=agent_name, title="Test session")
+        db.add(agent)
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        return session.id
+
+
 def test_unified_capture_route_selector_sorts_common_inputs():
     assert _select_capture_route(UnifiedCaptureRequest(message="Send invoice tomorrow at 9am")) == "commitment"
     assert _select_capture_route(UnifiedCaptureRequest(message="Meeting notes: decided to keep one capture inbox")) == "memory"
     assert _select_capture_route(UnifiedCaptureRequest(message="I want to build better sleep habits")) == "intake"
+
+
+@pytest.mark.asyncio
+async def test_unified_capture_auto_route_uses_session_owner(monkeypatch):
+    session_id = await _create_agent_session("intake-inbox")
+
+    async def _fake_capture_inbox(data):
+        assert data.session_id == session_id
+        assert data.new_session is False
+        return IntakeCaptureResponse(response="Continued intake.", session_id=session_id)
+
+    monkeypatch.setattr("app.routers.life.capture_inbox", _fake_capture_inbox)
+
+    result = await capture_life(
+        UnifiedCaptureRequest(
+            message="send invoice follow-up detail",
+            session_id=session_id,
+            new_session=False,
+            route_hint="auto",
+        )
+    )
+
+    assert result.route == "intake"
+    assert result.response == "Continued intake."
+
+
+@pytest.mark.asyncio
+async def test_agentic_capture_followup_creates_life_items(monkeypatch):
+    session_id = await _create_agent_session("intake-inbox")
+    async with async_session() as db:
+        entry = IntakeEntry(
+            source="agent_capture",
+            source_agent="intake-inbox",
+            source_session_id=session_id,
+            raw_text=(
+                "i have a wedding that i am invited to next sunday 3rd may, "
+                "i need to take my suit to the ironing shop on Thursday to pick it up on Saturday morning"
+            ),
+            title="Wedding suit plan",
+            domain="planning",
+            kind="idea",
+            status="clarifying",
+            follow_up_questions_json=["What concrete tasks should be tracked?"],
+        )
+        db.add(entry)
+        await db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.life.chat_completion",
+        AsyncMock(
+            return_value=(
+                '{"intent":"create_life_items","response":"Split into 3 tasks.",'
+                '"actions":['
+                '{"title":"Take suit to ironing shop","domain":"planning","kind":"task","priority":"medium","due_at":"2026-04-30T10:00:00+01:00","notes":"Wedding suit prep."},'
+                '{"title":"Pick up suit from ironing shop","domain":"planning","kind":"task","priority":"medium","due_at":"2026-05-02T10:00:00+01:00","notes":"Saturday morning pickup."},'
+                '{"title":"Attend wedding","domain":"planning","kind":"task","priority":"medium","due_at":"2026-05-03T12:00:00+01:00","notes":"Exact wedding time was not captured."}'
+                "]}"
+            )
+        ),
+    )
+
+    result = await capture_life(
+        UnifiedCaptureRequest(
+            message="split it into 3 tasks",
+            session_id=session_id,
+            new_session=False,
+            route_hint="auto",
+            timezone="Africa/Casablanca",
+        )
+    )
+
+    assert result.route == "intake"
+    assert [item.title for item in result.life_items] == [
+        "Take suit to ironing shop",
+        "Pick up suit from ironing shop",
+        "Attend wedding",
+    ]
+    assert result.life_items[0].due_at is not None
+    assert result.life_items[0].due_at.day == 30
+    async with async_session() as db:
+        updated = (await db.execute(select(IntakeEntry).where(IntakeEntry.source_session_id == session_id))).scalar_one()
+    assert updated.status == "processed"
+    assert updated.follow_up_questions_json == []
+
+
+@pytest.mark.asyncio
+async def test_agentic_capture_followup_answers_clarification_questions(monkeypatch):
+    session_id = await _create_agent_session("intake-inbox")
+    async with async_session() as db:
+        entry = IntakeEntry(
+            source="agent_capture",
+            source_agent="intake-inbox",
+            source_session_id=session_id,
+            raw_text="organize paperwork",
+            title="Organize paperwork",
+            domain="planning",
+            kind="idea",
+            status="clarifying",
+            follow_up_questions_json=["Which paperwork?", "By when?"],
+        )
+        db.add(entry)
+        await db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.life.chat_completion",
+        AsyncMock(return_value='{"intent":"answer_questions","response":"Open questions:\\n- Which paperwork?\\n- By when?","actions":[]}'),
+    )
+
+    result = await capture_life(
+        UnifiedCaptureRequest(
+            message="what do i need to clarify?",
+            session_id=session_id,
+            new_session=False,
+            route_hint="auto",
+        )
+    )
+
+    assert result.route == "intake"
+    assert "Which paperwork" in result.response
+    assert result.life_items == []
+    assert result.needs_answer_count == 2
 
 
 @pytest.mark.asyncio

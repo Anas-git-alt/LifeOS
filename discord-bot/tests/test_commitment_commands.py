@@ -388,7 +388,7 @@ async def test_capturefollow_accepts_explicit_session_id(monkeypatch):
         assert path == "/life/capture"
         assert payload["session_id"] == 14
         assert payload["new_session"] is False
-        assert payload["route_hint"] == "commitment"
+        assert payload["route_hint"] == "auto"
         assert payload["message"] == "set a reminder for it at 1pm"
         return {
             "route": "commitment",
@@ -406,6 +406,36 @@ async def test_capturefollow_accepts_explicit_session_id(monkeypatch):
 
     assert len(ctx.sent_embeds) == 1
     assert "Session #14" in ctx.sent_embeds[0].footer.text
+
+
+@pytest.mark.asyncio
+async def test_capturefollow_falls_back_when_unified_capture_missing(monkeypatch):
+    calls = []
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        if path == "/life/capture":
+            raise _not_found(path)
+        assert path == "/life/inbox/capture"
+        assert payload["session_id"] == 16
+        assert "route_hint" not in payload
+        return {
+            "response": "Continued intake.",
+            "session_id": 16,
+            "entry": {"id": 2, "title": "Wedding suit plan", "status": "processed"},
+            "life_items": [{"id": 7, "title": "Take suit to ironing shop", "priority": "medium", "priority_score": 55}],
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.capture_follow.callback(cog, ctx, message="session #16 split it into 3 tasks")
+
+    assert [call[0] for call in calls] == ["/life/capture", "/life/inbox/capture"]
+    assert len(ctx.sent_embeds) == 1
+    assert ctx.sent_embeds[0].title == "Capture Follow-up"
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,13 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @staticmethod
     def _trim_error(exc: Exception, max_len: int = 220) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            path = exc.request.url.path if exc.request else "request"
+            detail = exc.response.text.strip()
+            if detail:
+                return f"Backend {status} at {path}: {detail[:max_len - 32]}"
+            return f"Backend {status} at {path}"
         text = str(exc).strip() or exc.__class__.__name__
         return text[:max_len]
 
@@ -301,6 +308,47 @@ class AgentsCog(commands.Cog, name="Agents"):
                 route_hint = "commitment" if source_agent == COMMITMENT_SESSION_NAME else "intake"
                 return int(session_id), route_hint
         return None, None
+
+    @staticmethod
+    def _legacy_capture_payload(payload: dict) -> dict:
+        return {key: value for key, value in payload.items() if key != "route_hint"}
+
+    @staticmethod
+    def _normalise_legacy_capture_response(result: dict, route: str) -> dict:
+        normalized = dict(result or {})
+        normalized["route"] = route
+        entry = normalized.get("entry")
+        life_item = normalized.get("life_item")
+        if entry and not normalized.get("entries"):
+            normalized["entries"] = [entry]
+        if life_item and not normalized.get("life_items"):
+            normalized["life_items"] = [life_item]
+        if route == "commitment":
+            normalized["auto_promoted_count"] = 1 if normalized.get("auto_promoted") else 0
+        return normalized
+
+    async def _post_life_capture(self, payload: dict) -> dict:
+        try:
+            return await api_post("/life/capture", payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+
+        route_hint = str(payload.get("route_hint") or "auto").strip().lower()
+        legacy_payload = self._legacy_capture_payload(payload)
+        routes = ["commitment"] if route_hint == "commitment" else ["intake"] if route_hint == "intake" else ["intake", "commitment"]
+        last_error: Exception | None = None
+        for route in routes:
+            path = "/life/commitments/capture" if route == "commitment" else "/life/inbox/capture"
+            try:
+                return self._normalise_legacy_capture_response(await api_post(path, legacy_payload), route)
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code != 404:
+                    raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("No capture route was available")
 
     @staticmethod
     def _extract_followup_request(message: str) -> str | None:
@@ -653,13 +701,12 @@ class AgentsCog(commands.Cog, name="Agents"):
     async def capture(self, ctx, *, message: str):
         async with ctx.typing():
             try:
-                result = await api_post(
-                    "/life/capture",
+                result = await self._post_life_capture(
                     {
                         "message": message,
                         "new_session": True,
                         "source": "discord_capture",
-                    },
+                    }
                 )
                 route = result.get("route")
                 if result.get("session_id") and route == "intake":
@@ -848,7 +895,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         if explicit_session_id is not None:
             session_id = explicit_session_id
             message = cleaned_message
-            route_hint = "commitment"
+            route_hint = "auto"
         if not session_id:
             session_id, resolved_route = await self._resolve_recent_capture_session()
             if session_id and resolved_route:
@@ -858,8 +905,7 @@ class AgentsCog(commands.Cog, name="Agents"):
             return
         async with ctx.typing():
             try:
-                result = await api_post(
-                    "/life/capture",
+                result = await self._post_life_capture(
                     {
                         "message": message,
                         "session_id": session_id,
@@ -869,7 +915,8 @@ class AgentsCog(commands.Cog, name="Agents"):
                     },
                 )
                 if result.get("session_id"):
-                    agent_name = COMMITMENT_SESSION_NAME if route_hint == "commitment" else INTAKE_AGENT_NAME
+                    result_route = result.get("route") or route_hint
+                    agent_name = COMMITMENT_SESSION_NAME if result_route == "commitment" else INTAKE_AGENT_NAME
                     self._set_active_session_id(ctx, agent_name, int(result["session_id"]))
                 await self._send_capture_embed(ctx, result, heading="Capture Follow-up")
             except Exception as exc:

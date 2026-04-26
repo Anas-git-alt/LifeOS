@@ -2,6 +2,8 @@
 
 This is the current bot command surface.
 
+For staging acceptance testing, use [DISCORD_STAGING_UAT_SUITE.md](DISCORD_STAGING_UAT_SUITE.md).
+
 ## Basics
 
 - Prefix: `!`

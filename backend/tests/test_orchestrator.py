@@ -17,7 +17,6 @@ from app.services.orchestrator import (
     _extract_intake_payload,
     _extract_natural_task_actions_from_text,
     _extract_pending_approval_payload,
-    _extract_wedding_suit_actions_from_context,
     _is_task_add_confirmation,
     _memory_recall_direct_answer,
     handle_message,
@@ -377,33 +376,6 @@ def test_task_add_confirmation_requires_mutation_language():
     assert _is_task_add_confirmation("do not add them") is False
 
 
-def test_extract_wedding_suit_actions_from_context_confirmation():
-    context = [
-        {
-            "role": "assistant",
-            "content": (
-                "Wedding: Sunday, May 3, 2026\n"
-                "Suit drop-off: Thursday, April 30, 2026\n"
-                "Suit pickup: Saturday morning, May 2, 2026"
-            ),
-        }
-    ]
-
-    actions = _extract_wedding_suit_actions_from_context(
-        context,
-        "create the tasks for the weding and the suit dropoff",
-    )
-
-    assert [action["details"]["title"] for action in actions] == [
-        "Drop off suit at ironing shop",
-        "Pick up suit from ironing shop",
-        "Attend wedding",
-    ]
-    assert actions[0]["details"]["due_at"] == "2026-04-30T10:00:00+01:00"
-    assert actions[1]["details"]["due_at"] == "2026-05-02T10:00:00+01:00"
-    assert actions[2]["details"]["due_at"] == "2026-05-03T12:00:00+01:00"
-
-
 def test_extract_conversational_task_actions_from_context():
     context = [
         {
@@ -520,44 +492,6 @@ async def test_handle_message_executes_task_proposal_from_context(monkeypatch):
     assert "Drop off suit" in result["response"]
     assert "Pick up suit" in result["response"]
     assert result["pending_action_id"] is None
-
-
-@pytest.mark.asyncio
-async def test_handle_message_executes_wedding_tasks_from_context(monkeypatch):
-    agent = _make_agent(workspace_enabled=False)
-    factory = _FakeSessionFactory(agent)
-    context = [
-        {
-            "role": "assistant",
-            "content": (
-                "Wedding: Sunday, May 3, 2026\n"
-                "Suit drop-off: Thursday, April 30, 2026\n"
-                "Suit pickup: Saturday morning, May 2, 2026"
-            ),
-        }
-    ]
-    chat_completion = AsyncMock(return_value="should not be used")
-    executor = AsyncMock(return_value=(True, "Tracked #1: Drop off suit\nTracked #2: Pick up suit\nTracked #3: Attend wedding"))
-
-    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
-    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=context))
-    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
-    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
-    monkeypatch.setattr("app.services.orchestrator._execute_structured_actions_now", executor)
-    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
-    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
-
-    result = await handle_message(
-        agent_name="sandbox",
-        user_message="create the tasks for the wedding and the suit dropoff",
-        approval_policy="auto",
-        session_enabled=False,
-    )
-
-    assert chat_completion.await_count == 0
-    assert executor.await_count == 1
-    assert len(executor.await_args.kwargs["actions"]) == 3
-    assert "Drop off suit" in result["response"]
 
 
 @pytest.mark.asyncio

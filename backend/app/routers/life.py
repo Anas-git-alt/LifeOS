@@ -1,6 +1,7 @@
 """Life items and agenda router."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import re
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.models import (
     CommitmentCaptureRequest,
     CommitmentCaptureResponse,
+    Agent,
+    ChatSession,
     DailyFocusCoachResponse,
     DailyLogCreate,
     DailyLogResponse,
@@ -57,6 +60,7 @@ from app.services.intake import (
 from app.services.life_synthesis import synthesize_intake_capture
 from app.services.context_events import capture_meeting_summary
 from app.services.memory_ledger import record_capture_memory, record_daily_log_memory
+from app.services.provider_router import chat_completion
 from app.services.life import (
     add_checkin,
     create_life_item,
@@ -406,8 +410,245 @@ def _select_capture_route(data: UnifiedCaptureRequest) -> str:
     return "intake"
 
 
+async def _capture_route_for_session(session_id: int | None) -> str | None:
+    if not session_id:
+        return None
+    async with async_session() as db:
+        result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
+        session = result.scalar_one_or_none()
+    agent_name = str(getattr(session, "agent_name", "") or "")
+    if agent_name == COMMITMENT_AGENT_NAME:
+        return "commitment"
+    if agent_name == "intake-inbox":
+        return "intake"
+    return None
+
+
+async def _resolve_capture_route(data: UnifiedCaptureRequest) -> str:
+    route = _select_capture_route(data)
+    hint = str(data.route_hint or "auto").strip().lower()
+    if data.session_id and not data.new_session and hint == "auto":
+        return await _capture_route_for_session(data.session_id) or route
+    return route
+
+
 def _needs_answer(entries: list[IntakeEntryResponse]) -> int:
     return len([entry for entry in entries if entry.status == "clarifying" or entry.follow_up_questions])
+
+
+def _extract_planner_json(raw: str) -> dict | None:
+    text = str(raw or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _capture_followup_context(entry: IntakeEntry | None) -> dict:
+    if not entry:
+        return {}
+    return {
+        "id": entry.id,
+        "title": entry.title,
+        "domain": entry.domain,
+        "kind": entry.kind,
+        "status": entry.status,
+        "original_capture": entry.raw_text,
+        "summary": entry.summary,
+        "desired_outcome": entry.desired_outcome,
+        "next_action": entry.next_action,
+        "open_questions": list(entry.follow_up_questions_json or []),
+        "promotion_payload": dict(entry.promotion_payload_json or {}),
+    }
+
+
+async def _get_capture_planner_agent(route: str) -> Agent | None:
+    preferred = COMMITMENT_AGENT_NAME if route == "commitment" else "intake-inbox"
+    async with async_session() as db:
+        result = await db.execute(select(Agent).where(Agent.name == preferred))
+        agent = result.scalar_one_or_none()
+        if agent:
+            return agent
+        result = await db.execute(select(Agent).where(Agent.name == COMMITMENT_AGENT_NAME))
+        return result.scalar_one_or_none()
+
+
+async def _plan_capture_followup(
+    *,
+    message: str,
+    route: str,
+    prior_entry: IntakeEntry | None,
+    timezone_name: str,
+) -> dict | None:
+    if not prior_entry:
+        return None
+    agent = await _get_capture_planner_agent(route)
+    if not agent:
+        return None
+    now_local = datetime.now(ZoneInfo(timezone_name))
+    system = (
+        "You are the LifeOS capture follow-up planner. Convert explicit follow-up intent into a safe JSON plan. "
+        "Return only JSON with keys: intent, response, actions.\n"
+        "Allowed intent values: create_life_items, answer_questions, continue_capture, none.\n"
+        "Use create_life_items only when the user explicitly asks to split, create, add, track, or remind tasks/reminders. "
+        "Use answer_questions when user asks what is unclear or what needs clarification. "
+        "Use continue_capture when the user is answering details for the existing capture. "
+        "Do not invent external actions like sending messages or contacting people; only LifeOS task/reminder items may be planned.\n"
+        "For each action include title, domain, kind, priority, due_at, notes. "
+        "Domain must be one of deen, family, work, health, planning. Use planning for personal/admin/errand/event. "
+        "Kind should usually be task. due_at must be ISO-8601 with timezone offset, or null when unknown. "
+        "Resolve relative dates using current local date/time. If exact time is missing but morning is stated, use 10:00. "
+        "If event time is missing, use 12:00 and mention exact time not captured in notes."
+    )
+    user = (
+        f"Current local datetime: {now_local.isoformat()}\n"
+        f"Timezone: {timezone_name}\n"
+        f"Capture route: {route}\n"
+        f"Existing capture JSON:\n{json.dumps(_capture_followup_context(prior_entry), ensure_ascii=True)}\n\n"
+        f"User follow-up:\n{message}"
+    )
+    try:
+        raw = await chat_completion(
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            provider=agent.provider,
+            model=agent.model,
+            fallback_provider=agent.fallback_provider,
+            fallback_model=agent.fallback_model,
+            temperature=0.0,
+            max_tokens=900,
+        )
+    except Exception:
+        return None
+    return _extract_planner_json(raw)
+
+
+def _normalise_planned_life_item(raw: dict, *, source_agent: str) -> LifeItemCreate | None:
+    if not isinstance(raw, dict):
+        return None
+    title = str(raw.get("title") or "").strip()
+    if len(title) < 3:
+        return None
+    domain = re.sub(r"[^a-z]", "", str(raw.get("domain") or "planning").lower())
+    if domain not in {"deen", "family", "work", "health", "planning"}:
+        domain = "planning"
+    kind = re.sub(r"[^a-z]", "", str(raw.get("kind") or "task").lower()) or "task"
+    if kind not in {"task", "habit", "goal", "routine", "commitment"}:
+        kind = "task"
+    priority = re.sub(r"[^a-z]", "", str(raw.get("priority") or "medium").lower()) or "medium"
+    if priority not in {"low", "medium", "high"}:
+        priority = "medium"
+    due_at = raw.get("due_at")
+    if isinstance(due_at, str) and not due_at.strip():
+        due_at = None
+    try:
+        return LifeItemCreate(
+            title=title[:300],
+            domain=domain,
+            kind=kind,
+            priority=priority,
+            due_at=due_at,
+            notes=str(raw.get("notes") or "").strip()[:1000] or None,
+            source_agent=source_agent,
+            priority_score=70 if priority == "high" else 55 if priority == "medium" else 35,
+            priority_reason="Created from explicit capture follow-up intent.",
+        )
+    except Exception:
+        return None
+
+
+async def _create_planned_life_items(actions: list[dict], *, source_agent: str) -> list[LifeItem]:
+    created: list[LifeItem] = []
+    for action in actions[:8]:
+        data = _normalise_planned_life_item(action, source_agent=source_agent)
+        if not data:
+            continue
+        async with async_session() as db:
+            result = await db.execute(
+                select(LifeItem).where(
+                    LifeItem.title == data.title,
+                    LifeItem.domain == data.domain,
+                    LifeItem.status == "open",
+                )
+            )
+            duplicate = None
+            for existing in result.scalars().all():
+                existing_due = existing.due_at.isoformat() if existing.due_at else ""
+                requested_due = data.due_at.isoformat() if data.due_at else ""
+                if existing_due == requested_due:
+                    duplicate = existing
+                    break
+        if duplicate:
+            created.append(duplicate)
+            continue
+        created.append(await create_life_item(data))
+    return created
+
+
+async def _handle_agentic_capture_followup(
+    *,
+    message: str,
+    route: str,
+    prior_entry: IntakeEntry | None,
+    timezone_name: str,
+) -> UnifiedCaptureResponse | None:
+    plan = await _plan_capture_followup(
+        message=message,
+        route=route,
+        prior_entry=prior_entry,
+        timezone_name=timezone_name,
+    )
+    if not plan:
+        return None
+    intent = str(plan.get("intent") or "").strip().lower()
+    if intent == "answer_questions":
+        questions = list(getattr(prior_entry, "follow_up_questions_json", None) or [])
+        response = str(plan.get("response") or "").strip()
+        if not response:
+            response = "No clarification is needed." if not questions else "Open questions:\n" + "\n".join(f"- {q}" for q in questions)
+        entry_response = IntakeEntryResponse.model_validate(prior_entry) if prior_entry else None
+        return UnifiedCaptureResponse(
+            route=route if route in {"intake", "commitment"} else "intake",
+            response=response,
+            session_id=getattr(prior_entry, "source_session_id", None),
+            entry=entry_response,
+            entries=[entry_response] if entry_response else [],
+            needs_follow_up=bool(questions),
+            needs_answer_count=len(questions),
+        )
+    if intent != "create_life_items":
+        return None
+    raw_actions = plan.get("actions")
+    if not isinstance(raw_actions, list) or not raw_actions:
+        return None
+    life_items = await _create_planned_life_items(raw_actions, source_agent="capture-followup-planner")
+    if not life_items:
+        return None
+    updated_entry = prior_entry
+    if prior_entry:
+        updated_entry = await update_intake_entry(
+            prior_entry.id,
+            IntakeEntryUpdate(status="processed", follow_up_questions=[]),
+        )
+    response = str(plan.get("response") or "").strip()
+    if not response:
+        response = f"Tracked {len(life_items)} item(s) from follow-up intent."
+    entry_response = IntakeEntryResponse.model_validate(updated_entry) if updated_entry else None
+    return UnifiedCaptureResponse(
+        route=route if route in {"intake", "commitment"} else "intake",
+        response=response,
+        session_id=getattr(prior_entry, "source_session_id", None),
+        entry=entry_response,
+        entries=[entry_response] if entry_response else [],
+        life_items=[LifeItemResponse.model_validate(item) for item in life_items],
+        auto_promoted_count=len(life_items),
+        needs_follow_up=False,
+        needs_answer_count=0,
+    )
 
 
 async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
@@ -640,7 +881,22 @@ async def capture_life(data: UnifiedCaptureRequest):
             completed_items=completed_items,
         )
 
-    route = _select_capture_route(data)
+    route = await _resolve_capture_route(data)
+    if data.session_id and not data.new_session and route in {"intake", "commitment"}:
+        prior_source_agent = COMMITMENT_AGENT_NAME if route == "commitment" else "intake-inbox"
+        prior_entry = await get_latest_intake_entry_for_session(
+            data.session_id,
+            source_agent=prior_source_agent,
+        )
+        agentic_result = await _handle_agentic_capture_followup(
+            message=message,
+            route=route,
+            prior_entry=prior_entry,
+            timezone_name=await get_commitment_timezone(data.timezone),
+        )
+        if agentic_result:
+            return agentic_result
+
     if route == "commitment":
         inferred_due_at = await _infer_capture_due_at(message, data.due_at, data.timezone)
         result = await capture_commitment(
