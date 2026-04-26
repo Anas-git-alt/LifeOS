@@ -237,9 +237,11 @@ def _merge_logs(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -
 
 async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) -> dict[str, Any] | None:
     message = str(text or "").strip()
-    if not message or not CHECKIN_SIGNAL_RE.search(message):
+    if not message:
         return None
-    if PLANNING_OR_QUESTION_RE.search(message) and not COMPLETED_CHECKIN_RE.search(message):
+    if agent is None and not CHECKIN_SIGNAL_RE.search(message):
+        return None
+    if agent is None and PLANNING_OR_QUESTION_RE.search(message) and not COMPLETED_CHECKIN_RE.search(message):
         return None
 
     only_kinds = _only_kinds(message)
@@ -253,15 +255,19 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
 
     fallback_logs = _fallback_logs(message)
     logs: list[dict[str, Any]] = []
+    llm_succeeded = False
+    llm_declined = False
     if agent:
         system = (
             "Extract LifeOS daily quick logs from the user's check-in. "
             "Return only JSON: {\"logs\":[...]} with allowed kinds: meal, protein, hydration, training, family, priority, shutdown, sleep. "
             "Use count for meal/hydration/priority, done for family/shutdown, status done/rest/missed for training, and hours/bedtime/wake_time for sleep. "
+            "Infer from meaning, including typos and casual language. "
             "If the user says only/keep/remove/already counted, obey that correction exactly. "
             "If they only say they hit enough protein, return protein and do not add meal. "
             "If the user mixes a question with completed status like slept/woke/drank/ate, extract only the completed status logs. "
             "If the user only asks for advice, planning, recipes, budget options, or future actions, return {\"logs\":[]}."
+            "Do not explain. Do not include reasoning. JSON only."
         )
         try:
             raw = await chat_completion(
@@ -282,12 +288,16 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
                 only_kinds=only_kinds,
                 excluded_kinds=excluded_kinds,
             )
+            llm_succeeded = True
+            llm_declined = not llm_logs
             logs = _merge_logs(llm_logs, fallback_logs)
         except (LLMProvidersExhaustedError, json.JSONDecodeError, ValueError, TypeError):
             logs = []
         except Exception:
             logs = []
 
+    if llm_declined and PLANNING_OR_QUESTION_RE.search(message) and not COMPLETED_CHECKIN_RE.search(message):
+        return None
     if not logs:
         logs = fallback_logs
     if not logs:

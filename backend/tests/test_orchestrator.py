@@ -11,6 +11,7 @@ from app.models import AuditLog, PendingAction
 from app.services.agent_state import AgentStateUnavailableError
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.orchestrator import _extract_and_upsert_intake_entry, _extract_intake_payload, handle_message, run_scheduled_agent
+from app.services.turn_planner import TurnPlan
 from app.services.risk_engine import (
     classify_risk,
     is_approval_eligible_action_type,
@@ -458,6 +459,10 @@ async def test_handle_message_uses_web_search_and_transient_note_without_saving_
     monkeypatch.setattr("app.services.orchestrator.async_session", factory)
     monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
     monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr(
+        "app.services.orchestrator.plan_turn_for_tools",
+        AsyncMock(return_value=TurnPlan(needs_web_search=True, web_search_query="Casablanca weather today", confidence=0.9)),
+    )
     monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
     monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
     monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
@@ -471,13 +476,53 @@ async def test_handle_message_uses_web_search_and_transient_note_without_saving_
     )
 
     assert result["response"] == "Weather answer from search."
-    get_search_context.assert_awaited_once_with("how is the wether today?")
+    get_search_context.assert_awaited_once_with("Casablanca weather today")
     system_text = captured["messages"][0]["content"]
     assert "Web search is available" in system_text
     assert "Daily log already executed" in system_text
     assert "[WEB SEARCH RESULTS]" in captured["messages"][-1]["content"]
     assert save_message.await_args_list[0].args[2] == "how is the wether today?"
     assert "Daily log already executed" not in save_message.await_args_list[0].args[2]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_uses_turn_planner_for_short_location_followup(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
+        captured["messages"] = messages
+        return "Weather in Casablanca from search."
+
+    planner = AsyncMock(
+        return_value=TurnPlan(needs_web_search=True, web_search_query="current weather Casablanca Morocco", confidence=0.95)
+    )
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]\nCasablanca weather")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr(
+        "app.services.orchestrator.get_context",
+        AsyncMock(return_value=[{"role": "user", "content": "how is the wether today?"}]),
+    )
+    monkeypatch.setattr("app.services.orchestrator.plan_turn_for_tools", planner)
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="casablanca",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "Weather in Casablanca from search."
+    planner.assert_awaited_once()
+    get_search_context.assert_awaited_once_with("current weather Casablanca Morocco")
+    assert "Web search query used: current weather Casablanca Morocco" in captured["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio

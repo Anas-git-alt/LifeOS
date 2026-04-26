@@ -28,6 +28,7 @@ from app.services.memory import get_context, save_message, summarise_session
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 from app.services.risk_engine import is_approval_eligible_action_type, should_require_approval
+from app.services.turn_planner import TurnPlan, plan_turn_for_tools
 from app.services.workspace import (
     apply_workspace_actions,
     describe_workspace_listing_request,
@@ -132,6 +133,16 @@ def _should_search_web(agent: Agent, user_message: str, referenced_session_id: i
     if _WORKSPACE_CONTEXT_PATTERN.search(user_message or ""):
         return False
     return bool(_EXTERNAL_INFO_PATTERN.search(user_message or ""))
+
+
+def _can_use_turn_planner_for_search(agent: Agent, user_message: str, referenced_session_id: int | None) -> bool:
+    if not _should_use_web_search(agent):
+        return False
+    if referenced_session_id is not None or _is_local_context_query(user_message):
+        return False
+    if _WORKSPACE_CONTEXT_PATTERN.search(user_message or ""):
+        return False
+    return True
 
 
 def _should_fetch_shared_memory_context(agent_name: str, user_message: str, referenced_session_id: int | None) -> bool:
@@ -396,6 +407,9 @@ async def handle_message(
             "--- SYSTEM INSTRUCTIONS ---\n"
             f"Current date/time: {_today_utc()}\n"
             "Use the date above for all date-sensitive responses.\n"
+            "Never reveal hidden chain-of-thought, scratchpad reasoning, tool-selection reasoning, or self-talk. "
+            "Do not start final answers with internal narration like 'Okay, the user...' or 'I need to...'. "
+            "Give the final useful answer only.\n"
         )
         if _should_use_web_search(agent):
             system_prompt = (
@@ -556,6 +570,14 @@ async def handle_message(
                     "OpenViking memory was unavailable for this turn, so the reply was generated without prior session context.",
                 )
                 context = []
+            turn_plan = TurnPlan()
+            if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
+                turn_plan = await plan_turn_for_tools(
+                    agent=agent,
+                    user_message=user_message,
+                    context=context,
+                    current_datetime=_today_utc(),
+                )
             messages = [{"role": "system", "content": system_prompt}, *context]
             if referenced_session_context:
                 messages.append({"role": "system", "content": referenced_session_context})
@@ -612,13 +634,25 @@ async def handle_message(
                     openviking_context = ""
                 if openviking_context:
                     final_user_content = f"{openviking_context}\n\n{final_user_content}"
-            if _should_search_web(agent, user_message, referenced_session_id):
-                search_context = await _get_search_context(user_message)
+            search_query = None
+            if turn_plan.needs_web_search and turn_plan.web_search_query:
+                search_query = turn_plan.web_search_query
+            elif _should_search_web(agent, user_message, referenced_session_id):
+                search_query = user_message
+            if search_query:
+                search_context = await _get_search_context(search_query)
                 if search_context:
                     final_user_content = (
                         f"{final_user_content}\n\n"
+                        f"Web search query used: {search_query}\n"
                         f"{search_context}\n"
                         "Answer using provided real-time data where relevant."
+                    )
+                else:
+                    final_user_content = (
+                        f"{final_user_content}\n\n"
+                        f"Web search query attempted: {search_query}\n"
+                        "No web search results were returned. Say that search returned no usable results; do not guess."
                     )
             messages.append({"role": "user", "content": final_user_content})
 

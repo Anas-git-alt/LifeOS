@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -117,6 +118,33 @@ async def test_daily_log_proposal_extracts_mixed_question_sleep_and_water_typo()
             "note": "what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_uses_agentic_extractor_for_unlisted_typo(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.daily_log_proposals.chat_completion",
+        AsyncMock(return_value='{"logs":[{"kind":"hydration","count":1,"note":"drank water"}]}'),
+    )
+    agent = SimpleNamespace(provider="test", model="test", fallback_provider=None, fallback_model=None)
+
+    payload = await propose_daily_log_payload("i drqnk a cup", agent=agent)
+
+    assert payload is not None
+    assert payload["logs"] == [{"kind": "hydration", "note": "drank water", "count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_agentic_extractor_can_decline_advice(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.daily_log_proposals.chat_completion",
+        AsyncMock(return_value='{"logs":[]}'),
+    )
+    agent = SimpleNamespace(provider="test", model="test", fallback_provider=None, fallback_model=None)
+
+    payload = await propose_daily_log_payload("what cheap meal should i cook?", agent=agent)
+
+    assert payload is None
 
 
 @pytest.mark.asyncio
