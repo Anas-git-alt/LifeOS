@@ -406,6 +406,7 @@ async def handle_message(
     response_warnings: list[str] = []
     state_packet: dict | None = None
     grounding: dict = {"grounded": False, "sources": []}
+    context: list[dict[str, object]] | None = None
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
@@ -528,7 +529,27 @@ async def handle_message(
             }
         daily_log_payload = None
         if not _is_daily_log_execution_note(transient_system_note):
-            daily_log_payload = await propose_daily_log_payload(user_message, agent=agent)
+            reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
+            if active_session:
+                try:
+                    context = await get_context(
+                        agent_name,
+                        limit=20,
+                        session_id=active_session.id,
+                        apply_data_start_filter=reporting_mode,
+                    )
+                except OpenVikingUnavailableError as exc:
+                    logger.warning(
+                        "Memory context unavailable for daily-log classifier on agent '%s'; continuing without session context: %s",
+                        agent_name,
+                        redact_sensitive(str(exc)),
+                    )
+                    _append_unique_warning(
+                        response_warnings,
+                        "OpenViking memory was unavailable for this turn, so the quick-log classifier ran without prior session context.",
+                    )
+                    context = []
+            daily_log_payload = await propose_daily_log_payload(user_message, agent=agent, context=context or [])
         if daily_log_payload:
             proposal = format_daily_log_proposal(daily_log_payload)
             final_response_text = (
@@ -624,24 +645,25 @@ async def handle_message(
 
         if response_text is None:
             reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
-            try:
-                context = await get_context(
-                    agent_name,
-                    limit=20,
-                    session_id=active_session.id if active_session else None,
-                    apply_data_start_filter=reporting_mode,
-                )
-            except OpenVikingUnavailableError as exc:
-                logger.warning(
-                    "Memory context unavailable for agent '%s'; continuing without session context: %s",
-                    agent_name,
-                    redact_sensitive(str(exc)),
-                )
-                _append_unique_warning(
-                    response_warnings,
-                    "OpenViking memory was unavailable for this turn, so the reply was generated without prior session context.",
-                )
-                context = []
+            if context is None:
+                try:
+                    context = await get_context(
+                        agent_name,
+                        limit=20,
+                        session_id=active_session.id if active_session else None,
+                        apply_data_start_filter=reporting_mode,
+                    )
+                except OpenVikingUnavailableError as exc:
+                    logger.warning(
+                        "Memory context unavailable for agent '%s'; continuing without session context: %s",
+                        agent_name,
+                        redact_sensitive(str(exc)),
+                    )
+                    _append_unique_warning(
+                        response_warnings,
+                        "OpenViking memory was unavailable for this turn, so the reply was generated without prior session context.",
+                    )
+                    context = []
             turn_plan = TurnPlan()
             if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
                 turn_plan = await plan_turn_for_tools(

@@ -71,6 +71,35 @@ async def test_daily_log_proposal_ignores_recipe_or_budget_request():
 
 
 @pytest.mark.asyncio
+async def test_daily_log_proposal_ignores_recipe_detail_followup_with_meal_word():
+    payload = await propose_daily_log_payload("more détails for the egg meal, with per ingrédient price")
+
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_daily_log_proposal_sends_recent_context_to_agentic_extractor(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, **_kwargs):
+        captured["messages"] = messages
+        return '{"intent":"completed_checkin","logs":[{"kind":"hydration","count":1}]}'
+
+    monkeypatch.setattr("app.services.daily_log_proposals.chat_completion", fake_chat_completion)
+    agent = SimpleNamespace(provider="test", model="test", fallback_provider=None, fallback_model=None)
+
+    payload = await propose_daily_log_payload(
+        "i drqnk a cup",
+        agent=agent,
+        context=[{"role": "assistant", "content": "Earlier I gave a cheap egg meal recipe."}],
+    )
+
+    assert payload is not None
+    assert payload["logs"] == [{"kind": "hydration", "note": "i drqnk a cup", "count": 1}]
+    assert "Earlier I gave a cheap egg meal recipe" in captured["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_daily_log_proposal_honors_only_and_remove_corrections():
     payload = await propose_daily_log_payload(
         "log only water half a shawarma already counted as 1 meal so 2 halfs is now 1 full shawarma"

@@ -26,7 +26,15 @@ COMPLETED_CHECKIN_RE = re.compile(
 PLANNING_OR_QUESTION_RE = re.compile(
     r"\?|"
     r"^\s*(find|what|how|recommend|suggest|help me|can you|tell me|give me)\b|"
-    r"\b(should|need to|plan to|want to|tomorrow|later|remind me|cheapest|budget|recipe|meal i can make|max protein)\b",
+    r"\b(should|need to|plan to|want to|tomorrow|later|remind me|cheapest|budget|recipe|"
+    r"meal i can make|max protein|more d[eé]tails?|details?|per ingr[eé]dient|ingredient price|price|cost)\b",
+    re.IGNORECASE,
+)
+INFORMATION_REQUEST_RE = re.compile(
+    r"\b("
+    r"more d[eé]tails?|details?|explain|break down|recipe|ingredients?|ingr[eé]dients?|"
+    r"per ingr[eé]dient|price|prices|cost|costs|how much|cheapest|budget"
+    r")\b",
     re.IGNORECASE,
 )
 WATER_RE = re.compile(r"\b(water|hydration|drank|drink|drnk|cup|cups|glass|glasses|bottle|bottles)\b", re.IGNORECASE)
@@ -235,9 +243,32 @@ def _merge_logs(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -
     return merged
 
 
-async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) -> dict[str, Any] | None:
+def _recent_context_text(context: list[dict[str, Any]] | None, *, limit: int = 6) -> str:
+    if not context:
+        return "none"
+    lines: list[str] = []
+    for item in context[-limit:]:
+        role = str(item.get("role") or "unknown")
+        content = str(item.get("content") or "").replace("\n", " ").strip()
+        if content:
+            lines.append(f"{role}: {content[:500]}")
+    return "\n".join(lines) if lines else "none"
+
+
+def _looks_like_information_request(message: str) -> bool:
+    return bool(INFORMATION_REQUEST_RE.search(message or "")) and not COMPLETED_CHECKIN_RE.search(message or "")
+
+
+async def propose_daily_log_payload(
+    text: str,
+    *,
+    agent: Agent | None = None,
+    context: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     message = str(text or "").strip()
     if not message:
+        return None
+    if _looks_like_information_request(message):
         return None
     if agent is None and not CHECKIN_SIGNAL_RE.search(message):
         return None
@@ -259,19 +290,28 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
     llm_declined = False
     if agent:
         system = (
-            "Extract LifeOS daily quick logs from the user's check-in. "
-            "Return only JSON: {\"logs\":[...]} with allowed kinds: meal, protein, hydration, training, family, priority, shutdown, sleep. "
+            "Classify the current user turn for LifeOS daily quick logs. "
+            "Use recent context to distinguish a real completed check-in from a follow-up question about a prior answer. "
+            "Return only JSON: {\"intent\":\"completed_checkin|correction|information_request|future_plan|none\",\"logs\":[...]}. "
+            "Allowed log kinds: meal, protein, hydration, training, family, priority, shutdown, sleep. "
             "Use count for meal/hydration/priority, done for family/shutdown, status done/rest/missed for training, and hours/bedtime/wake_time for sleep. "
-            "Infer from meaning, including typos and casual language. "
+            "Infer from meaning, including typos and casual language, but log only real completed actions the user reports doing. "
             "If the user says only/keep/remove/already counted, obey that correction exactly. "
             "If they only say they hit enough protein, return protein and do not add meal. "
             "If the user mixes a question with completed status like slept/woke/drank/ate, extract only the completed status logs. "
-            "If the user only asks for advice, planning, recipes, budget options, or future actions, return {\"logs\":[]}."
+            "If the user asks for advice, planning, recipe details, ingredient prices, budget options, or future actions, "
+            "return intent=information_request and logs=[]. "
+            "Example: after an assistant suggests an egg meal, user says 'more details for the egg meal, with per ingredient price' -> logs=[]. "
+            "Example: user says 'I ate the egg meal' -> meal log. "
             "Do not explain. Do not include reasoning. JSON only."
+        )
+        user = (
+            f"Recent context:\n{_recent_context_text(context)}\n\n"
+            f"Current user message:\n{message}"
         )
         try:
             raw = await chat_completion(
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": message}],
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 provider=agent.provider,
                 model=agent.model,
                 fallback_provider=agent.fallback_provider,
@@ -282,6 +322,12 @@ async def propose_daily_log_payload(text: str, *, agent: Agent | None = None) ->
             start = raw.find("{")
             end = raw.rfind("}")
             parsed = json.loads(raw[start : end + 1]) if start >= 0 and end >= start else {}
+            intent = str(parsed.get("intent") or "").strip().lower()
+            if intent in {"information_request", "future_plan", "none"}:
+                llm_succeeded = True
+                llm_declined = True
+                logs = []
+                return None
             llm_logs = _normalise_logs(
                 parsed.get("logs"),
                 note=message,

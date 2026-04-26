@@ -602,6 +602,40 @@ async def test_handle_message_adds_profile_location_instruction(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_message_uses_session_context_before_daily_log_classifier(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    active_session = _make_session(6, "Cheap meal")
+    session_context = [
+        {"role": "assistant", "content": "Here is a cheap high-protein egg meal with ingredients."},
+    ]
+    proposer = AsyncMock(return_value=None)
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.ensure_session", AsyncMock(return_value=active_session))
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=session_context))
+    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", proposer)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", AsyncMock(return_value="Egg meal details."))
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator.refresh_session_metadata", AsyncMock(return_value=active_session))
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.settings.memory_summarisation_enabled", False)
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="more détails for the egg meal, with per ingrédient price",
+        approval_policy="auto",
+        session_enabled=True,
+        session_id=6,
+    )
+
+    assert result["response"] == "Egg meal details."
+    assert result["pending_action_id"] is None
+    proposer.assert_awaited_once()
+    assert proposer.await_args.kwargs["context"] == session_context
+
+
+@pytest.mark.asyncio
 async def test_handle_message_filters_stale_daily_log_proposal_after_execution(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
     factory = _FakeSessionFactory(agent)
