@@ -239,9 +239,9 @@ async def test_agent_daily_log_reaction_continues_original_question(monkeypatch)
         if path == "/approvals/decide":
             return {"id": 44, "status": "executed", "result": "Logged: sleep and water"}
         if path == "/agents/chat":
-            assert "A daily log approval was just executed" in payload["message"]
-            assert "Do not ask to confirm that log again" in payload["message"]
-            assert payload["message"].endswith("what should i do today?")
+            assert payload["message"] == "what should i do today?"
+            assert "A daily log approval was just executed" in payload["transient_system_note"]
+            assert "Do not ask to confirm that log again" in payload["transient_system_note"]
             return {"response": "Do invoice first.", "session_id": 7, "session_title": "Should today"}
         raise AssertionError(f"Unexpected path: {path}")
 

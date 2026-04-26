@@ -101,7 +101,7 @@ def _today_utc() -> str:
 def _should_use_web_search(agent: Agent) -> bool:
     if agent.config_json and "use_web_search" in agent.config_json:
         return bool(agent.config_json["use_web_search"])
-    return str(getattr(agent, "name", "") or "").strip().lower() != "sandbox"
+    return True
 
 
 def _extract_session_reference_id(text: str) -> int | None:
@@ -327,6 +327,7 @@ async def handle_message(
     source: str = "api",
     session_id: Optional[int] = None,
     session_enabled: bool = False,
+    transient_system_note: Optional[str] = None,
 ) -> dict:
     """Process user text through an agent with policy-based approvals."""
     active_session = None
@@ -396,6 +397,24 @@ async def handle_message(
             f"Current date/time: {_today_utc()}\n"
             "Use the date above for all date-sensitive responses.\n"
         )
+        if _should_use_web_search(agent):
+            system_prompt = (
+                f"{system_prompt}"
+                "Web search is available for current external facts like weather, prices, news, and latest information. "
+                "When web search results are provided, use them and cite URLs from the search context. "
+                "Do not claim you have no internet access; say web search failed only if no search context is available.\n"
+            )
+        else:
+            system_prompt = (
+                f"{system_prompt}"
+                "Web search is disabled for this agent unless search results are explicitly provided in the prompt.\n"
+            )
+        if transient_system_note:
+            system_prompt = (
+                f"{system_prompt}\n"
+                "--- TRANSIENT TURN CONTEXT ---\n"
+                f"{str(transient_system_note).strip()[:1200]}\n"
+            )
         try:
             state_packet = await build_agent_state_packet(
                 agent=agent,

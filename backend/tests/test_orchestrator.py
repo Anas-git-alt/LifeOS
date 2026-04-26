@@ -442,6 +442,45 @@ async def test_handle_message_returns_reply_when_memory_persistence_fails(monkey
 
 
 @pytest.mark.asyncio
+async def test_handle_message_uses_web_search_and_transient_note_without_saving_note(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
+        captured["messages"] = messages
+        return "Weather answer from search."
+
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]\nCasablanca weather result")
+    save_message = AsyncMock()
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", save_message)
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="how is the wether today?",
+        approval_policy="auto",
+        session_enabled=False,
+        transient_system_note="Daily log already executed. Do not ask to confirm it again.",
+    )
+
+    assert result["response"] == "Weather answer from search."
+    get_search_context.assert_awaited_once_with("how is the wether today?")
+    system_text = captured["messages"][0]["content"]
+    assert "Web search is available" in system_text
+    assert "Daily log already executed" in system_text
+    assert "[WEB SEARCH RESULTS]" in captured["messages"][-1]["content"]
+    assert save_message.await_args_list[0].args[2] == "how is the wether today?"
+    assert "Daily log already executed" not in save_message.await_args_list[0].args[2]
+
+
+@pytest.mark.asyncio
 async def test_handle_message_uses_referenced_session_without_switching_active_session(monkeypatch):
     agent = SimpleNamespace(**_make_agent(workspace_enabled=False).__dict__)
     agent.config_json = {"use_web_search": True}

@@ -198,11 +198,19 @@ class AgentsCog(commands.Cog, name="Agents"):
             ]
         )
 
-    async def _send_agent_chat(self, agent_name: str, message: str, session_id: int | None = None) -> dict:
+    async def _send_agent_chat(
+        self,
+        agent_name: str,
+        message: str,
+        session_id: int | None = None,
+        transient_system_note: str | None = None,
+    ) -> dict:
         approval_policy = "never" if agent_name in NO_APPROVAL_AGENTS else "auto"
         payload = {"agent_name": agent_name, "message": message, "approval_policy": approval_policy}
         if session_id:
             payload["session_id"] = session_id
+        if transient_system_note:
+            payload["transient_system_note"] = transient_system_note
         return await api_post("/agents/chat", payload)
 
     async def _send_agent_result(
@@ -784,15 +792,16 @@ class AgentsCog(commands.Cog, name="Agents"):
             followup_request = pending_log.get("followup_request")
             if followup_request and str(status).lower() in {"approved", "executed"}:
                 try:
-                    followup_prompt = (
+                    transient_note = (
                         "A daily log approval was just executed and Today state is current. "
                         "Do not ask to confirm that log again. "
-                        f"Answer the remaining user question now: {followup_request}"
+                        "Answer the remaining user question now."
                     )
                     followup = await self._send_agent_chat(
                         agent_name=pending_log.get("agent_name") or "sandbox",
-                        message=followup_prompt,
+                        message=followup_request,
                         session_id=pending_log.get("session_id"),
+                        transient_system_note=transient_note,
                     )
                     await self._send_agent_result(
                         destination=channel,

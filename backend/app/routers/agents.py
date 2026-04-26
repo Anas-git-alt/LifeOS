@@ -138,6 +138,7 @@ async def chat_with_agent(data: ChatRequest):
         approval_policy=data.approval_policy,
         session_id=data.session_id,
         session_enabled=True,
+        transient_system_note=data.transient_system_note,
     )
     if result.get("error_code") == "session_not_found":
         raise HTTPException(status_code=404, detail=result["response"])

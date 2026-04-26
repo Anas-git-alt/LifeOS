@@ -414,10 +414,11 @@ DEFAULT_AGENTS = [
         ),
         "discord_channel": "sandbox",
         "cadence": None,
-        "use_web_search": False,
+        "use_web_search": True,
         "config_json": {
             "temperature": 0.4,
             "max_tokens": 2200,
+            "use_web_search": True,
         },
     }
 ]
@@ -533,8 +534,7 @@ async def seed_default_agents():
                     existing.workspace_paths_json = default_workspace_paths
                 if existing.name == "sandbox":
                     config_json = dict(existing.config_json or {})
-                    if "use_web_search" not in config_json:
-                        config_json["use_web_search"] = False
+                    config_json["use_web_search"] = True
                     config_json["temperature"] = float(config_json.get("temperature") or 0.4)
                     config_json["max_tokens"] = max(2200, int(config_json.get("max_tokens") or 0))
                     existing.config_json = config_json

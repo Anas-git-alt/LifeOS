@@ -796,6 +796,7 @@ class ChatRequest(BaseModel):
     message: str
     approval_policy: str = "auto"
     session_id: Optional[int] = None
+    transient_system_note: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
