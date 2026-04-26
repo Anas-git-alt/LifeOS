@@ -62,6 +62,7 @@ async def execute_pending_action(action: PendingAction) -> tuple[bool, str]:
 
     if action.action_type == "daily_log_batch":
         from app.services.life import log_daily_signal
+        from app.services.memory_ledger import record_daily_log_memory
 
         logs = payload.get("logs") if isinstance(payload, dict) else None
         if not isinstance(logs, list) or not logs:
@@ -74,6 +75,16 @@ async def execute_pending_action(action: PendingAction) -> tuple[bool, str]:
                 labels.append(result.get("message") or data.kind)
         except Exception as exc:
             return False, f"Failed logging daily check-in: {exc}"
-        return True, "Logged: " + "; ".join(labels)
+        result_text = "Logged: " + "; ".join(labels)
+        try:
+            await record_daily_log_memory(
+                raw_logs=logs,
+                result_text=result_text,
+                source_agent=action.agent_name,
+                source=action.review_source or "approval",
+            )
+        except Exception:
+            pass
+        return True, result_text
 
     return False, f"Unsupported action_type '{action.action_type}'"

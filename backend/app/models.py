@@ -389,6 +389,33 @@ class MemoryEntry(Base):
     )
 
 
+class MemoryEvent(Base):
+    __tablename__ = "memory_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, default="user_fact")
+    domain: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    kind: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    tags_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    entities_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    linked_life_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("life_items.id"), nullable=True)
+    linked_intake_entry_id: Mapped[Optional[int]] = mapped_column(ForeignKey("intake_entries.id"), nullable=True)
+    linked_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_uri: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
 class UserProfile(Base):
     __tablename__ = "user_profile"
 

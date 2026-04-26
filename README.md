@@ -123,13 +123,13 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Use WebUI `Today` for daily review. It shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, capture questions, and memory review.
 - Use `!capture` for messy raw life input, promises, meeting notes, durable facts, reminders, goals, habits, and ideas. LifeOS auto-sorts the input into tracked work, clarification questions, or memory review.
 - Use `!commit` and `!meeting` only as power shortcuts. They route through the same unified capture path.
-- Normal agent chats are grounded on the LifeOS state packet. If the packet cannot be built, the agent fails closed instead of inventing your status.
+- Normal agent chats are grounded on the LifeOS state packet plus private memory ledger and reviewed wiki hits. If required context cannot be built, the agent fails closed instead of inventing your status.
 - Free-text daily logs are confirmable. If chat text sounds like a completed check-in, LifeOS proposes a log and waits for a check-mark reaction before mutating Today.
 - Recipe, budget, and explanation follow-ups should stay as chat, not become logs. For example, `more details for the egg meal` answers the recipe; `meal prepared and eaten` proposes a meal log.
 - Current external facts use web search when needed. Weather defaults to your profile city/country; LifeOS planning questions such as `what should I do today?` use the state packet, not web search.
 - Use `!focus` for backend-ranked priority and `!focuscoach` when you want AI help choosing the next visible step.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
-- Use the Obsidian vault for durable shared knowledge. Session chat stays transient; memory review proposals live in Today/Wiki review before they are applied to the vault.
+- Use the Obsidian vault for durable shared knowledge. LifeOS now auto-saves user facts/actions into a private timeline ledger, while curated wiki notes still go through Today/Memory Review before shared writes.
 - Give jobs a clear `description`. Jobs support recurring cron schedules and one-time run times.
 - Prefer approval queues for risky changes. New agents and natural-language job creation are safer when you queue them first and review them in `Approvals`.
 - Keep workspace access narrow. If an agent needs repo access, enable workspace support only for the paths it really needs, then use `Sync Workspace` and rely on archives for rollback.
@@ -137,7 +137,7 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Treat voice as an explicit feature. Enable speech on the agent, preview its voice in WebUI, then use `!joinvoice`, `!speak`, and `!interrupt` in Discord.
 - Use quick logs for anchors instead of waiting for review. `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, and `!shutdown` update same-day accountability state immediately.
 
-See [docs/AGENTIC_GROUNDING_AND_CAPTURE.md](docs/AGENTIC_GROUNDING_AND_CAPTURE.md) for the current simplify-grounding behavior, regression tests, and next suggested improvements.
+See [docs/AGENTIC_GROUNDING_AND_CAPTURE.md](docs/AGENTIC_GROUNDING_AND_CAPTURE.md) and [docs/MEMORY_SYSTEM.md](docs/MEMORY_SYSTEM.md) for grounding, capture, durable recall, regression tests, and next suggested improvements.
 
 Useful example workflows:
 

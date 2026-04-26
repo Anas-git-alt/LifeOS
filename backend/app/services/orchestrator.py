@@ -25,6 +25,7 @@ from app.services.agent_state import (
 from app.services.events import publish_event
 from app.services.intake import upsert_fallback_intake_entry, upsert_intake_entry_from_agent
 from app.services.memory import get_context, save_message, summarise_session
+from app.services.memory_ledger import maybe_record_user_turn, render_memory_ledger_context, search_memory_events
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.provider_router import LLMProvidersExhaustedError, chat_completion
 from app.services.risk_engine import is_approval_eligible_action_type, should_require_approval
@@ -713,6 +714,15 @@ async def handle_message(
                     shared_memory_context = ""
                 if shared_memory_context:
                     final_user_content = f"{shared_memory_context}\n\n{final_user_content}"
+            try:
+                ledger_context = render_memory_ledger_context(
+                    await search_memory_events(query=user_message, agent=agent, limit=6)
+                )
+            except Exception as exc:
+                logger.warning("Memory ledger context failed for agent '%s': %s", agent_name, exc)
+                ledger_context = ""
+            if ledger_context:
+                final_user_content = f"{ledger_context}\n\n{final_user_content}"
             if agent.workspace_enabled and _should_fetch_workspace_context(user_message, referenced_session_id):
                 try:
                     openviking_context = await get_openviking_context(
@@ -855,6 +865,15 @@ async def handle_message(
                 user_message,
                 session_id=active_session.id if active_session else None,
             )
+            try:
+                await maybe_record_user_turn(
+                    user_message=user_message,
+                    agent_name=agent_name,
+                    session_id=active_session.id if active_session else None,
+                    source=source,
+                )
+            except Exception as exc:
+                logger.warning("Memory ledger write skipped for agent '%s': %s", agent_name, redact_sensitive(str(exc)))
         except OpenVikingUnavailableError as exc:
             logger.warning(
                 "User message persistence unavailable for agent '%s'; returning unsaved response: %s",

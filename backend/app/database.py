@@ -426,6 +426,7 @@ async def init_db():
         LifeItem,
         JobRunLog,
         MemoryEntry,
+        MemoryEvent,
         PendingAction,
         PrayerCheckin,
         PrayerReminder,

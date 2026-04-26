@@ -337,6 +337,32 @@ async def test_capturefollow_uses_active_commitment_capture_session(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_capturefollow_accepts_explicit_session_id(monkeypatch):
+    async def _fake_api_post(path: str, payload: dict):
+        assert path == "/life/capture"
+        assert payload["session_id"] == 14
+        assert payload["new_session"] is False
+        assert payload["route_hint"] == "commitment"
+        assert payload["message"] == "set a reminder for it at 1pm"
+        return {
+            "route": "commitment",
+            "response": "Tracked.",
+            "session_id": 14,
+            "entry": {"id": 6, "title": "Tax papers", "status": "processed"},
+        }
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog.capture_follow.callback(cog, ctx, message="14 set a reminder for it at 1pm")
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Session #14" in ctx.sent_embeds[0].footer.text
+
+
+@pytest.mark.asyncio
 async def test_commit_command_posts_commitment_capture(monkeypatch):
     async def _fake_api_post(path: str, payload: dict):
         assert path == "/life/capture"

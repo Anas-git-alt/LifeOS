@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -10,7 +11,7 @@ from sqlalchemy import select
 from app.main import app
 from app.config import settings
 from app.database import async_session
-from app.models import AuditLog, IntakeEntry, LifeCheckin, LifeItem
+from app.models import AuditLog, IntakeEntry, LifeCheckin, LifeItem, MemoryEvent
 from app.services.intake import upsert_fallback_intake_entry
 from app.services.life import _focus_rank_details
 
@@ -89,6 +90,43 @@ def test_commitment_capture_ready_auto_promotes_and_creates_follow_up(monkeypatc
     assert payload["life_item"]["title"] == "Send invoice"
     assert payload["life_item"]["follow_up_job_id"] is not None
     assert payload["follow_up_job"]["agent_name"] == "commitment-coach"
+
+
+def test_commitment_capture_writes_exact_details_to_memory_ledger(monkeypatch):
+    monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value={"next_prayer": None, "windows": []}))
+    raw_capture = (
+        "remind me to send a request to HR for tax return papers:\n"
+        "Attestation de salaire annuel (36 mois)\n"
+        "Attestation de salaire mensuel\n"
+        "Attestation de travail\n"
+        "Copie du contrat de travail\n"
+        "Attestation de declaration de salaire a la CNSS"
+    )
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+        await _insert_intake_entry(session_id=session_id or 1, status="ready", raw_text=user_message)
+        return {"response": "Ready", "session_id": session_id, "session_title": "Commitment"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/commitments/capture",
+            headers=_headers(),
+            json={"message": raw_capture, "new_session": True, "source": "test"},
+        )
+
+    assert response.status_code == 200
+
+    async def _load_memory():
+        async with async_session() as db:
+            result = await db.execute(select(MemoryEvent).order_by(MemoryEvent.id.desc()).limit(1))
+            return result.scalar_one()
+
+    event = asyncio.run(_load_memory())
+    assert "Attestation de salaire annuel" in event.raw_text
+    assert "Copie du contrat de travail" in event.raw_text
+    assert event.linked_life_item_id == response.json()["life_item"]["id"]
 
 
 def test_commitment_capture_clarifying_stays_in_inbox(monkeypatch):

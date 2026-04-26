@@ -56,6 +56,7 @@ from app.services.intake import (
 )
 from app.services.life_synthesis import synthesize_intake_capture
 from app.services.context_events import capture_meeting_summary
+from app.services.memory_ledger import record_capture_memory, record_daily_log_memory
 from app.services.life import (
     add_checkin,
     create_life_item,
@@ -125,6 +126,20 @@ _NEW_CAPTURE_INTENT_RE = re.compile(
     r"\b(need to|want to|remind me|tomorrow|deadline|due|follow[- ]?up|invoice|deliver|submit|finish|ship|pay)\b",
     re.IGNORECASE,
 )
+
+
+async def _safe_record_capture_memory(**kwargs) -> None:
+    try:
+        await record_capture_memory(**kwargs)
+    except Exception:
+        return
+
+
+async def _safe_record_daily_log_memory(**kwargs) -> None:
+    try:
+        await record_daily_log_memory(**kwargs)
+    except Exception:
+        return
 
 
 def _infer_commitment_domain(text: str) -> str:
@@ -551,6 +566,12 @@ async def post_daily_log(data: DailyLogCreate):
         result = await log_daily_signal(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _safe_record_daily_log_memory(
+        raw_logs=[data.model_dump(exclude_none=True)],
+        result_text=result["message"],
+        source_agent="webui",
+        source="webui_daily_log",
+    )
 
     return DailyLogResponse(
         kind=result["kind"],
@@ -601,6 +622,13 @@ async def capture_life(data: UnifiedCaptureRequest):
         signals = quick_updates["logged_signals"]
         skipped = quick_updates.get("skipped_signals") or []
         status_text = ", ".join(signals + skipped) if signals or skipped else "daily status"
+        await _safe_record_capture_memory(
+            raw_text=message,
+            source=data.source or "api",
+            source_agent="daily-log-capture",
+            source_session_id=data.session_id,
+            event_type="daily_log_capture",
+        )
         return UnifiedCaptureResponse(
             route="daily_log",
             response=(
@@ -630,6 +658,21 @@ async def capture_life(data: UnifiedCaptureRequest):
         )
         entries = [result.entry] if result.entry else []
         life_items = [result.life_item] if result.life_item else []
+        entry_obj = await get_intake_entry(result.entry.id) if result.entry and result.entry.id else None
+        item_obj = None
+        if result.life_item and result.life_item.id:
+            async with async_session() as db:
+                item_result = await db.execute(select(LifeItem).where(LifeItem.id == result.life_item.id))
+                item_obj = item_result.scalar_one_or_none()
+        await _safe_record_capture_memory(
+            raw_text=message,
+            source=data.source or "api",
+            source_agent=COMMITMENT_AGENT_NAME,
+            source_session_id=result.session_id,
+            entry=entry_obj,
+            life_item=item_obj,
+            event_type="commitment_capture",
+        )
         return UnifiedCaptureResponse(
             route="commitment",
             response=result.response,
@@ -660,6 +703,13 @@ async def capture_life(data: UnifiedCaptureRequest):
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await _safe_record_capture_memory(
+            raw_text=message,
+            source=data.source or "api",
+            source_agent="wiki-curator",
+            source_session_id=data.session_id,
+            event_type="memory_capture",
+        )
         entries = []
         for entry_id in intake_entry_ids[:5]:
             entry = await get_intake_entry(entry_id)
@@ -687,6 +737,15 @@ async def capture_life(data: UnifiedCaptureRequest):
         )
     )
     entries = result.entries or ([result.entry] if result.entry else [])
+    entry_obj = await get_intake_entry(entries[0].id) if entries else None
+    await _safe_record_capture_memory(
+        raw_text=message,
+        source=data.source or "api",
+        source_agent="intake-inbox",
+        source_session_id=result.session_id,
+        entry=entry_obj,
+        event_type="intake_capture",
+    )
     return UnifiedCaptureResponse(
         route="intake",
         response=result.response,
@@ -759,6 +818,14 @@ async def capture_inbox(data: IntakeCaptureRequest):
         )
     synthesis = await synthesize_intake_capture(raw_message=message, primary_entry=entry)
     entries = synthesis.get("entries") or ([entry] if entry else [])
+    await _safe_record_capture_memory(
+        raw_text=message,
+        source=data.source or "api",
+        source_agent="intake-inbox",
+        source_session_id=result.get("session_id"),
+        entry=entries[0] if entries else None,
+        event_type="intake_capture",
+    )
 
     return IntakeCaptureResponse(
         response=result["response"],
@@ -878,6 +945,15 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             life_item = refreshed_item.scalar_one_or_none()
 
     needs_follow_up = bool(entry and entry.status == "clarifying")
+    await _safe_record_capture_memory(
+        raw_text=capture_context_message,
+        source=data.source or "api",
+        source_agent=COMMITMENT_AGENT_NAME,
+        source_session_id=result.get("session_id"),
+        entry=entry,
+        life_item=life_item,
+        event_type="commitment_capture",
+    )
     return CommitmentCaptureResponse(
         response=result["response"],
         session_id=result.get("session_id"),

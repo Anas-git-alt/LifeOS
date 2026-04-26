@@ -289,6 +289,19 @@ class AgentsCog(commands.Cog, name="Agents"):
             )
         return int(session_id), None, True
 
+    async def _resolve_recent_capture_session(self) -> tuple[int | None, str | None]:
+        try:
+            rows = await api_get("/life/inbox?status=clarifying&limit=5")
+        except Exception:
+            return None, None
+        for row in rows or []:
+            source_agent = str(row.get("source_agent") or "").strip()
+            session_id = row.get("source_session_id")
+            if source_agent in {COMMITMENT_SESSION_NAME, INTAKE_AGENT_NAME} and session_id:
+                route_hint = "commitment" if source_agent == COMMITMENT_SESSION_NAME else "intake"
+                return int(session_id), route_hint
+        return None, None
+
     @staticmethod
     def _extract_followup_request(message: str) -> str | None:
         text = str(message or "").strip()
@@ -363,7 +376,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                 inline=False,
             )
         if result.get("session_id"):
-            embed.set_footer(text=f"Session #{result['session_id']} · continue with !capturefollow")
+            embed.set_footer(text=f"Session #{result['session_id']} · continue with !capturefollow session #{result['session_id']} <answer>")
         await ctx.send(embed=embed)
 
     async def _send_commitment_embed(self, ctx, result: dict, *, heading: str) -> None:
@@ -816,13 +829,22 @@ class AgentsCog(commands.Cog, name="Agents"):
 
     @commands.command(name="capturefollow")
     async def capture_follow(self, ctx, *, message: str):
+        explicit_session_id, cleaned_message, _force_session = self._parse_commitfollow_target(message)
         session_id = self._get_active_session_id(ctx, COMMITMENT_SESSION_NAME)
         route_hint = "commitment"
         if not session_id:
             session_id = self._get_active_session_id(ctx, INTAKE_AGENT_NAME)
             route_hint = "intake"
+        if explicit_session_id is not None:
+            session_id = explicit_session_id
+            message = cleaned_message
+            route_hint = "commitment"
         if not session_id:
-            await ctx.send("No active capture session. Start with `!capture ...`.")
+            session_id, resolved_route = await self._resolve_recent_capture_session()
+            if session_id and resolved_route:
+                route_hint = resolved_route
+        if not session_id:
+            await ctx.send("No active capture session. Use `!capture ...` or `!capturefollow session #<session_id> <answer>`.")
             return
         async with ctx.typing():
             try:

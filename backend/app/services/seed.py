@@ -12,6 +12,8 @@ GROUNDING_PROMPT = (
     "\n\nLIFEOS STATE PACKET RULES:\n"
     "- Every chat and scheduled run receives a strict LifeOS state packet from the orchestrator.\n"
     "- Treat that packet as the source of truth for current status, tasks, habits, commitments, reminders, and memory review.\n"
+    "- Use private memory ledger hits and linked item details for exact prior user facts, lists, corrections, and captured context.\n"
+    "- If the user asks what they said before, search the packet memory hits before asking them to repeat it.\n"
     "- Never invent tasks, deadlines, personal facts, habit stats, prayer stats, or job results that are not in the packet.\n"
     "- If the packet is missing the fact you need, ask one concise clarification instead of guessing."
 )
@@ -20,6 +22,12 @@ GROUNDING_PROMPT = (
 def _with_grounding_prompt(prompt: str) -> str:
     text = str(prompt or "").strip()
     if "LIFEOS STATE PACKET RULES" in text:
+        if "private memory ledger" not in text.lower():
+            text = (
+                f"{text}\n"
+                "- Use private memory ledger hits and linked item details for exact prior user facts, lists, corrections, and captured context.\n"
+                "- If the user asks what they said before, search the packet memory hits before asking them to repeat it."
+            )
         return text
     return f"{text}{GROUNDING_PROMPT}"
 

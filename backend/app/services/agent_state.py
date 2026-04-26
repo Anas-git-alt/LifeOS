@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models import ActionStatus, Agent, JobRunLog, PendingAction, SharedMemoryProposal
+from app.models import ActionStatus, Agent, IntakeEntry, JobRunLog, LifeItem, PendingAction, SharedMemoryProposal
 from app.redaction import redact_sensitive
 from app.services.openviking_client import OpenVikingUnavailableError
 
@@ -31,6 +31,7 @@ def _get(value: Any, key: str, default: Any = None) -> Any:
 
 
 def _life_item_brief(item: Any) -> dict[str, Any]:
+    notes = _get(item, "notes")
     return {
         "id": _get(item, "id"),
         "title": _get(item, "title"),
@@ -43,10 +44,12 @@ def _life_item_brief(item: Any) -> dict[str, Any]:
         "priority_reason": _get(item, "priority_reason"),
         "focus_reason": _get(item, "focus_reason"),
         "follow_up_due_at": _get(item, "follow_up_due_at"),
+        "notes_excerpt": str(notes or "")[:1200] if notes else None,
     }
 
 
 def _intake_brief(entry: Any) -> dict[str, Any]:
+    raw_text = getattr(entry, "raw_text", None)
     return {
         "id": getattr(entry, "id", None),
         "title": getattr(entry, "title", None) or getattr(entry, "raw_text", None),
@@ -54,8 +57,30 @@ def _intake_brief(entry: Any) -> dict[str, Any]:
         "domain": getattr(entry, "domain", None),
         "kind": getattr(entry, "kind", None),
         "follow_up_questions": list(getattr(entry, "follow_up_questions_json", None) or []),
+        "raw_text_excerpt": str(raw_text or "")[:1200] if raw_text else None,
+        "summary": getattr(entry, "summary", None),
+        "desired_outcome": getattr(entry, "desired_outcome", None),
+        "next_action": getattr(entry, "next_action", None),
         "created_at": getattr(entry, "created_at", None),
         "updated_at": getattr(entry, "updated_at", None),
+    }
+
+
+def _ledger_hit_brief(hit: Any) -> dict[str, Any]:
+    return {
+        "id": hit.id,
+        "title": hit.title,
+        "domain": hit.domain,
+        "kind": hit.kind,
+        "source": hit.source,
+        "score": hit.score,
+        "snippet": hit.snippet,
+        "source_agent": hit.source_agent,
+        "source_session_id": hit.source_session_id,
+        "linked_life_item_id": hit.linked_life_item_id,
+        "linked_intake_entry_id": hit.linked_intake_entry_id,
+        "created_at": hit.created_at,
+        "uri": hit.uri,
     }
 
 
@@ -138,6 +163,7 @@ def _scorecard_brief(scorecard: Any) -> dict[str, Any] | None:
 async def build_agent_state_packet(*, agent: Agent, user_message: str, source: str) -> dict[str, Any]:
     """Build the strict status packet every agent must ground on."""
     from app.services.life import get_today_agenda
+    from app.services.memory_ledger import search_memory_events
     from app.services.profile import get_or_create_profile
     from app.services.shared_memory import search_shared_memory
     from app.services.system_settings import get_or_create_system_settings
@@ -169,13 +195,42 @@ async def build_agent_state_packet(*, agent: Agent, user_message: str, source: s
             .order_by(JobRunLog.finished_at.desc(), JobRunLog.id.desc())
             .limit(5)
         )
+        linked_item_ids = {
+            int(item_id)
+            for group in ("top_focus", "due_today", "overdue")
+            for item in (agenda.get(group) or [])
+            if (item_id := getattr(item, "id", None)) is not None
+        }
+        linked_entries: list[IntakeEntry] = []
+        if linked_item_ids:
+            linked_entries_result = await db.execute(
+                select(IntakeEntry)
+                .where(IntakeEntry.linked_life_item_id.in_(linked_item_ids))
+                .order_by(IntakeEntry.updated_at.desc(), IntakeEntry.id.desc())
+                .limit(12)
+            )
+            linked_entries = list(linked_entries_result.scalars().all())
+        linked_items_result = await db.execute(
+            select(LifeItem)
+            .where(LifeItem.id.in_(linked_item_ids))
+            .limit(20)
+        ) if linked_item_ids else None
 
         pending_approvals = list(approvals_result.scalars().all())
         memory_review = list(proposals_result.scalars().all())
         recent_job_failures = list(job_failures_result.scalars().all())
+        linked_items = list(linked_items_result.scalars().all()) if linked_items_result is not None else []
 
     memory_hits: list[dict[str, Any]] = []
+    ledger_hits: list[dict[str, Any]] = []
     if (user_message or "").strip():
+        try:
+            ledger_hits = [
+                _ledger_hit_brief(hit)
+                for hit in await search_memory_events(query=user_message, agent=agent, limit=6)
+            ]
+        except Exception as exc:
+            warnings.append(f"memory_ledger_error: {redact_sensitive(str(exc))}")
         try:
             hits = await search_shared_memory(query=user_message, agent=agent)
             memory_hits = [
@@ -210,6 +265,8 @@ async def build_agent_state_packet(*, agent: Agent, user_message: str, source: s
             "memory_review",
             "recent_job_failures",
             "shared_memory_search",
+            "private_memory_ledger",
+            "linked_item_details",
         ],
         "today": {
             "timezone": agenda["timezone"],
@@ -229,12 +286,17 @@ async def build_agent_state_packet(*, agent: Agent, user_message: str, source: s
             "summary": agenda.get("intake_summary") or {},
             "needs_answer": [_intake_brief(entry) for entry in agenda.get("ready_intake") or []],
         },
+        "linked_item_details": {
+            "life_items": [_life_item_brief(item) for item in linked_items],
+            "intake_entries": [_intake_brief(entry) for entry in linked_entries],
+        },
         "memory_review": [_proposal_brief(row) for row in memory_review],
         "pending_approvals": [_approval_brief(row) for row in pending_approvals],
         "recent_job_failures": [_job_failure_brief(row) for row in recent_job_failures],
         "profile": _profile_brief(profile),
         "settings": _settings_brief(settings_row),
         "shared_memory_hits": memory_hits,
+        "memory_ledger_hits": ledger_hits,
         "warnings": warnings,
     }
     return packet
@@ -250,6 +312,7 @@ def grounding_metadata(packet: dict[str, Any] | None, *, error: str | None = Non
         "sources": list(packet.get("sources") or []),
         "warnings": list(packet.get("warnings") or []),
         "memory_hits": len(packet.get("shared_memory_hits") or []),
+        "ledger_hits": len(packet.get("memory_ledger_hits") or []),
     }
 
 
@@ -260,6 +323,8 @@ def render_agent_state_packet(packet: dict[str, Any]) -> str:
         f"{rendered}\n\n"
         "--- GROUNDING RULES ---\n"
         "- Use the state packet above as the source of truth for the user's status, tasks, habits, commitments, reminders, and memory review.\n"
+        "- Use `memory_ledger_hits` and `linked_item_details` for prior user-provided details, exact lists, corrections, and capture context.\n"
+        "- If the user asks what they said earlier, what details they captured, or what was in a previous conversation, search the packet memory hits before asking them to repeat it.\n"
         "- Do not invent tasks, deadlines, life status, prayer status, habit streaks, job results, or personal facts that are absent from the packet.\n"
         "- Treat `today.now` and `today.timezone` as current local time. Do not recommend morning, early-afternoon, or other already-past time blocks.\n"
         "- When giving a plan for today, start from what remains after `today.now`, not a generic full-day schedule.\n"

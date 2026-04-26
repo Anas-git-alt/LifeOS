@@ -17,7 +17,7 @@ These systems should support the loop without becoming daily chores:
 
 - Inbox entries store raw captures, clarification questions, and promotion drafts.
 - Life Items store commitments, tasks, goals, and habits.
-- Wiki proposals store durable memory updates for review before Obsidian writes.
+- Private memory ledger stores source-truth user facts/actions automatically, while Wiki proposals store curated durable memory updates for review before shared Obsidian writes.
 - Jobs and agents run scheduled nudges, but all LLM output must be grounded in the LifeOS state packet.
 
 ## Worktrees
@@ -42,4 +42,4 @@ Create new feature worktrees with:
 
 ## Grounding Rule
 
-Every agent chat and scheduled job receives a strict state packet built from Today agenda, profile/settings, pending review, recent job failures, and shared-memory search. Agents must use that packet as source of truth and ask for clarification when facts are missing.
+Every agent chat and scheduled job receives a strict state packet built from Today agenda, profile/settings, pending review, recent job failures, private memory ledger search, linked item details, and shared-memory search. Agents must use that packet as source of truth and ask for clarification when facts are missing.
