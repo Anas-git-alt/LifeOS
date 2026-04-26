@@ -1,5 +1,70 @@
 # User-Side Discord and WebUI Test Guide
 
+## 2026-04-26 Simplify-Grounding UAT Addendum
+
+Branch: `codex/simplify-grounding`
+
+Purpose: verify the one-loop LifeOS behavior before and after promotion.
+
+Main expectations:
+
+- `!capture` is the normal intake path.
+- Today is the review surface for focus, habits, prayer anchors, Needs Answer, and Memory Review.
+- Agent answers are grounded on the LifeOS state packet.
+- Web search is used for current external facts and market/local price questions.
+- LifeOS planning questions use Today/state, not random web ideas.
+- Free-text daily logs are AI-classified with recent session context and require check-mark confirmation.
+- Advice/detail follow-ups do not become logs.
+
+Manual regression pack:
+
+```text
+!newsession sandbox
+!sandbox how is the wether today?
+```
+
+Expected: Casablanca weather if profile city is Casablanca; sources included; no city clarification unless profile is missing.
+
+```text
+!newsession sandbox
+!sandbox what should i do today? i slept at 1:30 and woke up at 7:30, drqnk a cup of water
+```
+
+Expected: sleep 6h + hydration x1 proposal; check-mark executes once; follow-up plan uses LifeOS state and does not ask for same confirmation again.
+
+```text
+!newsession sandbox
+!sandbox give me 3 options for a cheap lunch i can make for cheap
+!sandbox i want something with eggs in it since i have them on stock
+!sandbox more details for the egg meal, with per ingredient price
+!sandbox meal prepared and eaten
+```
+
+Expected: first three replies are advice only; no meal log proposal. Last message proposes `meal x1`.
+
+```text
+!capture remind me to submit a request for tax return paper from hr on Monday
+!capturefollow before 4:30pm
+create a case in workday
+```
+
+Expected: one tracked commitment; Monday + 4:30pm local due time; no repeated method/time questions.
+
+```text
+!newsession sandbox
+!sandbox what's the cheapest graphics card with 16gb available in new or used market?
+!sandbox what would it be if i want an nvidia gpu?
+```
+
+Expected: current market answer with source links; explains compute/workstation vs consumer/display tradeoffs.
+
+Suggested next manual checks:
+
+- Verify Discord advice answers stay concise enough for one message in simple cases.
+- Verify food advice uses MAD/local assumptions only when supported or clearly marked approximate.
+- Verify source sections are short and useful.
+- Verify WebUI Today shows same scorecard/log results after Discord approval.
+
 Date: 2026-04-22
 
 Purpose: manual user acceptance checks for the current `codex/commitment-loop-ai` branch before promoting to `main`.

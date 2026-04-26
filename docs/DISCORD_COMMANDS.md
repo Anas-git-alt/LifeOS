@@ -29,6 +29,11 @@ Notes:
 - `!sandbox` is a shortcut for `!ask sandbox ...`.
 - `!daily` uses `daily-planner`.
 - `!weekly` uses `weekly-review`.
+- Agent chat is grounded on the LifeOS state packet. If Today/status context is unavailable, the backend fails closed instead of letting the model invent your habits, deadlines, or status.
+- Agent chat can use web search for current external facts, product/market questions, weather, and local budget advice.
+- LifeOS planning questions such as `what should i do today?` use the state packet rather than web search.
+- If a chat turn contains a completed check-in, the bot proposes a daily log first. React with a check mark to apply it; reply with corrected details if the proposal is wrong.
+- Follow-up questions such as `more details for the egg meal` stay in chat and should not create daily logs.
 
 ## Sessions
 
@@ -121,6 +126,8 @@ Capture behavior:
 - Each created item gets `priority_score`, `priority_reason`, and Wiki context links when shared memory matches.
 - Durable facts from raw input become review-required Wiki proposals instead of direct unreviewed writes.
 - `!focus` uses due dates, AI priority score, and Life context so urgent/important work rises without manual priority picking.
+- `!capture` is the normal intake command. It auto-routes promises/deadlines to commitment capture, durable facts/meeting notes to memory review, and tasks/goals/habits/ideas to intake.
+- `!capturefollow` continues the active capture session for the same user/channel/agent. It merges answers into the existing clarifying capture rather than creating a new item.
 
 ## Commitments And Follow-Through
 
@@ -160,6 +167,7 @@ Commitment behavior:
 - `!focus` is deterministic priority ranking.
 - `!focuscoach` uses the commitment coach AI when available, and falls back to deterministic ranking if providers fail.
 - `!commitreview` gives an on-demand weekly commitment review. The same review is auto-posted every Sunday at 10:00 to `#weekly-review`.
+- Follow-up answers can split detail across turns. Example: initial capture says `on Monday`, follow-up says `before 4:30pm` and `create a case in Workday`; LifeOS combines them into one tracked item.
 
 ## Prayer, Quran, Habits, And Quick Logs
 
@@ -225,6 +233,9 @@ Quick-log behavior:
 - `!priority` increments today's completed-priority count and stores optional note.
 - `!shutdown` marks shutdown complete for today and stores optional note.
 - Quick-log replies echo compact scorecard state: meals, water, training, priorities, and rescue status.
+- Normal agent chat also detects completed quick logs from free text. It asks for check-mark confirmation before mutating Today.
+- Corrections such as `remove meal keep only water` update the proposed action before execution.
+- Advice/detail requests are not logs. `more details for the egg meal` is recipe chat; `meal prepared and eaten` is a meal log proposal.
 
 Reminder reactions:
 

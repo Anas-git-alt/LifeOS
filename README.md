@@ -118,10 +118,15 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 
 ## How To Use It Effectively
 
+- Start with one loop: capture raw input, review Today, answer only what LifeOS asks.
 - Use Discord for capture and lightweight execution. It is the fastest place to capture, ask agents, approve actions, log prayer and Quran habits, and trigger jobs.
 - Use WebUI `Today` for daily review. It shows scorecard, rescue plan, next prayer, commitment radar, AI focus coach, due commitments, focus items, capture questions, and memory review.
 - Use `!capture` for messy raw life input, promises, meeting notes, durable facts, reminders, goals, habits, and ideas. LifeOS auto-sorts the input into tracked work, clarification questions, or memory review.
 - Use `!commit` and `!meeting` only as power shortcuts. They route through the same unified capture path.
+- Normal agent chats are grounded on the LifeOS state packet. If the packet cannot be built, the agent fails closed instead of inventing your status.
+- Free-text daily logs are confirmable. If chat text sounds like a completed check-in, LifeOS proposes a log and waits for a check-mark reaction before mutating Today.
+- Recipe, budget, and explanation follow-ups should stay as chat, not become logs. For example, `more details for the egg meal` answers the recipe; `meal prepared and eaten` proposes a meal log.
+- Current external facts use web search when needed. Weather defaults to your profile city/country; LifeOS planning questions such as `what should I do today?` use the state packet, not web search.
 - Use `!focus` for backend-ranked priority and `!focuscoach` when you want AI help choosing the next visible step.
 - Keep conversations separated with sessions. Active session memory is scoped per guild, channel, user, and agent, so `!newsession`, `!usesession`, and the WebUI chat tab are worth using intentionally.
 - Use the Obsidian vault for durable shared knowledge. Session chat stays transient; memory review proposals live in Today/Wiki review before they are applied to the vault.
@@ -131,6 +136,8 @@ Optional advisory agents are seeded only when `AGENCY_AGENTS_ENABLED=true`:
 - Watch `Experiments` before changing providers. The project tracks live provider telemetry, circuit-breaker state, and shadow-router results when `SHADOW_ROUTER_ENABLED=true`; it is off by default to protect free quota.
 - Treat voice as an explicit feature. Enable speech on the agent, preview its voice in WebUI, then use `!joinvoice`, `!speak`, and `!interrupt` in Discord.
 - Use quick logs for anchors instead of waiting for review. `!sleep`, `!meal`, `!train`, `!water`, `!family`, `!priority`, and `!shutdown` update same-day accountability state immediately.
+
+See [docs/AGENTIC_GROUNDING_AND_CAPTURE.md](docs/AGENTIC_GROUNDING_AND_CAPTURE.md) for the current simplify-grounding behavior, regression tests, and next suggested improvements.
 
 Useful example workflows:
 
