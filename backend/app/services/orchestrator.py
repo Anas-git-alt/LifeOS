@@ -89,7 +89,15 @@ _EXTERNAL_INFO_PATTERN = re.compile(
     r"\b("
     r"latest|current|today|news|weather|forecast|score|scores|stock|stocks|price|prices|market|"
     r"recent|up[- ]to[- ]date|breaking|headline|headlines|search the web|search web|look up|lookup|"
+    r"cheap|cheapest|budget|cost|costs|available|availability|listing|listings|used|new|buy|deal|deals|"
     r"google|internet|online"
+    r")\b",
+    re.IGNORECASE,
+)
+_LIFEOS_PLANNING_REQUEST_PATTERN = re.compile(
+    r"\b("
+    r"what should i do today|what do i do today|plan my day|today'?s? plan|daily plan|"
+    r"what should i focus on|what should i do next|how should i spend today"
     r")\b",
     re.IGNORECASE,
 )
@@ -97,6 +105,30 @@ _DAILY_LOG_PROPOSAL_PATTERN = re.compile(
     r"\b(I can log this in Today|React with ✅|react with .? to apply|Please react with|proposed logging your|propose logging)\b",
     re.IGNORECASE,
 )
+
+
+def _profile_location_instruction(state_packet: dict | None) -> str:
+    if not isinstance(state_packet, dict):
+        return ""
+    profile = state_packet.get("profile")
+    if not isinstance(profile, dict):
+        return ""
+    city = str(profile.get("city") or "").strip()
+    country = str(profile.get("country") or "").strip()
+    timezone_name = str(profile.get("timezone") or "").strip()
+    if not city and not country and not timezone_name:
+        return ""
+    location = ", ".join(part for part in [city, country] if part)
+    parts = []
+    if location:
+        parts.append(f"Default user location is {location}.")
+    if timezone_name:
+        parts.append(f"Default user timezone is {timezone_name}.")
+    parts.append(
+        "Use that location for local recommendations, weather, availability, and budget advice unless the user names another place. "
+        "Prefer local units/currency and do not default to US prices."
+    )
+    return " ".join(parts)
 
 
 def _today_utc() -> str:
@@ -134,6 +166,8 @@ def _should_search_web(agent: Agent, user_message: str, referenced_session_id: i
         return False
     if referenced_session_id is not None or _is_local_context_query(user_message):
         return False
+    if _LIFEOS_PLANNING_REQUEST_PATTERN.search(user_message or ""):
+        return False
     if _WORKSPACE_CONTEXT_PATTERN.search(user_message or ""):
         return False
     return bool(_EXTERNAL_INFO_PATTERN.search(user_message or ""))
@@ -143,6 +177,8 @@ def _can_use_turn_planner_for_search(agent: Agent, user_message: str, referenced
     if not _should_use_web_search(agent):
         return False
     if referenced_session_id is not None or _is_local_context_query(user_message):
+        return False
+    if _LIFEOS_PLANNING_REQUEST_PATTERN.search(user_message or ""):
         return False
     if _WORKSPACE_CONTEXT_PATTERN.search(user_message or ""):
         return False
@@ -468,6 +504,9 @@ async def handle_message(
             )
             grounding = grounding_metadata(state_packet)
             system_prompt = f"{system_prompt}\n{render_agent_state_packet(state_packet)}\n"
+            profile_instruction = _profile_location_instruction(state_packet)
+            if profile_instruction:
+                system_prompt = f"{system_prompt}\n--- USER LOCAL CONTEXT ---\n{profile_instruction}\n"
             for warning in grounding.get("warnings") or []:
                 _append_unique_warning(response_warnings, warning)
         except AgentStateUnavailableError as exc:
@@ -681,7 +720,8 @@ async def handle_message(
                         f"{final_user_content}\n\n"
                         f"Web search query used: {search_query}\n"
                         f"{search_context}\n"
-                        "Answer using provided real-time data where relevant."
+                        "Answer using provided real-time data where relevant. "
+                        "Include a short Sources section with the URLs you used."
                     )
                 else:
                     final_user_content = (

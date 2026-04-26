@@ -527,6 +527,81 @@ async def test_handle_message_uses_turn_planner_for_short_location_followup(monk
 
 
 @pytest.mark.asyncio
+async def test_handle_message_does_not_search_web_for_lifeos_today_plan(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    planner = AsyncMock(return_value=TurnPlan(needs_web_search=True, web_search_query="what should I do today", confidence=0.9))
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.plan_turn_for_tools", planner)
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", AsyncMock(return_value="LifeOS-only plan."))
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what should i do today?",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert result["response"] == "LifeOS-only plan."
+    planner.assert_not_awaited()
+    get_search_context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_adds_profile_location_instruction(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.config_json = {"use_web_search": True}
+    factory = _FakeSessionFactory(agent)
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
+        captured["messages"] = messages
+        return "Local answer."
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.services.orchestrator.build_agent_state_packet",
+        AsyncMock(
+            return_value={
+                "grounded": True,
+                "strict": True,
+                "generated_at": "2026-04-26T00:00:00+00:00",
+                "sources": ["today_agenda", "user_profile"],
+                "warnings": [],
+                "profile": {"city": "Casablanca", "country": "Morocco", "timezone": "Africa/Casablanca"},
+            }
+        ),
+    )
+    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.services.orchestrator.plan_turn_for_tools",
+        AsyncMock(return_value=TurnPlan(needs_web_search=False, web_search_query=None, confidence=0.8)),
+    )
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    await handle_message(
+        agent_name="sandbox",
+        user_message="what cheap meal should i cook with high protein?",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    system_text = captured["messages"][0]["content"]
+    assert "Default user location is Casablanca, Morocco" in system_text
+    assert "Prefer local units/currency" in system_text
+
+
+@pytest.mark.asyncio
 async def test_handle_message_filters_stale_daily_log_proposal_after_execution(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
     factory = _FakeSessionFactory(agent)
