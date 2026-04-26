@@ -784,9 +784,14 @@ class AgentsCog(commands.Cog, name="Agents"):
             followup_request = pending_log.get("followup_request")
             if followup_request and str(status).lower() in {"approved", "executed"}:
                 try:
+                    followup_prompt = (
+                        "A daily log approval was just executed and Today state is current. "
+                        "Do not ask to confirm that log again. "
+                        f"Answer the remaining user question now: {followup_request}"
+                    )
                     followup = await self._send_agent_chat(
                         agent_name=pending_log.get("agent_name") or "sandbox",
-                        message=followup_request,
+                        message=followup_prompt,
                         session_id=pending_log.get("session_id"),
                     )
                     await self._send_agent_result(
