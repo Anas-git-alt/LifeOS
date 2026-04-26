@@ -267,6 +267,52 @@ async def test_agent_daily_log_reaction_continues_original_question(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_agent_daily_log_reaction_continues_mixed_task_request(monkeypatch):
+    calls = []
+    channel = _Channel()
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        if path == "/agents/chat" and len([call for call in calls if call[0] == "/agents/chat"]) == 1:
+            return {
+                "response": "I can log this in Today: hydration x3, meal x2, protein.",
+                "pending_action_id": 44,
+                "pending_action_type": "daily_log_batch",
+                "session_id": 7,
+                "session_title": "Wedding prep",
+            }
+        if path == "/approvals/decide":
+            return {"id": 44, "status": "executed", "result": "Logged: water, meals, protein"}
+        if path == "/agents/chat":
+            assert payload["message"] == "create the tasks for the wedding and the suit dropoff"
+            return {"response": "Tracked #1: Drop off suit\nTracked #2: Pick up suit", "session_id": 7}
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+    bot = type("Bot", (), {"user": _Dummy(999), "get_channel": lambda self, channel_id: channel})()
+    cog = AgentsCog(bot=bot)
+    ctx = _Ctx()
+
+    await cog.ask_agent.callback(
+        cog,
+        ctx,
+        agent_name="sandbox",
+        message=(
+            "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water, "
+            "log them and create the tasks for the weding and the suit dropoff"
+        ),
+    )
+
+    sent = ctx.sent_objects[0]
+    assert cog.pending_daily_log_actions[sent.id]["followup_request"] == "create the tasks for the wedding and the suit dropoff"
+
+    await cog.approve_daily_log_reaction(_ReactionPayload(message_id=sent.id))
+
+    assert "Logged: water" in channel.sent_messages[0]
+    assert "Tracked #1" in channel.sent_embeds[-1].description
+
+
+@pytest.mark.asyncio
 async def test_daily_log_proposal_reply_replaces_with_correction(monkeypatch):
     calls = []
 

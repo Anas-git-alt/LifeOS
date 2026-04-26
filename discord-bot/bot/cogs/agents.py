@@ -305,6 +305,16 @@ class AgentsCog(commands.Cog, name="Agents"):
     @staticmethod
     def _extract_followup_request(message: str) -> str | None:
         text = str(message or "").strip()
+        mixed_action = re.search(
+            r"\b(?:log(?:ged)?\s+(?:it|them|this)?|apply\s+(?:it|them|this)?|save\s+(?:it|them|this)?)\b"
+            r"(?P<rest>.*?\b(?:create|add|make|track|remind|task|tasks|reminder|reminders)\b.+)$",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if mixed_action:
+            rest = re.sub(r"^\s*(?:,|and|then|plus|also)\s+", "", mixed_action.group("rest").strip(), flags=re.IGNORECASE)
+            rest = re.sub(r"\bweding\b", "wedding", rest, flags=re.IGNORECASE)
+            return rest[:500] if rest else None
         if "?" not in text:
             return None
         question = text.split("?", 1)[0].strip()

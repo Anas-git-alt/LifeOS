@@ -127,6 +127,52 @@ async def test_daily_log_proposal_treats_protein_as_scorecard_hit_not_meal():
 
 
 @pytest.mark.asyncio
+async def test_daily_log_proposal_counts_breakfast_lunch_water_and_protein():
+    payload = await propose_daily_log_payload(
+        "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water"
+    )
+
+    assert payload is not None
+    assert payload["logs"] == [
+        {
+            "kind": "hydration",
+            "count": 3,
+            "note": "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water",
+        },
+        {
+            "kind": "protein",
+            "note": "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water",
+        },
+        {
+            "kind": "meal",
+            "count": 2,
+            "note": "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water",
+            "protein_hit": True,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_daily_log_agentic_merge_keeps_higher_fallback_meal_count(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.daily_log_proposals.chat_completion",
+        AsyncMock(return_value='{"intent":"completed_checkin","logs":[{"kind":"meal","count":1},{"kind":"hydration","count":3}]}'),
+    )
+    agent = SimpleNamespace(provider="test", model="test", fallback_provider=None, fallback_model=None)
+
+    payload = await propose_daily_log_payload(
+        "i ate breakfast and lunch already, hit my protein intake and drank 3 cups of water",
+        agent=agent,
+    )
+
+    assert payload is not None
+    by_kind = {item["kind"]: item for item in payload["logs"]}
+    assert by_kind["meal"]["count"] == 2
+    assert by_kind["meal"]["protein_hit"] is True
+    assert by_kind["protein"]["kind"] == "protein"
+
+
+@pytest.mark.asyncio
 async def test_daily_log_proposal_extracts_mixed_question_sleep_and_water_typo():
     payload = await propose_daily_log_payload(
         "what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water"

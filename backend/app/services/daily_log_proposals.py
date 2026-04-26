@@ -52,7 +52,10 @@ MEAL_RE = re.compile(
     re.IGNORECASE,
 )
 CONCRETE_MEAL_RE = re.compile(r"\b(meal|breakfast|lunch|dinner|shawarma|sandwich|sandwitch|food)\b", re.IGNORECASE)
-PROTEIN_HIT_RE = re.compile(r"\b(enough protein|hit protein|protein hit|protein goal|protein target|got protein)\b", re.IGNORECASE)
+PROTEIN_HIT_RE = re.compile(
+    r"\b(enough protein|hit (?:my )?protein(?: intake| goal| target)?|protein hit|protein goal|protein target|got protein|protein intake)\b",
+    re.IGNORECASE,
+)
 TRAINING_RE = re.compile(r"\b(trained|workout|worked out|gym|walk|stretch|stretching)\b", re.IGNORECASE)
 REST_RE = re.compile(r"\b(rested|rest day|explicit rest)\b", re.IGNORECASE)
 FAMILY_RE = re.compile(r"\b(sent|called|texted|messaged|spoke)\b.*\b(mother|mom|father|dad|wife|family|parents)\b", re.IGNORECASE)
@@ -77,6 +80,20 @@ def _water_count(text: str) -> int:
     if not match:
         return 1
     return max(1, min(12, int(match.group(1))))
+
+
+def _meal_count(text: str) -> int:
+    explicit = re.search(r"\b(\d+)\s*(?:meals?|plates?|servings?)\b", text, re.IGNORECASE)
+    if explicit:
+        return max(1, min(12, int(explicit.group(1))))
+    labels = {
+        label
+        for label in ("breakfast", "lunch", "dinner")
+        if re.search(rf"\b{label}\b", text, re.IGNORECASE)
+    }
+    if labels:
+        return max(1, min(12, len(labels)))
+    return 1
 
 
 def _parse_clock_time(value: str, *, sleep_start: bool) -> tuple[int, str] | None:
@@ -211,16 +228,17 @@ def _fallback_logs(text: str) -> list[dict[str, Any]]:
     excluded_kinds = _excluded_kinds(text)
     if only_kinds:
         excluded_kinds -= only_kinds
-    protein_only = PROTEIN_HIT_RE.search(text) and not CONCRETE_MEAL_RE.search(text)
+    protein_hit = bool(PROTEIN_HIT_RE.search(text))
+    protein_only = protein_hit and not CONCRETE_MEAL_RE.search(text)
     sleep = _sleep_log(text)
     if sleep and "sleep" not in excluded_kinds:
         logs.append(sleep)
     if WATER_RE.search(text) and "hydration" not in excluded_kinds:
         logs.append({"kind": "hydration", "count": _water_count(text), "note": note})
-    if protein_only and "protein" not in excluded_kinds:
+    if protein_hit and "protein" not in excluded_kinds:
         logs.append({"kind": "protein", "note": note})
-    elif MEAL_RE.search(text) and "meal" not in excluded_kinds:
-        logs.append({"kind": "meal", "count": 1, "note": note, "protein_hit": "protein" in text.lower()})
+    if MEAL_RE.search(text) and not protein_only and "meal" not in excluded_kinds:
+        logs.append({"kind": "meal", "count": _meal_count(text), "note": note, "protein_hit": protein_hit})
     if TRAINING_RE.search(text):
         logs.append({"kind": "training", "status": "done", "note": note})
     elif REST_RE.search(text):
@@ -234,12 +252,22 @@ def _fallback_logs(text: str) -> list[dict[str, Any]]:
 
 def _merge_logs(primary: list[dict[str, Any]], fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged = list(primary)
-    seen = {str(item.get("kind")) for item in merged}
+    by_kind = {str(item.get("kind")): item for item in merged}
     for item in fallback:
         kind = str(item.get("kind"))
-        if kind not in seen:
+        existing = by_kind.get(kind)
+        if not existing:
             merged.append(item)
-            seen.add(kind)
+            by_kind[kind] = item
+            continue
+        if kind in {"meal", "hydration", "priority"}:
+            existing["count"] = max(int(existing.get("count") or 1), int(item.get("count") or 1))
+        if kind == "meal":
+            existing["protein_hit"] = bool(existing.get("protein_hit")) or bool(item.get("protein_hit"))
+        if kind == "sleep":
+            for field in ("hours", "bedtime", "wake_time"):
+                if item.get(field) is not None and existing.get(field) is None:
+                    existing[field] = item[field]
     return merged
 
 

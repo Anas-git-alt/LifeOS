@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -130,6 +130,7 @@ _TASK_ADD_CONFIRMATION_RE = re.compile(
     r"add (?:it|them|the|these|those|two)|just add|submit (?:it|them))\b",
     re.IGNORECASE,
 )
+_TASK_CREATE_REQUEST_RE = re.compile(r"\b(create|add|track|make|remind).{0,40}\b(tasks?|reminders?)\b|\b(tasks?|reminders?).{0,40}\b(create|add|track|make)\b", re.IGNORECASE)
 _ACTION_NEGATION_RE = re.compile(r"\b(do not|don't|dont|no|not yet|hold off|cancel|stop)\b", re.IGNORECASE)
 _STRUCTURED_LIFE_ACTION_TYPES = {"task_create", "life_item_create"}
 _NATURAL_TASK_PROPOSAL_RE = re.compile(
@@ -138,6 +139,10 @@ _NATURAL_TASK_PROPOSAL_RE = re.compile(
 )
 _TASK_FIELD_RE = re.compile(r"^(task|domain|due|notes?)\s*:\s*(.+)$", re.IGNORECASE)
 _CANONICAL_DOMAINS = {"deen", "family", "work", "health", "planning"}
+_MONTH_DATE_RE = (
+    r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\s+\d{1,2},\s+\d{4}"
+)
 
 
 def _profile_location_instruction(state_packet: dict | None) -> str:
@@ -508,6 +513,93 @@ def _extract_latest_task_actions_from_context(context: list[dict[str, object]] |
         if actions:
             return actions
     return []
+
+
+def _parse_month_date(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value.strip(), "%B %d, %Y")
+    except (TypeError, ValueError):
+        return None
+
+
+def _date_iso(value: datetime, hour: int) -> str:
+    return f"{value.strftime('%Y-%m-%d')}T{hour:02d}:00:00+01:00"
+
+
+def _first_context_date(text: str, pattern: str) -> datetime | None:
+    match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    date_match = re.search(_MONTH_DATE_RE, match.group(0), re.IGNORECASE)
+    return _parse_month_date(date_match.group(0)) if date_match else None
+
+
+def _extract_wedding_suit_actions_from_context(
+    context: list[dict[str, object]] | None,
+    user_message: str,
+) -> list[dict]:
+    text = user_message or ""
+    if _ACTION_NEGATION_RE.search(text):
+        return []
+    if not (
+        re.search(r"\bwedding|weding|suit|ironing\b", text, re.IGNORECASE)
+        and (_TASK_ADD_CONFIRMATION_RE.search(text) or _TASK_CREATE_REQUEST_RE.search(text))
+    ):
+        return []
+    context_text = "\n".join(str(item.get("content") or "") for item in (context or [])[-8:])
+    wedding = _first_context_date(context_text, rf"\bwedding\b[^\n]*?{_MONTH_DATE_RE}") or _first_context_date(
+        context_text, rf"\bMay\s+\d{{1,2}},\s+\d{{4}}\b"
+    )
+    if not wedding:
+        return []
+    dropoff = _first_context_date(context_text, rf"\b(?:suit\s+)?drop[- ]?off\b[^\n]*?{_MONTH_DATE_RE}")
+    pickup = _first_context_date(context_text, rf"\b(?:suit\s+)?(?:pick[- ]?up|pickup)\b[^\n]*?{_MONTH_DATE_RE}")
+    if not dropoff:
+        dropoff = wedding - timedelta(days=3)
+    if not pickup:
+        pickup = wedding - timedelta(days=1)
+    raw_actions = [
+        {
+            "action_type": "task_create",
+            "summary": "Create task: Drop off suit at ironing shop",
+            "risk_level": "low",
+            "details": {
+                "title": "Drop off suit at ironing shop",
+                "domain": "planning",
+                "kind": "task",
+                "priority": "medium",
+                "due_at": _date_iso(dropoff, 10),
+                "notes": f"For wedding on {wedding.strftime('%B %-d, %Y')}; pick up Saturday morning.",
+            },
+        },
+        {
+            "action_type": "task_create",
+            "summary": "Create task: Pick up suit from ironing shop",
+            "risk_level": "low",
+            "details": {
+                "title": "Pick up suit from ironing shop",
+                "domain": "planning",
+                "kind": "task",
+                "priority": "medium",
+                "due_at": _date_iso(pickup, 10),
+                "notes": f"Wedding prep for {wedding.strftime('%B %-d, %Y')}.",
+            },
+        },
+        {
+            "action_type": "task_create",
+            "summary": "Create task: Attend wedding",
+            "risk_level": "low",
+            "details": {
+                "title": "Attend wedding",
+                "domain": "planning",
+                "kind": "task",
+                "priority": "medium",
+                "due_at": _date_iso(wedding, 12),
+                "notes": "Exact wedding time was not captured; update time when known.",
+            },
+        },
+    ]
+    return _normalise_structured_actions(raw_actions)
 
 
 async def _execute_structured_actions_now(*, actions: list[dict], agent_name: str, source: str) -> tuple[bool, str]:
@@ -967,8 +1059,12 @@ async def handle_message(
                 direct_memory_answer = None
             if direct_memory_answer:
                 response_text = direct_memory_answer
-            if response_text is None and _is_task_add_confirmation(user_message):
+            if response_text is None and (
+                _is_task_add_confirmation(user_message) or _TASK_CREATE_REQUEST_RE.search(user_message or "")
+            ):
                 context_actions = _extract_latest_task_actions_from_context(context)
+                if not context_actions:
+                    context_actions = _extract_wedding_suit_actions_from_context(context, user_message)
                 if context_actions:
                     execution_ok, execution_result = await _execute_structured_actions_now(
                         actions=context_actions,
