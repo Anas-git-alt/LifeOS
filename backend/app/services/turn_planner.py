@@ -27,6 +27,20 @@ def _recent_context_text(context: list[dict[str, Any]], *, limit: int = 6) -> st
     return "\n".join(lines)
 
 
+def _profile_context_text(state_packet: dict[str, Any] | None) -> str:
+    if not isinstance(state_packet, dict):
+        return "none"
+    profile = state_packet.get("profile")
+    if not isinstance(profile, dict):
+        return "none"
+    parts = []
+    for key in ("city", "country", "timezone"):
+        value = str(profile.get(key) or "").strip()
+        if value:
+            parts.append(f"{key}={value}")
+    return ", ".join(parts) if parts else "none"
+
+
 def _parse_plan(raw: str) -> TurnPlan:
     start = raw.find("{")
     end = raw.rfind("}")
@@ -54,6 +68,7 @@ async def plan_turn_for_tools(
     user_message: str,
     context: list[dict[str, Any]] | None = None,
     current_datetime: str,
+    state_packet: dict[str, Any] | None = None,
 ) -> TurnPlan:
     """Ask the model which external tools this turn needs.
 
@@ -66,12 +81,17 @@ async def plan_turn_for_tools(
         "Use the current message plus recent context. Return only JSON with keys: "
         "needs_web_search boolean, web_search_query string, confidence number 0-1.\n"
         "Use web search for current external facts: weather, prices, news, latest/current status, scores, releases. "
+        "Also use web search for local recommendations or budget shopping/meal questions where local prices or availability matter. "
+        "When the user asks for weather or local external info without naming a place, default to the LifeOS profile city/country. "
         "If the current message is a short fragment that completes the previous request, infer the full query. "
         "For example, previous user asked weather and current user says 'casablanca' -> search 'current weather Casablanca Morocco'. "
+        "For example, profile city Casablanca and user asks 'how is weather today?' -> search 'current weather Casablanca Morocco'. "
+        "For example, profile city Casablanca and user asks cheap high-protein meal -> search 'cheap high protein foods Morocco Casablanca budget'. "
         "Do not request web search for local LifeOS tasks, memories, workspace questions, or pure planning.\n"
         f"Current date/time: {current_datetime}"
     )
     user = (
+        f"LifeOS profile context:\n{_profile_context_text(state_packet)}\n\n"
         f"Recent context:\n{_recent_context_text(context or []) or 'none'}\n\n"
         f"Current user message:\n{user_message}"
     )

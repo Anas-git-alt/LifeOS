@@ -90,7 +90,11 @@ _CAPTURE_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 _CAPTURE_STANDALONE_TIME_RE = re.compile(
-    r"\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+    r"\b(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_WEEKDAY_RE = re.compile(
+    r"\b(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
     re.IGNORECASE,
 )
 _FAMILY_DETAIL_RE = re.compile(
@@ -187,6 +191,48 @@ def _standalone_due_from_capture_match(
     return due_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _weekday_due_from_capture_message(
+    message: str,
+    *,
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> datetime | None:
+    weekday_match = _CAPTURE_WEEKDAY_RE.search(message or "")
+    clock_match = _CAPTURE_STANDALONE_TIME_RE.search(message or "")
+    if not weekday_match or not clock_match:
+        return None
+    clock = _parse_capture_clock(clock_match.group(1), clock_match.group(2), clock_match.group(3))
+    if not clock:
+        return None
+    weekday_lookup = {
+        "mon": 0,
+        "monday": 0,
+        "tue": 1,
+        "tuesday": 1,
+        "wed": 2,
+        "wednesday": 2,
+        "thu": 3,
+        "thursday": 3,
+        "fri": 4,
+        "friday": 4,
+        "sat": 5,
+        "saturday": 5,
+        "sun": 6,
+        "sunday": 6,
+    }
+    target_weekday = weekday_lookup.get(weekday_match.group(1).lower())
+    if target_weekday is None:
+        return None
+    tz = _resolve_tz(timezone_name)
+    local_now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    days_ahead = (target_weekday - local_now.weekday()) % 7
+    due_date = local_now.date() + timedelta(days=days_ahead)
+    due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
+    if due_local <= local_now:
+        due_local += timedelta(days=7)
+    return due_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 async def _infer_capture_due_at(message: str, provided_due_at: datetime | None, timezone_name: str | None) -> datetime | None:
     if provided_due_at is not None:
         return provided_due_at
@@ -196,7 +242,12 @@ async def _infer_capture_due_at(message: str, provided_due_at: datetime | None, 
         return _due_from_capture_match(match, timezone_name=effective_timezone)
     standalone = _CAPTURE_STANDALONE_TIME_RE.search(message)
     if standalone:
-        return _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone)
+        standalone_due = _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone)
+        if standalone_due:
+            return standalone_due
+    weekday_due = _weekday_due_from_capture_message(message, timezone_name=effective_timezone)
+    if weekday_due:
+        return weekday_due
     return None
 
 
@@ -416,6 +467,33 @@ def _should_promote_commitment_entry(entry, *, due_at) -> bool:
     if len(title) < 3:
         return False
     return kind in {"commitment", "task", "habit", "routine"} and bool(domain)
+
+
+def _commitment_followup_note(entry: IntakeEntry | None) -> str | None:
+    if not entry or not entry.follow_up_questions_json:
+        return None
+    questions = [str(question).strip() for question in entry.follow_up_questions_json if str(question).strip()]
+    if not questions:
+        return None
+    entry_context = {
+        "title": entry.title,
+        "domain": entry.domain,
+        "kind": entry.kind,
+        "status": entry.status,
+        "original_capture": entry.raw_text,
+        "summary": entry.summary,
+        "desired_outcome": entry.desired_outcome,
+        "next_action": entry.next_action,
+        "open_questions": questions,
+    }
+    return (
+        "This turn is a follow-up answer for an existing clarifying commitment. "
+        "Merge the user's new message with the existing commitment below. "
+        "If the new message answers the open questions, return status=ready and follow_up_questions=[]. "
+        "Do not repeat questions that the user already answered. "
+        "If timing is split across the original capture and this follow-up, combine them.\n"
+        f"Existing commitment: {entry_context}"
+    )
 
 
 @router.get("/items", response_model=list[LifeItemResponse], dependencies=[Depends(require_api_token)])
@@ -707,14 +785,28 @@ async def capture_commitment(data: CommitmentCaptureRequest):
         session = await create_session(agent_name=COMMITMENT_AGENT_NAME, title=title)
         session_id = session.id
 
-    result = await handle_message(
-        agent_name=COMMITMENT_AGENT_NAME,
-        user_message=raw_message,
-        approval_policy="never",
-        source=data.source or "api",
-        session_id=session_id,
-        session_enabled=True,
-    )
+    prior_entry = None
+    if session_id and not data.new_session:
+        prior_entry = await get_latest_intake_entry_for_session(
+            session_id,
+            source_agent=COMMITMENT_AGENT_NAME,
+        )
+    capture_context_message = raw_message
+    if prior_entry and prior_entry.raw_text:
+        capture_context_message = f"{prior_entry.raw_text}\nFollow-up answer: {raw_message}"
+
+    handle_kwargs = {
+        "agent_name": COMMITMENT_AGENT_NAME,
+        "user_message": raw_message,
+        "approval_policy": "never",
+        "source": data.source or "api",
+        "session_id": session_id,
+        "session_enabled": True,
+    }
+    followup_note = _commitment_followup_note(prior_entry)
+    if followup_note:
+        handle_kwargs["transient_system_note"] = followup_note
+    result = await handle_message(**handle_kwargs)
     if result.get("error_code") == "session_not_found":
         raise HTTPException(status_code=404, detail=result["response"])
     if result.get("error_code") == "memory_unavailable":
@@ -733,8 +825,8 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     follow_up_job = None
     auto_promoted = False
     effective_timezone = await get_commitment_timezone(data.timezone)
-    inferred_due_at = await _infer_capture_due_at(raw_message, data.due_at, effective_timezone)
-    priority_overrides = _priority_overrides_for_capture(raw_message, inferred_due_at)
+    inferred_due_at = await _infer_capture_due_at(capture_context_message, data.due_at, effective_timezone)
+    priority_overrides = _priority_overrides_for_capture(capture_context_message, inferred_due_at)
     if entry and inferred_due_at is not None and not entry.linked_life_item_id and not _should_promote_commitment_entry(entry, due_at=inferred_due_at):
         entry = await _force_ready_deadlined_commitment(entry.id, title=message)
     if entry and entry.linked_life_item_id:
@@ -776,7 +868,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
         await _apply_commitment_capture_overrides(
             entry_id=entry.id,
             life_item_id=life_item.id,
-            message=raw_message,
+            message=capture_context_message,
             due_at=inferred_due_at,
         )
         async with async_session() as db:

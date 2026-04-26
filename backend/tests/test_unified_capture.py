@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import pytest
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from sqlalchemy import select
@@ -9,8 +11,10 @@ from sqlalchemy import select
 from app.database import async_session
 from app.models import CommitmentCaptureResponse, IntakeCaptureResponse, IntakeEntry, LifeItemCreate, UnifiedCaptureRequest
 from app.routers.life import (
+    _commitment_followup_note,
     _detail_questions_for_capture,
     _infer_commitment_domain,
+    _infer_capture_due_at,
     _priority_overrides_for_capture,
     _select_capture_route,
     capture_life,
@@ -69,6 +73,47 @@ def test_unified_capture_family_message_has_domain_priority_and_detail_question(
     assert overrides["domain"] == "family"
     assert overrides["priority"] == "medium"
     assert overrides["priority_score"] > 55
+
+
+@pytest.mark.asyncio
+async def test_commitment_due_inference_combines_weekday_and_followup_time(monkeypatch):
+    fixed_now = datetime(2026, 4, 26, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.routers.life.datetime", SimpleNamespace(now=lambda _tz=None: fixed_now, min=datetime.min, combine=datetime.combine))
+
+    due_at = await _infer_capture_due_at(
+        "remind me to submit a request for tax return paper from hr on Monday\nFollow-up answer: create a case in workday before 4:50pm",
+        None,
+        "Africa/Casablanca",
+    )
+
+    assert due_at is not None
+    assert due_at.day == 27
+    assert due_at.hour == 15
+    assert due_at.minute == 50
+
+
+def test_commitment_followup_note_tells_agent_to_merge_answers():
+    note = _commitment_followup_note(
+        SimpleNamespace(
+            title="Submit tax return paper request",
+            domain="work",
+            kind="commitment",
+            status="clarifying",
+            raw_text="remind me to submit a request for tax return paper from hr on Monday",
+            summary="Submit the request",
+            desired_outcome=None,
+            next_action=None,
+            follow_up_questions_json=[
+                "What method will you use to submit the request?",
+                "Is there a specific time on Monday you aim to submit the request?",
+            ],
+        )
+    )
+
+    assert note is not None
+    assert "follow-up answer" in note
+    assert "status=ready" in note
+    assert "Do not repeat" in note
 
 
 @pytest.mark.asyncio

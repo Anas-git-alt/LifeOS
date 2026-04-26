@@ -521,8 +521,51 @@ async def test_handle_message_uses_turn_planner_for_short_location_followup(monk
 
     assert result["response"] == "Weather in Casablanca from search."
     planner.assert_awaited_once()
+    assert planner.await_args.kwargs["state_packet"]["grounded"] is True
     get_search_context.assert_awaited_once_with("current weather Casablanca Morocco")
     assert "Web search query used: current weather Casablanca Morocco" in captured["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_filters_stale_daily_log_proposal_after_execution(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
+        captured["messages"] = messages
+        return "Continue answer after log."
+
+    stale_context = [
+        {"role": "user", "content": "what should i do today? i drank water"},
+        {
+            "role": "assistant",
+            "content": "I can log this in Today: hydration x1.\n\nReact with ✅ to apply it.",
+        },
+    ]
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=stale_context))
+    propose_daily_log_payload = AsyncMock(return_value={"logs": [{"kind": "hydration", "count": 1}], "source_text": "x"})
+    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", propose_daily_log_payload)
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="what should I do today? i drank water",
+        approval_policy="never",
+        session_enabled=False,
+        transient_system_note="Daily log approval was executed. Do not ask to confirm it again.",
+    )
+
+    assert result["response"] == "Continue answer after log."
+    context_text = "\n".join(str(message.get("content") or "") for message in captured["messages"])
+    propose_daily_log_payload.assert_not_awaited()
+    assert "I can log this in Today" not in context_text
+    assert "React with ✅" not in context_text
+    assert "approval already executed" in captured["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

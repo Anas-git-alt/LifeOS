@@ -93,6 +93,10 @@ _EXTERNAL_INFO_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_DAILY_LOG_PROPOSAL_PATTERN = re.compile(
+    r"\b(I can log this in Today|React with ✅|react with .? to apply|Please react with|proposed logging your|propose logging)\b",
+    re.IGNORECASE,
+)
 
 
 def _today_utc() -> str:
@@ -174,6 +178,27 @@ def _append_unique_warning(warnings: list[str], warning: str) -> None:
     cleaned = str(warning or "").strip()
     if cleaned and cleaned not in warnings:
         warnings.append(cleaned)
+
+
+def _is_daily_log_execution_note(note: str | None) -> bool:
+    lowered = str(note or "").lower()
+    return "daily log" in lowered and any(token in lowered for token in ("executed", "applied", "approval"))
+
+
+def _filter_context_for_transient_note(
+    context: list[dict[str, object]],
+    transient_system_note: str | None,
+) -> list[dict[str, object]]:
+    if not context or not _is_daily_log_execution_note(transient_system_note):
+        return context
+    filtered: list[dict[str, object]] = []
+    for message in context:
+        if str(message.get("role") or "") == "assistant" and _DAILY_LOG_PROPOSAL_PATTERN.search(
+            str(message.get("content") or "")
+        ):
+            continue
+        filtered.append(message)
+    return filtered
 
 
 def _memory_unavailable_result(active_session, exc: Exception) -> dict:
@@ -429,6 +454,12 @@ async def handle_message(
                 "--- TRANSIENT TURN CONTEXT ---\n"
                 f"{str(transient_system_note).strip()[:1200]}\n"
             )
+            if _is_daily_log_execution_note(transient_system_note):
+                system_prompt = (
+                    f"{system_prompt}"
+                    "Ignore stale assistant daily-log proposal messages in chat memory; the approval already executed. "
+                    "Do not ask the user to confirm that same log again and do not describe it as merely proposed.\n"
+                )
         try:
             state_packet = await build_agent_state_packet(
                 agent=agent,
@@ -456,7 +487,9 @@ async def handle_message(
                 "warnings": response_warnings,
                 "grounding": grounding,
             }
-        daily_log_payload = await propose_daily_log_payload(user_message, agent=agent)
+        daily_log_payload = None
+        if not _is_daily_log_execution_note(transient_system_note):
+            daily_log_payload = await propose_daily_log_payload(user_message, agent=agent)
         if daily_log_payload:
             proposal = format_daily_log_proposal(daily_log_payload)
             final_response_text = (
@@ -577,7 +610,9 @@ async def handle_message(
                     user_message=user_message,
                     context=context,
                     current_datetime=_today_utc(),
+                    state_packet=state_packet,
                 )
+            context = _filter_context_for_transient_note(context, transient_system_note)
             messages = [{"role": "system", "content": system_prompt}, *context]
             if referenced_session_context:
                 messages.append({"role": "system", "content": referenced_session_context})
