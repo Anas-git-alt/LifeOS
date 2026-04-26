@@ -97,6 +97,29 @@ async def test_daily_log_proposal_treats_protein_as_scorecard_hit_not_meal():
 
 
 @pytest.mark.asyncio
+async def test_daily_log_proposal_extracts_mixed_question_sleep_and_water_typo():
+    payload = await propose_daily_log_payload(
+        "what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water"
+    )
+
+    assert payload is not None
+    assert payload["logs"] == [
+        {
+            "kind": "sleep",
+            "note": "what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water",
+            "hours": 6.0,
+            "bedtime": "01:30",
+            "wake_time": "07:30",
+        },
+        {
+            "kind": "hydration",
+            "count": 1,
+            "note": "what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
     _freeze_life_datetime(monkeypatch, datetime(2026, 3, 3, 20, 0, tzinfo=timezone.utc))
     monkeypatch.setattr("app.services.life.get_today_schedule", AsyncMock(return_value=_fake_schedule()))
@@ -116,6 +139,7 @@ async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
                     {"kind": "hydration", "count": 1, "note": "drank water"},
                     {"kind": "meal", "count": 1, "note": "ate shawarma"},
                     {"kind": "protein", "note": "enough protein"},
+                    {"kind": "sleep", "hours": 6, "bedtime": "01:30", "wake_time": "07:30"},
                 ]
             }
         ),
@@ -132,6 +156,7 @@ async def test_daily_log_batch_pending_action_executes_logs(monkeypatch):
     assert scorecard.hydration_count == 1
     assert scorecard.meals_count == 1
     assert scorecard.protein_hit is True
+    assert scorecard.sleep_hours == 6
 
 
 @pytest.mark.asyncio

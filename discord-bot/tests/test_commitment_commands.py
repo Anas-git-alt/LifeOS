@@ -222,6 +222,49 @@ async def test_agent_daily_log_proposal_uses_reaction_approval(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_agent_daily_log_reaction_continues_original_question(monkeypatch):
+    calls = []
+    channel = _Channel()
+
+    async def _fake_api_post(path: str, payload: dict):
+        calls.append((path, payload))
+        if path == "/agents/chat" and len([call for call in calls if call[0] == "/agents/chat"]) == 1:
+            return {
+                "response": "I can log this in Today: sleep 6h, hydration x1.",
+                "pending_action_id": 44,
+                "pending_action_type": "daily_log_batch",
+                "session_id": 7,
+                "session_title": "Should today",
+            }
+        if path == "/approvals/decide":
+            return {"id": 44, "status": "executed", "result": "Logged: sleep and water"}
+        if path == "/agents/chat":
+            assert payload["message"] == "what should i do today?"
+            return {"response": "Do invoice first.", "session_id": 7, "session_title": "Should today"}
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr("bot.cogs.agents.api_post", _fake_api_post)
+    bot = type("Bot", (), {"user": _Dummy(999), "get_channel": lambda self, channel_id: channel})()
+    cog = AgentsCog(bot=bot)
+    ctx = _Ctx()
+
+    await cog.ask_agent.callback(
+        cog,
+        ctx,
+        agent_name="sandbox",
+        message="what should i do today? i slept at 1:30 and wokeup at 7:30, drnk a cup of water",
+    )
+
+    sent = ctx.sent_objects[0]
+    assert cog.pending_daily_log_actions[sent.id]["followup_request"] == "what should i do today?"
+
+    await cog.approve_daily_log_reaction(_ReactionPayload(message_id=sent.id))
+
+    assert channel.sent_messages[0].startswith("Daily log executed")
+    assert channel.sent_embeds[-1].description == "Do invoice first."
+
+
+@pytest.mark.asyncio
 async def test_daily_log_proposal_reply_replaces_with_correction(monkeypatch):
     calls = []
 

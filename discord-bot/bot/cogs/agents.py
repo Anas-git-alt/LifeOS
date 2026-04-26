@@ -212,6 +212,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         result: dict,
         *,
         ctx=None,
+        original_message: str | None = None,
         guild_id: int | None = None,
         channel_id: int | None = None,
         author_id: int | None = None,
@@ -250,6 +251,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                     "guild_id": int(guild_id or 0),
                     "channel_id": int(channel_id or 0),
                     "author_id": int(author_id or 0),
+                    "followup_request": self._extract_followup_request(original_message or ""),
                 }
                 await first_sent.add_reaction("✅")
             except Exception:
@@ -278,6 +280,16 @@ class AgentsCog(commands.Cog, name="Agents"):
                 True,
             )
         return int(session_id), None, True
+
+    @staticmethod
+    def _extract_followup_request(message: str) -> str | None:
+        text = str(message or "").strip()
+        if "?" not in text:
+            return None
+        question = text.split("?", 1)[0].strip()
+        if not question:
+            return None
+        return f"{question}?"
 
     async def _send_capture_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
@@ -471,7 +483,13 @@ class AgentsCog(commands.Cog, name="Agents"):
                     else:
                         raise
 
-                await self._send_agent_result(result=result, destination=ctx, agent_name=agent_name, ctx=ctx)
+                await self._send_agent_result(
+                    result=result,
+                    destination=ctx,
+                    agent_name=agent_name,
+                    ctx=ctx,
+                    original_message=message,
+                )
             except Exception as exc:
                 await ctx.send(f"Error contacting agent: {self._trim_error(exc)}")
 
@@ -763,6 +781,24 @@ class AgentsCog(commands.Cog, name="Agents"):
             status = result.get("status") or "approved"
             detail = result.get("result") or result.get("message") or "Logged."
             await channel.send(f"Daily log {status}: {detail[:500]}")
+            followup_request = pending_log.get("followup_request")
+            if followup_request and str(status).lower() in {"approved", "executed"}:
+                try:
+                    followup = await self._send_agent_chat(
+                        agent_name=pending_log.get("agent_name") or "sandbox",
+                        message=followup_request,
+                        session_id=pending_log.get("session_id"),
+                    )
+                    await self._send_agent_result(
+                        destination=channel,
+                        agent_name=pending_log.get("agent_name") or "sandbox",
+                        result=followup,
+                        guild_id=pending_log.get("guild_id"),
+                        channel_id=pending_log.get("channel_id"),
+                        author_id=pending_log.get("author_id"),
+                    )
+                except Exception:
+                    await channel.send("Daily log applied, but I could not continue the follow-up answer.")
 
     @commands.command(name="capturefollow")
     async def capture_follow(self, ctx, *, message: str):
