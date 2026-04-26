@@ -11,6 +11,8 @@ from app.models import AuditLog, PendingAction
 from app.services.agent_state import AgentStateUnavailableError
 from app.services.openviking_client import OpenVikingUnavailableError
 from app.services.orchestrator import (
+    _assistant_greeting_reply,
+    _extract_conversational_task_actions_from_context,
     _extract_and_upsert_intake_entry,
     _extract_intake_payload,
     _extract_natural_task_actions_from_text,
@@ -402,6 +404,36 @@ def test_extract_wedding_suit_actions_from_context_confirmation():
     assert actions[2]["details"]["due_at"] == "2026-05-03T12:00:00+01:00"
 
 
+def test_extract_conversational_task_actions_from_context():
+    context = [
+        {
+            "role": "assistant",
+            "content": (
+                "Sure thing! I'll add two tasks for you:\n\n"
+                "Take suit to ironing shop - Thursday April 30, 2026 (any time that works for you)\n"
+                "Pick up suit from ironing shop - Saturday May 2, 2026 morning (before the wedding)"
+            ),
+        }
+    ]
+
+    actions = _extract_conversational_task_actions_from_context(context)
+
+    assert [action["details"]["title"] for action in actions] == [
+        "Take suit to ironing shop",
+        "Pick up suit from ironing shop",
+    ]
+    assert actions[0]["details"]["due_at"] == "2026-04-30T12:00:00+01:00"
+    assert actions[1]["details"]["due_at"] == "2026-05-02T10:00:00+01:00"
+
+
+def test_assistant_greeting_reply_for_work_ai():
+    reply = _assistant_greeting_reply("work-ai-influencer", "Hello")
+
+    assert reply is not None
+    assert "Hello." in reply
+    assert "LifeOS memory" in reply
+
+
 @pytest.mark.asyncio
 async def test_handle_message_executes_confirmed_structured_task(monkeypatch):
     agent = _make_agent(workspace_enabled=False)
@@ -526,6 +558,69 @@ async def test_handle_message_executes_wedding_tasks_from_context(monkeypatch):
     assert executor.await_count == 1
     assert len(executor.await_args.kwargs["actions"]) == 3
     assert "Drop off suit" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_simple_yes_executes_conversational_task_context(monkeypatch):
+    agent = _make_agent(workspace_enabled=True)
+    factory = _FakeSessionFactory(agent)
+    context = [
+        {
+            "role": "assistant",
+            "content": (
+                "Sure thing! I'll add two tasks for you:\n\n"
+                "Take suit to ironing shop - Thursday April 30, 2026 (any time that works for you)\n"
+                "Pick up suit from ironing shop - Saturday May 2, 2026 morning (before the wedding)"
+            ),
+        }
+    ]
+    chat_completion = AsyncMock(return_value="should not be used")
+    executor = AsyncMock(return_value=(True, "Tracked #1: Take suit to ironing shop\nTracked #2: Pick up suit from ironing shop"))
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=context))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator._execute_structured_actions_now", executor)
+    monkeypatch.setattr("app.services.orchestrator.get_agent_workspace_paths", lambda _agent: ["/workspace"])
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="yes",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert chat_completion.await_count == 0
+    assert executor.await_count == 1
+    assert "Tracked #1" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_work_ai_hello_skips_llm(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    agent.name = "work-ai-influencer"
+    factory = _FakeSessionFactory(agent)
+    chat_completion = AsyncMock(return_value="should not be used")
+
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", chat_completion)
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="work-ai-influencer",
+        user_message="Hello",
+        approval_policy="auto",
+        session_enabled=False,
+    )
+
+    assert chat_completion.await_count == 0
+    assert result["response"].startswith("Hello.")
 
 
 @pytest.mark.asyncio

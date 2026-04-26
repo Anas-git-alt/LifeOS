@@ -139,9 +139,14 @@ _NATURAL_TASK_PROPOSAL_RE = re.compile(
 )
 _TASK_FIELD_RE = re.compile(r"^(task|domain|due|notes?)\s*:\s*(.+)$", re.IGNORECASE)
 _CANONICAL_DOMAINS = {"deen", "family", "work", "health", "planning"}
+_GREETING_ONLY_RE = re.compile(r"^\s*(hello|hi|hey|salam|salam alaikum|assalamu alaikum)[!. ]*\s*$", re.IGNORECASE)
 _MONTH_DATE_RE = (
     r"(January|February|March|April|May|June|July|August|September|October|November|December)"
     r"\s+\d{1,2},\s+\d{4}"
+)
+_CONVERSATIONAL_TASK_LINE_RE = re.compile(
+    rf"^(?P<title>[^:\n]+?)\s+[–-]\s+(?P<timing>.*?{_MONTH_DATE_RE}.*)$",
+    re.IGNORECASE,
 )
 
 
@@ -400,6 +405,21 @@ def _is_task_add_confirmation(user_message: str) -> bool:
     return bool(_TASK_ADD_CONFIRMATION_RE.search(text)) and not bool(_ACTION_NEGATION_RE.search(text))
 
 
+def _looks_like_lifeos_task_request(user_message: str) -> bool:
+    text = str(user_message or "")
+    if not text or _ACTION_NEGATION_RE.search(text):
+        return False
+    if _WORKSPACE_CONTEXT_PATTERN.search(text):
+        return False
+    return bool(
+        re.search(
+            r"\b(task|tasks|reminder|reminders|commitment|commitments|wedding|weding|today item|life item|follow[- ]?up)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _format_structured_pending_response(action: dict, pending_id: int) -> str:
     details = action.get("details") or {}
     title = details.get("title") or action.get("summary") or "item"
@@ -515,6 +535,12 @@ def _extract_latest_task_actions_from_context(context: list[dict[str, object]] |
     return []
 
 
+def _assistant_greeting_reply(agent_name: str, user_message: str) -> str | None:
+    if agent_name == "work-ai-influencer" and _GREETING_ONLY_RE.match(user_message or ""):
+        return "Hello. I can help with work tasks, AI content ideas, or recalling prior work details from LifeOS memory."
+    return None
+
+
 def _parse_month_date(value: str) -> datetime | None:
     try:
         return datetime.strptime(value.strip(), "%B %d, %Y")
@@ -534,19 +560,69 @@ def _first_context_date(text: str, pattern: str) -> datetime | None:
     return _parse_month_date(date_match.group(0)) if date_match else None
 
 
+def _parse_due_from_timing_text(timing_text: str) -> str | None:
+    date_match = re.search(_MONTH_DATE_RE, timing_text or "", re.IGNORECASE)
+    if not date_match:
+        return None
+    day = _parse_month_date(date_match.group(0))
+    if not day:
+        return None
+    lowered = str(timing_text or "").lower()
+    hour = 10 if "morning" in lowered or "am" in lowered else 12
+    return _date_iso(day, hour)
+
+
+def _extract_conversational_task_actions_from_context(context: list[dict[str, object]] | None) -> list[dict]:
+    for message in reversed(context or []):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        content = str(message.get("content") or "")
+        if not re.search(r"\b(task|tasks|reminder|reminders)\b", content, re.IGNORECASE):
+            continue
+        raw_actions: list[dict] = []
+        for raw_line in content.splitlines():
+            line = _clean_natural_task_line(raw_line)
+            match = _CONVERSATIONAL_TASK_LINE_RE.match(line)
+            if not match:
+                continue
+            title = match.group("title").strip()
+            due_at = _parse_due_from_timing_text(match.group("timing"))
+            if not title or not due_at:
+                continue
+            raw_actions.append(
+                {
+                    "action_type": "task_create",
+                    "summary": f"Create task: {title}",
+                    "risk_level": "low",
+                    "details": {
+                        "title": title,
+                        "domain": "planning",
+                        "kind": "task",
+                        "priority": "medium",
+                        "due_at": due_at,
+                        "notes": match.group("timing").strip(),
+                    },
+                }
+            )
+        actions = _normalise_structured_actions(raw_actions)
+        if actions:
+            return actions
+    return []
+
+
 def _extract_wedding_suit_actions_from_context(
     context: list[dict[str, object]] | None,
     user_message: str,
 ) -> list[dict]:
     text = user_message or ""
+    context_text = "\n".join(str(item.get("content") or "") for item in (context or [])[-8:])
     if _ACTION_NEGATION_RE.search(text):
         return []
-    if not (
-        re.search(r"\bwedding|weding|suit|ironing\b", text, re.IGNORECASE)
-        and (_TASK_ADD_CONFIRMATION_RE.search(text) or _TASK_CREATE_REQUEST_RE.search(text))
-    ):
+    request_like = _TASK_ADD_CONFIRMATION_RE.search(text) or _TASK_CREATE_REQUEST_RE.search(text) or _ACTION_CONFIRMATION_RE.search(text)
+    if not request_like:
         return []
-    context_text = "\n".join(str(item.get("content") or "") for item in (context or [])[-8:])
+    if not re.search(r"\bwedding|weding|suit|ironing\b", f"{text}\n{context_text}", re.IGNORECASE):
+        return []
     wedding = _first_context_date(context_text, rf"\bwedding\b[^\n]*?{_MONTH_DATE_RE}") or _first_context_date(
         context_text, rf"\bMay\s+\d{{1,2}},\s+\d{{4}}\b"
     )
@@ -1014,7 +1090,7 @@ async def handle_message(
             }
         workspace_paths = get_agent_workspace_paths(agent)
         if agent.workspace_enabled:
-            if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or ""):
+            if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or "") and not _looks_like_lifeos_task_request(user_message):
                 system_prompt = (
                     f"{system_prompt}\n"
                     "--- WORKSPACE ACCESS ---\n"
@@ -1059,10 +1135,16 @@ async def handle_message(
                 direct_memory_answer = None
             if direct_memory_answer:
                 response_text = direct_memory_answer
+            if response_text is None:
+                response_text = _assistant_greeting_reply(agent_name, user_message)
             if response_text is None and (
-                _is_task_add_confirmation(user_message) or _TASK_CREATE_REQUEST_RE.search(user_message or "")
+                _is_task_add_confirmation(user_message)
+                or _TASK_CREATE_REQUEST_RE.search(user_message or "")
+                or _ACTION_CONFIRMATION_RE.search(user_message or "")
             ):
                 context_actions = _extract_latest_task_actions_from_context(context)
+                if not context_actions:
+                    context_actions = _extract_conversational_task_actions_from_context(context)
                 if not context_actions:
                     context_actions = _extract_wedding_suit_actions_from_context(context, user_message)
                 if context_actions:
