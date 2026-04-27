@@ -90,3 +90,4 @@ async def test_submit_job_proposal_serializes_once_run_at_as_utc(monkeypatch):
     assert details["run_at"].endswith("+00:00")
     assert details["notification_mode"] == "channel"
     assert details["target_channel_id"] == "1486255985587781702"
+    assert ctx.send.await_args.args[0].startswith("Job proposal queued; not active until approved.")

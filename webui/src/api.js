@@ -343,6 +343,14 @@ export const getMemoryEvents = (params = {}) => {
   const query = new URLSearchParams(params).toString();
   return request(`/memory/events${query ? `?${query}` : ""}`);
 };
+export const getPrivateMemoryEvents = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/memory/private/events${query ? `?${query}` : ""}`);
+};
+export const archivePrivateMemoryEvent = (eventId) =>
+  request(`/memory/private/events/${eventId}/archive`, { method: "POST", body: JSON.stringify({}) });
+export const restorePrivateMemoryEvent = (eventId) =>
+  request(`/memory/private/events/${eventId}/restore`, { method: "POST", body: JSON.stringify({}) });
 export const curateMemoryEvent = (eventId) =>
   request(`/memory/events/${eventId}/curate`, { method: "POST", body: JSON.stringify({}), timeoutMs: 30000 });
 export const getVaultConflicts = () => request("/vault/conflicts");

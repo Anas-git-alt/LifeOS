@@ -1,7 +1,9 @@
 """Agent and life workflow commands."""
 
 from datetime import datetime, timezone
+import logging
 import re
+import uuid
 
 import discord
 import httpx
@@ -15,6 +17,7 @@ VALID_ITEM_STATUSES = {"open", "done", "missed"}
 NO_APPROVAL_AGENTS = {"daily-planner", "weekly-review"}
 INTAKE_AGENT_NAME = "intake-inbox"
 COMMITMENT_SESSION_NAME = "commitment-capture"
+logger = logging.getLogger(__name__)
 
 
 class AgentsCog(commands.Cog, name="Agents"):
@@ -28,9 +31,21 @@ class AgentsCog(commands.Cog, name="Agents"):
         if isinstance(exc, httpx.HTTPStatusError):
             status = exc.response.status_code
             path = exc.request.url.path if exc.request else "request"
+            trace_id = None
             detail = exc.response.text.strip()
+            try:
+                payload = exc.response.json()
+                raw_detail = payload.get("detail", payload)
+                if isinstance(raw_detail, dict):
+                    trace_id = raw_detail.get("trace_id")
+                    detail = raw_detail.get("message") or raw_detail.get("error") or detail
+                elif raw_detail:
+                    detail = str(raw_detail)
+            except Exception:
+                pass
             if detail:
-                return f"Backend {status} at {path}: {detail[:max_len - 32]}"
+                suffix = f" trace_id={trace_id}" if trace_id else ""
+                return f"Backend {status} at {path}: {detail[:max_len - 48]}{suffix}"
             return f"Backend {status} at {path}"
         text = str(exc).strip() or exc.__class__.__name__
         return text[:max_len]
@@ -211,14 +226,40 @@ class AgentsCog(commands.Cog, name="Agents"):
         message: str,
         session_id: int | None = None,
         transient_system_note: str | None = None,
+        source_message_id: str | None = None,
+        source_channel_id: str | None = None,
     ) -> dict:
         approval_policy = "never" if agent_name in NO_APPROVAL_AGENTS else "auto"
-        payload = {"agent_name": agent_name, "message": message, "approval_policy": approval_policy}
+        trace_id = uuid.uuid4().hex[:12]
+        payload = {
+            "agent_name": agent_name,
+            "message": message,
+            "approval_policy": approval_policy,
+            "trace_id": trace_id,
+            "source_message_id": source_message_id,
+            "source_channel_id": source_channel_id,
+        }
         if session_id:
             payload["session_id"] = session_id
         if transient_system_note:
             payload["transient_system_note"] = transient_system_note
-        return await api_post("/agents/chat", payload)
+        result = await api_post("/agents/chat", payload)
+        result.setdefault("trace_id", trace_id)
+        return result
+
+    async def _send_agent_result_or_recover(self, destination, agent_name: str, result: dict, **kwargs) -> None:
+        trace_id = result.get("trace_id")
+        try:
+            await self._send_agent_result(destination=destination, agent_name=agent_name, result=result, **kwargs)
+        except Exception as exc:
+            logger.exception("agent_chat_phase trace_id=%s phase=discord_response_sent status=failed", trace_id)
+            response = str(result.get("response") or "").strip()
+            warning = f"Discord render/send hit an error after backend answered. trace_id={trace_id or 'n/a'}"
+            if response:
+                safe_text = response[:1700].rstrip()
+                await destination.send(f"{safe_text}\n\nNote: {warning}")
+            else:
+                await destination.send(f"Agent answered, but Discord could not render it. {warning}")
 
     async def _send_agent_result(
         self,
@@ -244,6 +285,13 @@ class AgentsCog(commands.Cog, name="Agents"):
             self.active_sessions[self._session_key_from_ids(guild_id, channel_id, author_id, agent_name)] = int(returned_session_id)
 
         chunks = self._split_discord_chunks(response)
+        logger.info(
+            "agent_chat_phase trace_id=%s phase=discord_response_rendered agent=%s chunks=%s session_id=%s",
+            result.get("trace_id"),
+            agent_name,
+            len(chunks),
+            returned_session_id,
+        )
         first_sent = None
         for index, chunk in enumerate(chunks, start=1):
             embed = discord.Embed(title=f"{agent_name}", description=chunk, color=0x2563EB)
@@ -277,6 +325,13 @@ class AgentsCog(commands.Cog, name="Agents"):
         warnings = [str(item).strip() for item in (result.get("warnings") or []) if str(item).strip()]
         if warnings:
             await destination.send(f"Note: {warnings[0][:350]}")
+        logger.info(
+            "agent_chat_phase trace_id=%s phase=discord_response_sent agent=%s session_id=%s pending_action_id=%s",
+            result.get("trace_id"),
+            agent_name,
+            returned_session_id,
+            pending_action_id,
+        )
 
     async def _resolve_commitment_session_from_inbox(self, inbox_id: int) -> tuple[int | None, str | None, bool]:
         try:
@@ -552,17 +607,31 @@ class AgentsCog(commands.Cog, name="Agents"):
         async with ctx.typing():
             try:
                 current_session_id = self._get_active_session_id(ctx, agent_name)
+                source_message_id = str(getattr(getattr(ctx, "message", None), "id", "") or "")
+                source_channel_id = str(getattr(getattr(ctx, "channel", None), "id", "") or "")
                 try:
-                    result = await self._send_agent_chat(agent_name=agent_name, message=message, session_id=current_session_id)
+                    result = await self._send_agent_chat(
+                        agent_name=agent_name,
+                        message=message,
+                        session_id=current_session_id,
+                        source_message_id=source_message_id,
+                        source_channel_id=source_channel_id,
+                    )
                 except Exception as first_error:
                     text = str(first_error).lower()
                     if current_session_id and "session" in text and "not found" in text:
                         self._set_active_session_id(ctx, agent_name, None)
-                        result = await self._send_agent_chat(agent_name=agent_name, message=message, session_id=None)
+                        result = await self._send_agent_chat(
+                            agent_name=agent_name,
+                            message=message,
+                            session_id=None,
+                            source_message_id=source_message_id,
+                            source_channel_id=source_channel_id,
+                        )
                     else:
                         raise
 
-                await self._send_agent_result(
+                await self._send_agent_result_or_recover(
                     result=result,
                     destination=ctx,
                     agent_name=agent_name,
@@ -706,6 +775,9 @@ class AgentsCog(commands.Cog, name="Agents"):
                         "message": message,
                         "new_session": True,
                         "source": "discord_capture",
+                        "source_message_id": str(getattr(getattr(ctx, "message", None), "id", "") or ""),
+                        "source_channel_id": str(getattr(ctx.channel, "id", "") or ""),
+                        **self._current_channel_payload(ctx),
                     }
                 )
                 route = result.get("route")
@@ -786,7 +858,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                 message=content,
                 session_id=pending_log.get("session_id"),
             )
-            await self._send_agent_result(
+            await self._send_agent_result_or_recover(
                 destination=message.channel,
                 agent_name=pending_log.get("agent_name") or "sandbox",
                 result=result,
@@ -873,7 +945,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                         session_id=pending_log.get("session_id"),
                         transient_system_note=transient_note,
                     )
-                    await self._send_agent_result(
+                    await self._send_agent_result_or_recover(
                         destination=channel,
                         agent_name=pending_log.get("agent_name") or "sandbox",
                         result=followup,
@@ -912,6 +984,9 @@ class AgentsCog(commands.Cog, name="Agents"):
                         "new_session": False,
                         "source": "discord_capture_followup",
                         "route_hint": route_hint,
+                        "source_message_id": str(getattr(getattr(ctx, "message", None), "id", "") or ""),
+                        "source_channel_id": str(getattr(ctx.channel, "id", "") or ""),
+                        **self._current_channel_payload(ctx),
                     },
                 )
                 if result.get("session_id"):

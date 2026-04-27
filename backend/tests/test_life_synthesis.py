@@ -105,7 +105,7 @@ async def _insert_synthesis_entry(*, session_id: int, raw_text: str, payload: di
 
 
 def test_inbox_capture_synthesizes_priorities_and_auto_creates_items(monkeypatch):
-    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
         assert agent_name == "intake-inbox"
         await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message)
         return {
@@ -173,7 +173,7 @@ def test_inbox_capture_synthesizes_priorities_and_auto_creates_items(monkeypatch
 
 
 def test_inbox_capture_infers_due_time_from_raw_message(monkeypatch):
-    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
         await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message)
         return {"response": "Captured.", "session_id": session_id, "session_title": "Raw life dump"}
 
@@ -235,7 +235,7 @@ def test_inbox_capture_does_not_apply_invoice_deadline_to_all_split_items(monkey
         "wiki_facts": [],
     }
 
-    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
         await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=payload_with_mixed_kinds)
         return {"response": "Captured.", "session_id": session_id, "session_title": "Raw life dump"}
 
@@ -252,6 +252,8 @@ def test_inbox_capture_does_not_apply_invoice_deadline_to_all_split_items(monkey
                     "family call tomorrow after Asr"
                 ),
                 "new_session": True,
+                "source_message_id": "discord-123",
+                "source_channel_id": "channel-456",
             },
         )
 
@@ -265,6 +267,55 @@ def test_inbox_capture_does_not_apply_invoice_deadline_to_all_split_items(monkey
     assert by_title["Family call tomorrow after Asr"]["kind"] == "task"
     assert by_title["Family call tomorrow after Asr"]["due_at"] is None
     assert by_title["Family call tomorrow after Asr"]["priority"] == "medium"
+
+
+def test_inbox_capture_semantic_guard_blocks_unrelated_item(monkeypatch):
+    mismatched_payload = {
+        "items": [
+            {
+                "title": "Fix bedtime routine",
+                "kind": "habit",
+                "domain": "health",
+                "status": "ready",
+                "summary": "Bedtime routine needs work.",
+                "follow_up_questions": [],
+                "priority": "high",
+                "priority_score": 90,
+            }
+        ],
+        "wiki_facts": [],
+    }
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=mismatched_payload)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Wedding logistics"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.search_shared_memory", lambda **_kwargs: [])
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={
+                "message": (
+                    "I have a wedding next Sunday 3rd May, need to take my suit to the ironing shop "
+                    "Thursday and pick it up Saturday morning"
+                ),
+                "new_session": True,
+                "source_message_id": "discord-123",
+                "source_channel_id": "channel-456",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["life_items"] == []
+    assert payload["entries"][0]["status"] == "clarifying"
+    assert "Fix bedtime" not in payload["entries"][0]["title"]
+    assert payload["entries"][0]["follow_up_questions"]
+    assert payload["entries"][0]["structured_data"]["raw_user_input"].startswith("I have a wedding")
+    assert payload["entries"][0]["structured_data"]["capture_source"]["source_message_id"] == "discord-123"
 
 
 def test_inbox_capture_uses_raw_followup_to_rescue_sleep_and_family(monkeypatch):
@@ -283,7 +334,7 @@ def test_inbox_capture_uses_raw_followup_to_rescue_sleep_and_family(monkeypatch)
         "wiki_facts": [],
     }
 
-    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
         await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=followup_payload)
         return {"response": "Captured.", "session_id": session_id, "session_title": "Follow-up"}
 
@@ -345,7 +396,7 @@ def test_inbox_capture_skips_duplicate_pending_wiki_proposal(monkeypatch):
             )
             await db.commit()
 
-    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool):
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
         await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=duplicate_payload)
         return {"response": "Captured.", "session_id": session_id, "session_title": "Duplicate"}
 

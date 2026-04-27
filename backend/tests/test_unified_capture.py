@@ -225,6 +225,23 @@ async def test_commitment_due_inference_combines_weekday_and_followup_time(monke
     assert due_at.minute == 50
 
 
+@pytest.mark.asyncio
+async def test_capture_due_inference_uses_casablanca_for_relative_dates():
+    fixed_now = datetime(2026, 4, 26, 0, 0, tzinfo=timezone.utc)
+    cases = [
+        ("tomorrow at 9am", datetime(2026, 4, 27, 8, 0)),
+        ("tomorrow at 2pm", datetime(2026, 4, 27, 13, 0)),
+        ("Monday 4pm", datetime(2026, 4, 27, 15, 0)),
+        ("next Sunday 3rd May", datetime(2026, 5, 3, 8, 0)),
+        ("Thursday", datetime(2026, 4, 30, 8, 0)),
+        ("Saturday morning", datetime(2026, 5, 2, 8, 0)),
+    ]
+
+    for phrase, expected_utc in cases:
+        due_at = await _infer_capture_due_at(phrase, None, "Africa/Casablanca", now_utc=fixed_now)
+        assert due_at == expected_utc
+
+
 def test_commitment_followup_note_tells_agent_to_merge_answers():
     note = _commitment_followup_note(
         SimpleNamespace(

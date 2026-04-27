@@ -386,7 +386,7 @@ class AutomationCog(commands.Cog, name="Automation"):
         await ctx.send(
             "\n".join(
                 [
-                    f"Job proposal queued as PendingAction #{response['pending_action_id']}.",
+                    f"Job proposal queued; not active until approved. PendingAction #{response['pending_action_id']}.",
                     f"Agent: `{details['agent_name']}`",
                     f"Schedule: {self._schedule_summary(details)}",
                     f"Notify: {self._notification_summary(details)}",

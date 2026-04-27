@@ -14,6 +14,8 @@ from app.models import (
     JobReplyIntakeResponse,
     MeetingIntakeRequest,
     MeetingIntakeResponse,
+    MemoryEvent,
+    PrivateMemoryEventResponse,
     SharedMemoryPromoteRequest,
     SharedMemoryPromoteResponse,
     SharedMemoryProposalApplyRequest,
@@ -26,6 +28,7 @@ from app.services.shared_memory import (
     promote_to_shared_memory,
     search_shared_memory,
 )
+from app.services.memory_ledger import list_private_memory_events, set_private_memory_event_status
 from app.services.context_events import (
     capture_job_reply,
     capture_meeting_summary,
@@ -34,6 +37,42 @@ from app.services.context_events import (
 )
 
 router = APIRouter()
+
+
+def _why_saved(row: MemoryEvent) -> str:
+    event_type = str(row.event_type or "user_fact")
+    if event_type == "user_turn":
+        return "Saved from user-authored chat turn for future context."
+    if "capture" in event_type:
+        return "Saved from capture so future agent turns can recall source details."
+    if event_type == "daily_log":
+        return "Saved from Today/daily log action for accountability history."
+    return "Saved as user-authored private memory."
+
+
+def _private_memory_response(row: MemoryEvent) -> PrivateMemoryEventResponse:
+    return PrivateMemoryEventResponse(
+        id=row.id,
+        source=row.source,
+        source_agent=row.source_agent,
+        source_session_id=row.source_session_id,
+        source_message=row.raw_text,
+        source_uri=row.source_uri,
+        scope="private",
+        confidence="medium",
+        status=row.status,
+        event_type=row.event_type,
+        domain=row.domain,
+        kind=row.kind,
+        title=row.title,
+        summary=row.summary,
+        raw_text=row.raw_text,
+        why_saved=_why_saved(row),
+        linked_life_item_id=row.linked_life_item_id,
+        linked_intake_entry_id=row.linked_intake_entry_id,
+        linked_job_id=row.linked_job_id,
+        created_at=row.created_at,
+    )
 
 
 async def _load_agent(agent_name: str) -> Agent:
@@ -55,6 +94,45 @@ async def shared_memory_search(
     agent = await _load_agent(agent_name)
     hits = await search_shared_memory(query=query, agent=agent, scope=scope, domain=domain)
     return SharedMemorySearchResponse(query=query, scope=scope, domain=domain, hits=hits)
+
+
+@router.get(
+    "/private/events",
+    response_model=list[PrivateMemoryEventResponse],
+    dependencies=[Depends(require_api_token)],
+)
+async def list_private_memory(
+    status: str | None = Query(default="active", pattern="^(active|archived|deleted)$"),
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    rows = await list_private_memory_events(status=status, limit=limit)
+    return [_private_memory_response(row) for row in rows]
+
+
+@router.post(
+    "/private/events/{event_id}/archive",
+    response_model=PrivateMemoryEventResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def archive_private_memory(event_id: int):
+    try:
+        row = await set_private_memory_event_status(event_id, "archived")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _private_memory_response(row)
+
+
+@router.post(
+    "/private/events/{event_id}/restore",
+    response_model=PrivateMemoryEventResponse,
+    dependencies=[Depends(require_api_token)],
+)
+async def restore_private_memory(event_id: int):
+    try:
+        row = await set_private_memory_event_status(event_id, "active")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _private_memory_response(row)
 
 
 @router.post("/promote", response_model=SharedMemoryPromoteResponse, dependencies=[Depends(require_api_token)])

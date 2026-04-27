@@ -5,6 +5,7 @@ Use this suite on the staging Discord bot after deploying a feature branch. It i
 ## Setup
 
 - Run only against staging, not prod.
+- Start from wiped staging data for release UAT. If not already wiped, stop and run the staging clean-data playbook first.
 - Use a unique tag for every run, for example `UAT-2026-04-26-agentic-capture`.
 - Keep one Discord channel open for capture tests and one for general agent tests if possible.
 - Record pass/fail after each block. If a command creates an item, note its item id.
@@ -38,7 +39,23 @@ Pass:
 
 - Same sandbox session is active.
 - Recall answer includes `blue cactus staging marker`.
+- WebUI agent history for that sandbox session shows the same assistant answer.
+- No Discord `Backend 500`; if any recoverable warning appears, it includes `trace_id`.
 - No new daily log proposal appears.
+
+Session isolation:
+
+```text
+!newsession sandbox UAT isolated second session
+!sandbox what exact phrase did I ask you to remember?
+!usesession sandbox <first_session_id>
+!sandbox what exact phrase did I ask you to remember?
+```
+
+Pass:
+
+- Second session does not invent the phrase from the first session unless durable memory is relevant and cited as saved context.
+- Switching back recalls the first session phrase.
 
 Other agents:
 
@@ -75,6 +92,7 @@ Pass:
 
 - No `404 Not Found`.
 - Bot tracks 3 items or clearly reports 3 planned/tracked tasks.
+- Bot must not create unrelated items such as sleep/bedtime/health routines.
 - Expected tasks:
   - Take suit to ironing shop.
   - Pick up suit from ironing shop.
@@ -113,6 +131,17 @@ Pass:
 - Same capture session continues.
 - The resulting item is ready/tracked or the remaining question is specific and useful.
 
+Semantic mismatch guard:
+
+```text
+!capture UAT-2026-04-26-agentic-capture: my laptop bag zipper is broken and I need to repair it before travel
+```
+
+Pass:
+
+- Created/clarifying item is about laptop bag repair/travel logistics.
+- No unrelated health, bedtime, family, or generic fake task appears.
+
 ## 3. Commitment Capture And Follow-Up
 
 Clear commitment:
@@ -146,6 +175,7 @@ Pass:
 - Follow-up updates same HR item, no duplicate spam.
 - Priority rises because deadline is near.
 - Sandbox answer recalls the paper list and the deadline.
+- WebUI Memory Ledger shows the HR capture memory with source, created time, status, and why saved.
 
 Explicit `commitfollow` by inbox id:
 
@@ -219,6 +249,7 @@ Create a low-risk task through agent chat:
 Pass:
 
 - Either task is created if action is explicit and allowed, or a pending approval appears.
+- History/result text names the visible state: created or queued pending.
 - If pending appears, owner can approve:
 
 ```text
@@ -236,11 +267,14 @@ Pass:
 
 - Bot does not perform destructive action directly.
 - It asks for clarification, refuses, or queues approval depending on available tool scope.
+- If rejected or failed, no focus item/job is silently created.
+- WebUI Approvals/Audit view can show the pending/resolved action path.
 
 ## 6. Jobs And Scheduling Smoke
 
 ```text
 !schedule in 10 min remind me to review UAT staging capture results using sandbox silently
+!pending
 !jobs sandbox
 ```
 
@@ -252,10 +286,95 @@ If parser asks follow-up:
 
 Pass:
 
-- Job is created or a clear follow-up is asked.
-- `!jobs sandbox` shows the new job.
+- Before approval, bot says: `Job proposal queued; not active until approved.`
+- `!pending` shows the job proposal.
+- `!jobs sandbox` does not show it as active before approval.
 
-## 7. Prayer And Deen Smoke
+Approval path:
+
+```text
+!approve <pending_job_id>
+!jobs sandbox
+```
+
+Pass:
+
+- After approval, `!jobs sandbox` shows the new active job.
+
+Reject path:
+
+```text
+!schedule in 15 min remind me to reject this UAT job using sandbox silently
+!reject <pending_job_id>
+!jobs sandbox
+```
+
+Pass:
+
+- Rejected proposal does not create a job or focus item.
+
+## 7. Memory Visibility, Forget, Restore
+
+Use WebUI Memory Ledger.
+
+```text
+!sandbox UAT-2026-04-26-agentic-capture: remember that my staging note style preference is concise bullet summaries
+!sandbox what is my staging note style preference?
+```
+
+Pass:
+
+- Discord answer uses concise bullet summary preference.
+- WebUI Memory Ledger lists memory with source message, created_at, scope, confidence, status `active`, and why saved.
+
+Archive/forget:
+
+- In WebUI, archive that memory.
+
+```text
+!newsession sandbox UAT memory archive check
+!sandbox what is my staging note style preference?
+```
+
+Pass:
+
+- Archived memory no longer affects answer.
+- WebUI archived filter shows memory as `archived`.
+- Restore action returns it to active.
+
+## 8. Discord/WebUI Consistency Regression
+
+```text
+!newsession sandbox UAT consistency trace
+!sandbox UAT-2026-04-26-agentic-capture: remember this exact phrase: silver lantern trace marker
+!sandbox what exact phrase did I ask you to remember?
+!history sandbox
+```
+
+Pass:
+
+- Discord recall includes `silver lantern trace marker`.
+- WebUI session history shows same user turn and assistant recall.
+- No Discord `Backend 500`.
+- Retry same recall once; no duplicate pending action appears.
+
+## 9. Timezone Parser Checks
+
+Run from Africa/Casablanca staging profile.
+
+```text
+!commit UAT timezone: remind me tomorrow at 9am to check staging
+!commit UAT timezone: remind me tomorrow at 2pm to check staging
+!commit UAT timezone: remind me Monday 4pm to check staging
+!capture UAT timezone: wedding next Sunday 3rd May, take suit Thursday, pick it up Saturday morning
+```
+
+Pass:
+
+- User-facing due output shows local Africa/Casablanca time and UTC equivalent where available.
+- Tomorrow 9am/2pm, Monday 4pm, Thursday, Saturday morning, and Sunday 3rd May parse to expected local dates.
+
+## 10. Prayer And Deen Smoke
 
 ```text
 !prayertoday
@@ -271,7 +390,7 @@ Pass:
 - No backend errors.
 - Logs reflect the requested date where applicable.
 
-## 8. Cleanup
+## 11. Cleanup
 
 For each UAT-created Life item id recorded during testing:
 
@@ -314,6 +433,8 @@ Commitments: PASS/FAIL
 Daily logs: PASS/FAIL
 Approvals: PASS/FAIL
 Jobs: PASS/FAIL
+Memory archive/restore: PASS/FAIL
+Timezone parser: PASS/FAIL
 Prayer/deen: PASS/FAIL
 Cleanup: PASS/FAIL
 

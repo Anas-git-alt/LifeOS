@@ -270,6 +270,33 @@ async def test_handle_message_does_not_create_pending_for_informational_chat(mon
     assert any(isinstance(row, AuditLog) for row in factory.session.added)
     assert not any(isinstance(row, PendingAction) for row in factory.session.added)
     assert result["grounding"]["grounded"] is True
+    assert result["trace_id"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_returns_answer_when_post_model_parsing_fails(monkeypatch):
+    agent = _make_agent(workspace_enabled=False)
+    factory = _FakeSessionFactory(agent)
+    monkeypatch.setattr("app.services.orchestrator.async_session", factory)
+    monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.orchestrator.chat_completion", AsyncMock(return_value="Remembered phrase: blue cactus staging marker."))
+    monkeypatch.setattr("app.services.orchestrator.parse_workspace_actions", lambda _text: (_ for _ in ()).throw(RuntimeError("parser failed")))
+    monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
+    monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
+
+    result = await handle_message(
+        agent_name="sandbox",
+        user_message="remember this exact phrase blue cactus staging marker",
+        approval_policy="auto",
+        session_enabled=False,
+        trace_id="trace-blue",
+    )
+
+    assert result["trace_id"] == "trace-blue"
+    assert "blue cactus staging marker" in result["response"]
+    assert result["pending_action_id"] is None
+    assert any("trace-blue" in warning for warning in result["warnings"])
 
 
 @pytest.mark.asyncio

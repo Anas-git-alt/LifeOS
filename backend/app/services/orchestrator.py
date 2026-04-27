@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -876,13 +877,42 @@ async def handle_message(
     session_id: Optional[int] = None,
     session_enabled: bool = False,
     transient_system_note: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    source_message_id: Optional[str] = None,
+    source_channel_id: Optional[str] = None,
 ) -> dict:
     """Process user text through an agent with policy-based approvals."""
+    trace_id = (trace_id or uuid.uuid4().hex[:12]).strip()[:64]
     active_session = None
     response_warnings: list[str] = []
     state_packet: dict | None = None
     grounding: dict = {"grounded": False, "sources": []}
     context: list[dict[str, object]] | None = None
+
+    def _phase(phase: str, **fields) -> None:
+        payload = {key: value for key, value in fields.items() if value is not None}
+        logger.info(
+            "agent_chat_phase trace_id=%s phase=%s agent=%s session_id=%s fields=%s",
+            trace_id,
+            phase,
+            agent_name,
+            getattr(active_session, "id", session_id),
+            payload,
+        )
+
+    def _audit_payload(details: object | None = None) -> str:
+        payload = details if isinstance(details, dict) else {"details": details}
+        payload = dict(payload or {})
+        payload["_audit"] = {
+            "trace_id": trace_id,
+            "session_id": getattr(active_session, "id", session_id),
+            "source_message_id": source_message_id,
+            "source_channel_id": source_channel_id,
+            "source": source,
+        }
+        return json.dumps(payload, ensure_ascii=True)
+
+    _phase("request_received", source=source, source_message_id=source_message_id, source_channel_id=source_channel_id)
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.name == agent_name))
@@ -909,6 +939,7 @@ async def handle_message(
         if session_enabled:
             try:
                 active_session = await ensure_session(agent_name=agent_name, session_id=session_id)
+                _phase("session_loaded", session_title=active_session.title)
             except ValueError as exc:
                 return {
                     "response": str(exc),
@@ -916,6 +947,7 @@ async def handle_message(
                     "risk_level": "low",
                     "error_code": "session_not_found",
                     "grounding": grounding,
+                    "trace_id": trace_id,
                 }
 
         referenced_session_id = _extract_session_reference_id(user_message)
@@ -973,6 +1005,14 @@ async def handle_message(
                     "Ignore stale assistant daily-log proposal messages in chat memory; the approval already executed. "
                     "Do not ask the user to confirm that same log again and do not describe it as merely proposed.\n"
                 )
+        if agent_name in {"daily-planner", "weekly-review"}:
+            system_prompt = (
+                f"{system_prompt}\n"
+                "--- REPORTING GROUNDING CONTRACT ---\n"
+                "Use only facts present in LifeOS state, session memory, or explicit user text. "
+                "Do not invent tasks, wins, family updates, work facts, health facts, or completed items. "
+                "When data is missing, say unknown/not logged or ask for review.\n"
+            )
         try:
             state_packet = await build_agent_state_packet(
                 agent=agent,
@@ -1053,7 +1093,7 @@ async def handle_message(
                 agent_name=agent_name,
                 action_type="daily_log_batch",
                 summary=f"Proposed daily log: {proposal}"[:200],
-                details=json.dumps(daily_log_payload, ensure_ascii=True),
+                details=_audit_payload(daily_log_payload),
                 status=ActionStatus.PENDING,
                 risk_level="low",
             )
@@ -1069,11 +1109,12 @@ async def handle_message(
                 AuditLog(
                     agent_name=agent_name,
                     action="chat:daily_log_batch",
-                    details=final_response_text[:1000],
+                    details=_audit_payload({"response": final_response_text[:1000], "pending_action_id": pending.id}),
                     status="pending_approval",
                 )
             )
             await db.commit()
+            _phase("actions_applied_or_queued", visible_state="queued_pending", pending_action_id=pending.id)
             try:
                 await save_message(
                     agent_name,
@@ -1118,6 +1159,7 @@ async def handle_message(
                 "session_title": active_session.title if active_session else None,
                 "warnings": response_warnings,
                 "grounding": grounding,
+                "trace_id": trace_id,
             }
         workspace_paths = get_agent_workspace_paths(agent)
         if agent.workspace_enabled:
@@ -1326,18 +1368,51 @@ async def handle_message(
                         "grounding": grounding,
                     }
 
-        cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
-        intake_result = await _extract_and_upsert_intake_entry(
-            agent_name=agent_name,
-            response_text=cleaned_response,
-            user_message=user_message,
-            session_id=active_session.id if active_session else None,
+        _phase("model_response_created", response_chars=len(response_text or ""))
+        try:
+            cleaned_response, workspace_envelope = parse_workspace_actions(response_text)
+        except Exception as exc:
+            logger.exception("Workspace action parsing failed after model response trace_id=%s", trace_id)
+            cleaned_response = str(response_text or "").strip() or "I generated a reply, but response parsing failed."
+            workspace_envelope = None
+            _append_unique_warning(
+                response_warnings,
+                f"Action parsing failed after the answer was generated; no workspace action was applied. trace_id={trace_id}",
+            )
+        try:
+            intake_result = await _extract_and_upsert_intake_entry(
+                agent_name=agent_name,
+                response_text=cleaned_response,
+                user_message=user_message,
+                session_id=active_session.id if active_session else None,
+            )
+            if intake_result:
+                cleaned_response = intake_result["cleaned_text"]
+        except Exception as exc:
+            logger.exception("Intake extraction failed after model response trace_id=%s", trace_id)
+            _append_unique_warning(
+                response_warnings,
+                f"Capture extraction failed after the answer was generated; no hidden capture item was created. trace_id={trace_id}",
+            )
+        try:
+            cleaned_response, pending_payload = _extract_pending_approval_payload(cleaned_response)
+            machine_actions = _normalise_structured_actions([pending_payload]) if pending_payload else []
+            natural_actions = _extract_natural_task_actions_from_text(cleaned_response)
+        except Exception:
+            logger.exception("Action extraction failed after model response trace_id=%s", trace_id)
+            pending_payload = None
+            machine_actions = []
+            natural_actions = []
+            _append_unique_warning(
+                response_warnings,
+                f"Action extraction failed after the answer was generated; no hidden action was queued. trace_id={trace_id}",
+            )
+        _phase(
+            "actions_extracted",
+            machine_actions=len(machine_actions),
+            natural_actions=len(natural_actions),
+            workspace_actions=len(workspace_envelope.actions) if workspace_envelope and workspace_envelope.actions else 0,
         )
-        if intake_result:
-            cleaned_response = intake_result["cleaned_text"]
-        cleaned_response, pending_payload = _extract_pending_approval_payload(cleaned_response)
-        machine_actions = _normalise_structured_actions([pending_payload]) if pending_payload else []
-        natural_actions = _extract_natural_task_actions_from_text(cleaned_response)
         inferred_workspace_action = False
         if (
             agent.workspace_enabled
@@ -1415,7 +1490,7 @@ async def handle_message(
                         agent_name=agent_name,
                         action_type=action["action_type"],
                         summary=action["summary"],
-                        details=json.dumps(action["details"], ensure_ascii=True),
+                        details=_audit_payload(action["details"]),
                         status=ActionStatus.PENDING,
                         risk_level=action["risk_level"],
                     )
@@ -1430,6 +1505,12 @@ async def handle_message(
                     )
                     queued_lines.append(_format_structured_pending_response(action, pending.id))
                 final_response_text = "\n".join(queued_lines)
+        _phase(
+            "actions_applied_or_queued",
+            visible_state="queued_pending" if pending_id else "created" if structured_action_handled else "none",
+            pending_action_id=pending_id,
+            structured_action_handled=structured_action_handled,
+        )
 
         # Always persist the user turn immediately.
         try:
@@ -1481,6 +1562,7 @@ async def handle_message(
                 response_warnings,
                 "This turn could not be saved to OpenViking session memory, so session history may look incomplete until memory is healthy again.",
             )
+        _phase("memory_saved", warnings=len(response_warnings))
 
         if active_session:
             try:
@@ -1540,7 +1622,7 @@ async def handle_message(
                     agent_name=agent_name,
                     action_type=action_type,
                     summary=final_response_text[:200],
-                    details=final_response_text,
+                    details=_audit_payload({"response": final_response_text}),
                     status=ActionStatus.PENDING,
                     risk_level=risk_level,
                 )
@@ -1565,7 +1647,7 @@ async def handle_message(
         audit = AuditLog(
             agent_name=agent_name,
             action=f"{source}:{action_type}",
-            details=final_response_text[:1000],
+            details=_audit_payload({"response": final_response_text[:1000], "action_type": action_type, "pending_action_id": pending_id}),
             status="pending_approval" if pending_id else "completed",
         )
         db.add(audit)
@@ -1579,6 +1661,7 @@ async def handle_message(
             "session_title": active_session.title if active_session else None,
             "warnings": response_warnings,
             "grounding": grounding,
+            "trace_id": trace_id,
         }
 
 

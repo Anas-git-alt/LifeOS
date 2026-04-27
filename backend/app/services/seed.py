@@ -69,6 +69,7 @@ SCHEDULED_PROMPTS: dict[str, str] = {
         "🕌 PRAYER BLOCKS (non-negotiable)\n"
         "💼 WORK SHIFT: 14:00–00:00\n"
         "⏸️ BREAKS: 15 min after every 90-min focus block\n\n"
+        "Use only tasks and logs in provided LifeOS state. Do not invent current tasks. "
         "If no tasks available, output: \"What's the 1 most important thing today?\""
     ),
     "weekly-review": (
@@ -83,6 +84,7 @@ SCHEDULED_PROMPTS: dict[str, str] = {
         "## 💪 Health & Fitness\n"
         "## ❌ Missed (frame as growth areas, not failures)\n"
         "## 🎯 Next Week: 3 Focus Goals\n"
+        "Use only logged facts in provided LifeOS/deen data. Do not invent wins, family facts, work facts, or health facts; write unknown/not logged where data is missing. "
         "Close with one motivational sentence."
     ),
 }

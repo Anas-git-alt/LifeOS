@@ -4,9 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
+import anyio
 
 from app.config import settings
 from app.main import app
+from app.services.memory_ledger import record_memory_event, search_memory_events
 
 
 def _headers() -> dict:
@@ -82,3 +84,44 @@ def test_memory_api_promote_search_and_conflicts(monkeypatch):
         )
         assert apply_resp.status_code == 200
         assert apply_resp.json()["status"] == "applied"
+
+
+def test_private_memory_api_lists_archives_and_restores():
+    async def _seed_event():
+        return await record_memory_event(
+            raw_text="Remember that I prefer concise staging UAT notes.",
+            source="test",
+            source_agent="sandbox",
+            source_session_id=9,
+            event_type="user_turn",
+            domain="planning",
+            kind="preference",
+            title="Concise staging UAT notes",
+        )
+
+    event = anyio.run(_seed_event)
+
+    with TestClient(app) as client:
+        active = client.get("/api/memory/private/events", headers=_headers(), params={"status": "active"})
+        assert active.status_code == 200
+        row = next(item for item in active.json() if item["id"] == event.id)
+        assert row["source_message"] == "Remember that I prefer concise staging UAT notes."
+        assert row["scope"] == "private"
+        assert row["why_saved"]
+
+        archived = client.post(f"/api/memory/private/events/{event.id}/archive", headers=_headers())
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "archived"
+
+        async def _search_hits():
+            return await search_memory_events(
+                query="concise staging UAT notes",
+                agent=SimpleNamespace(name="sandbox", shared_domains=[]),
+            )
+
+        hits = anyio.run(_search_hits)
+        assert hits == []
+
+        restored = client.post(f"/api/memory/private/events/{event.id}/restore", headers=_headers())
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "active"

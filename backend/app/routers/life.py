@@ -109,8 +109,19 @@ _CAPTURE_STANDALONE_TIME_RE = re.compile(
     r"\b(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
     re.IGNORECASE,
 )
+_CAPTURE_WEEKDAY_CLOCK_RE = re.compile(
+    r"\b(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b"
+    r"(?:\s+(?:at|by|before))?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+    re.IGNORECASE,
+)
 _CAPTURE_WEEKDAY_RE = re.compile(
     r"\b(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_DATE_MONTH_RE = re.compile(
+    r"\b(?:next\s+)?(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)?\s*"
+    r"(\d{1,2})(?:st|nd|rd|th)?\s+"
+    r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
     re.IGNORECASE,
 )
 _FAMILY_DETAIL_RE = re.compile(
@@ -155,6 +166,38 @@ async def _safe_record_daily_log_memory(**kwargs) -> None:
         await record_daily_log_memory(**kwargs)
     except Exception:
         return
+
+
+async def _attach_capture_source_metadata(
+    entry: IntakeEntry | None,
+    *,
+    raw_user_input: str,
+    source_message_id: str | None,
+    source_channel_id: str | None,
+    session_id: int | None,
+) -> IntakeEntry | None:
+    if not entry:
+        return None
+    metadata = {
+        "raw_user_input": raw_user_input,
+        "source_message_id": source_message_id,
+        "source_channel_id": source_channel_id,
+        "channel_id": source_channel_id,
+        "session_id": session_id,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+    }
+    async with async_session() as db:
+        result = await db.execute(select(IntakeEntry).where(IntakeEntry.id == entry.id))
+        row = result.scalar_one_or_none()
+        if not row:
+            return entry
+        structured = dict(row.structured_data_json or {})
+        structured["capture_source"] = {key: value for key, value in metadata.items() if value is not None}
+        structured.setdefault("raw_user_input", raw_user_input)
+        row.structured_data_json = structured
+        await db.commit()
+        await db.refresh(row)
+        return row
 
 
 def _infer_commitment_domain(text: str) -> str:
@@ -233,6 +276,73 @@ def _standalone_due_from_capture_match(
     return due_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _default_clock_for_capture_text(text: str) -> tuple[int, int]:
+    lowered = str(text or "").lower()
+    if "morning" in lowered:
+        return 9, 0
+    if "afternoon" in lowered:
+        return 14, 0
+    if "evening" in lowered or "night" in lowered:
+        return 18, 0
+    return 9, 0
+
+
+def _month_number(value: str) -> int | None:
+    key = str(value or "").lower()[:3]
+    months = {
+        "jan": 1,
+        "feb": 2,
+        "mar": 3,
+        "apr": 4,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "oct": 10,
+        "nov": 11,
+        "dec": 12,
+    }
+    return months.get(key)
+
+
+def _date_month_due_from_capture_message(
+    message: str,
+    *,
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> datetime | None:
+    match = _CAPTURE_DATE_MONTH_RE.search(message or "")
+    if not match:
+        return None
+    day = int(match.group(1))
+    month = _month_number(match.group(2))
+    if not month:
+        return None
+    tz = _resolve_tz(timezone_name)
+    local_now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    year = local_now.year
+    try:
+        due_date = datetime(year, month, day, tzinfo=tz)
+    except ValueError:
+        return None
+    if due_date.date() < local_now.date():
+        try:
+            due_date = due_date.replace(year=year + 1)
+        except ValueError:
+            return None
+    clock_match = _CAPTURE_STANDALONE_TIME_RE.search(message or "")
+    clock = (
+        _parse_capture_clock(clock_match.group(1), clock_match.group(2), clock_match.group(3))
+        if clock_match
+        else _default_clock_for_capture_text(message)
+    )
+    if not clock:
+        return None
+    due_local = due_date.replace(hour=clock[0], minute=clock[1])
+    return due_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _weekday_due_from_capture_message(
     message: str,
     *,
@@ -240,10 +350,16 @@ def _weekday_due_from_capture_message(
     now_utc: datetime | None = None,
 ) -> datetime | None:
     weekday_match = _CAPTURE_WEEKDAY_RE.search(message or "")
+    weekday_clock = _CAPTURE_WEEKDAY_CLOCK_RE.search(message or "")
     clock_match = _CAPTURE_STANDALONE_TIME_RE.search(message or "")
-    if not weekday_match or not clock_match:
+    if not weekday_match:
         return None
-    clock = _parse_capture_clock(clock_match.group(1), clock_match.group(2), clock_match.group(3))
+    if weekday_clock:
+        clock = _parse_capture_clock(weekday_clock.group(2), weekday_clock.group(3), weekday_clock.group(4))
+    elif clock_match:
+        clock = _parse_capture_clock(clock_match.group(1), clock_match.group(2), clock_match.group(3))
+    else:
+        clock = _default_clock_for_capture_text(message)
     if not clock:
         return None
     weekday_lookup = {
@@ -275,19 +391,27 @@ def _weekday_due_from_capture_message(
     return due_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-async def _infer_capture_due_at(message: str, provided_due_at: datetime | None, timezone_name: str | None) -> datetime | None:
+async def _infer_capture_due_at(
+    message: str,
+    provided_due_at: datetime | None,
+    timezone_name: str | None,
+    now_utc: datetime | None = None,
+) -> datetime | None:
     if provided_due_at is not None:
         return provided_due_at
     effective_timezone = await get_commitment_timezone(timezone_name)
     match = _CAPTURE_TIME_RE.search(message)
     if match:
-        return _due_from_capture_match(match, timezone_name=effective_timezone)
+        return _due_from_capture_match(match, timezone_name=effective_timezone, now_utc=now_utc)
     standalone = _CAPTURE_STANDALONE_TIME_RE.search(message)
     if standalone:
-        standalone_due = _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone)
+        standalone_due = _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone, now_utc=now_utc)
         if standalone_due:
             return standalone_due
-    weekday_due = _weekday_due_from_capture_message(message, timezone_name=effective_timezone)
+    explicit_date_due = _date_month_due_from_capture_message(message, timezone_name=effective_timezone, now_utc=now_utc)
+    if explicit_date_due:
+        return explicit_date_due
+    weekday_due = _weekday_due_from_capture_message(message, timezone_name=effective_timezone, now_utc=now_utc)
     if weekday_due:
         return weekday_due
     return None
@@ -930,6 +1054,8 @@ async def capture_life(data: UnifiedCaptureRequest):
                 session_id=data.session_id,
                 new_session=data.new_session,
                 source=data.source or "api",
+                source_message_id=data.source_message_id,
+                source_channel_id=data.source_channel_id,
                 due_at=inferred_due_at,
                 timezone=data.timezone,
                 target_channel=data.target_channel,
@@ -1014,6 +1140,8 @@ async def capture_life(data: UnifiedCaptureRequest):
             session_id=data.session_id,
             new_session=data.new_session,
             source=data.source or "api",
+            source_message_id=data.source_message_id,
+            source_channel_id=data.source_channel_id,
         )
     )
     entries = result.entries or ([result.entry] if result.entry else [])
@@ -1075,14 +1203,19 @@ async def capture_inbox(data: IntakeCaptureRequest):
         session = await create_session(agent_name="intake-inbox", title=title)
         session_id = session.id
 
-    result = await handle_message(
-        agent_name="intake-inbox",
-        user_message=message,
-        approval_policy="never",
-        source=data.source or "api",
-        session_id=session_id,
-        session_enabled=True,
-    )
+    handle_kwargs = {
+        "agent_name": "intake-inbox",
+        "user_message": message,
+        "approval_policy": "never",
+        "source": data.source or "api",
+        "session_id": session_id,
+        "session_enabled": True,
+    }
+    if data.source_message_id:
+        handle_kwargs["source_message_id"] = data.source_message_id
+    if data.source_channel_id:
+        handle_kwargs["source_channel_id"] = data.source_channel_id
+    result = await handle_message(**handle_kwargs)
     if result.get("error_code") == "session_not_found":
         raise HTTPException(status_code=404, detail=result["response"])
     if result.get("error_code") == "memory_unavailable":
@@ -1096,6 +1229,13 @@ async def capture_inbox(data: IntakeCaptureRequest):
             result["session_id"],
             source_agent="intake-inbox",
         )
+    entry = await _attach_capture_source_metadata(
+        entry,
+        raw_user_input=message,
+        source_message_id=data.source_message_id,
+        source_channel_id=data.source_channel_id,
+        session_id=result.get("session_id"),
+    )
     synthesis = await synthesize_intake_capture(raw_message=message, primary_entry=entry)
     entries = synthesis.get("entries") or ([entry] if entry else [])
     await _safe_record_capture_memory(
@@ -1150,6 +1290,10 @@ async def capture_commitment(data: CommitmentCaptureRequest):
         "session_id": session_id,
         "session_enabled": True,
     }
+    if data.source_message_id:
+        handle_kwargs["source_message_id"] = data.source_message_id
+    if data.source_channel_id:
+        handle_kwargs["source_channel_id"] = data.source_channel_id
     followup_note = _commitment_followup_note(prior_entry)
     if followup_note:
         handle_kwargs["transient_system_note"] = followup_note
@@ -1167,6 +1311,13 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             result["session_id"],
             source_agent=COMMITMENT_AGENT_NAME,
         )
+    entry = await _attach_capture_source_metadata(
+        entry,
+        raw_user_input=raw_message,
+        source_message_id=data.source_message_id,
+        source_channel_id=data.source_channel_id,
+        session_id=result.get("session_id"),
+    )
 
     life_item = None
     follow_up_job = None

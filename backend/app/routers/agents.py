@@ -1,6 +1,8 @@
 """Agents router: CRUD, chat, and scheduled execution."""
 
 import json
+import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -42,6 +44,12 @@ from app.services.orchestrator import handle_message, run_scheduled_agent
 from app.services.scheduler import sync_agent_job, unschedule_agent_jobs
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _log_agent_chat_phase(trace_id: str, phase: str, **fields) -> None:
+    safe_fields = {key: value for key, value in fields.items() if value is not None}
+    logger.info("agent_chat_phase trace_id=%s phase=%s fields=%s", trace_id, phase, safe_fields)
 
 
 async def _ensure_agent_exists(agent_name: str) -> None:
@@ -132,23 +140,46 @@ async def delete_agent(agent_name: str):
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_api_token)])
 async def chat_with_agent(data: ChatRequest):
-    result = await handle_message(
-        agent_name=data.agent_name,
-        user_message=data.message,
-        approval_policy=data.approval_policy,
-        session_id=data.session_id,
-        session_enabled=True,
-        transient_system_note=data.transient_system_note,
-    )
+    trace_id = (data.trace_id or uuid.uuid4().hex[:12]).strip()[:64]
+    _log_agent_chat_phase(trace_id, "request_received", agent_name=data.agent_name, session_id=data.session_id)
+    try:
+        result = await handle_message(
+            agent_name=data.agent_name,
+            user_message=data.message,
+            approval_policy=data.approval_policy,
+            session_id=data.session_id,
+            session_enabled=True,
+            transient_system_note=data.transient_system_note,
+            trace_id=trace_id,
+            source_message_id=data.source_message_id,
+            source_channel_id=data.source_channel_id,
+        )
+    except Exception as exc:
+        logger.exception("agent_chat_failed trace_id=%s agent=%s", trace_id, data.agent_name)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Agent turn failed before a safe Discord response could be rendered.",
+                "trace_id": trace_id,
+                "error": str(exc)[:300],
+            },
+        ) from exc
     if result.get("error_code") == "session_not_found":
-        raise HTTPException(status_code=404, detail=result["response"])
+        raise HTTPException(status_code=404, detail={"message": result["response"], "trace_id": trace_id})
     if result.get("error_code") == "memory_unavailable":
-        raise HTTPException(status_code=503, detail=result["response"])
+        raise HTTPException(status_code=503, detail={"message": result["response"], "trace_id": trace_id})
     if result.get("error_code") == "state_packet_unavailable":
-        raise HTTPException(status_code=503, detail=result["response"])
+        raise HTTPException(status_code=503, detail={"message": result["response"], "trace_id": trace_id})
+    _log_agent_chat_phase(
+        trace_id,
+        "discord_response_rendered",
+        session_id=result.get("session_id"),
+        pending_action_id=result.get("pending_action_id"),
+    )
     return ChatResponse(
         agent_name=data.agent_name,
         response=result["response"],
+        trace_id=result.get("trace_id") or trace_id,
         pending_action_id=result.get("pending_action_id"),
         pending_action_type=result.get("pending_action_type"),
         risk_level=result.get("risk_level", "low"),

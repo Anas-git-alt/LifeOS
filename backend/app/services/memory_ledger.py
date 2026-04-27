@@ -360,6 +360,28 @@ async def search_memory_events(
     return hits[: max(1, min(limit, 20))]
 
 
+async def list_private_memory_events(*, status: str | None = "active", limit: int = 100) -> list[MemoryEvent]:
+    async with async_session() as db:
+        stmt = select(MemoryEvent).order_by(MemoryEvent.created_at.desc(), MemoryEvent.id.desc()).limit(max(1, min(limit, 200)))
+        if status:
+            stmt = stmt.where(MemoryEvent.status == status)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+
+async def set_private_memory_event_status(event_id: int, status: str) -> MemoryEvent:
+    if status not in {"active", "archived", "deleted"}:
+        raise ValueError("Invalid memory status")
+    async with async_session() as db:
+        row = await db.get(MemoryEvent, event_id)
+        if not row:
+            raise ValueError("Memory event not found")
+        row.status = status
+        await db.commit()
+        await db.refresh(row)
+        return row
+
+
 def render_memory_ledger_context(hits: list[MemoryLedgerHit]) -> str:
     if not hits:
         return ""

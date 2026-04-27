@@ -37,6 +37,20 @@ PLANNING_CONTEXT_RE = re.compile(
 HEALTH_CONTEXT_RE = re.compile(r"\b(sleep|workout|gym|health|meal|protein|water|medicine|doctor)\b", re.IGNORECASE)
 FAMILY_CONTEXT_RE = re.compile(r"\b(wife|family|kids|mother|mom|mama|mum|father|dad|parent|brother|sister)\b", re.IGNORECASE)
 STOP_WORDS = {
+    "and",
+    "for",
+    "from",
+    "have",
+    "that",
+    "this",
+    "with",
+    "need",
+    "needs",
+    "want",
+    "wants",
+    "take",
+    "make",
+    "pick",
     "after",
     "before",
     "today",
@@ -50,6 +64,7 @@ STOP_WORDS = {
     "medium",
     "low",
 }
+MIN_SEMANTIC_CONTRACT_SCORE = 0.15
 
 
 def _clean(value: Any, *, limit: int | None = None) -> str | None:
@@ -136,6 +151,72 @@ def _item_text(item: dict[str, Any]) -> str:
 
 def _item_tokens(item: dict[str, Any]) -> set[str]:
     return {token for token in WORD_RE.findall(_item_text(item).lower()) if token not in STOP_WORDS}
+
+
+def _raw_tokens(raw_message: str) -> set[str]:
+    return {token for token in WORD_RE.findall(str(raw_message or "").lower()) if token not in STOP_WORDS}
+
+
+def _semantic_contract_score(raw_message: str, item: dict[str, Any]) -> float:
+    raw = _raw_tokens(raw_message)
+    proposed = _item_tokens(item)
+    if not raw or not proposed:
+        return 0.0
+    overlap = raw & proposed
+    return len(overlap) / max(1, min(len(proposed), 6))
+
+
+def _semantic_contract_reason(raw_message: str, item: dict[str, Any], score: float) -> str | None:
+    raw_lower = str(raw_message or "").lower()
+    item_lower = _item_text(item).lower()
+    proposed_domain = _safe_domain(item.get("domain"))
+    if proposed_domain == "health" and PLANNING_CONTEXT_RE.search(raw_lower) and not HEALTH_CONTEXT_RE.search(raw_lower):
+        return "Proposed health item does not match planning/logistics capture."
+    if proposed_domain == "family" and PLANNING_CONTEXT_RE.search(raw_lower) and not FAMILY_CONTEXT_RE.search(raw_lower):
+        return "Proposed family item does not match planning/logistics capture."
+    if "sleep" in item_lower and "sleep" not in raw_lower and "bed" not in raw_lower and PLANNING_CONTEXT_RE.search(raw_lower):
+        return "Proposed sleep item does not match raw capture."
+    if score < MIN_SEMANTIC_CONTRACT_SCORE:
+        return "Proposed item has too little semantic overlap with raw capture."
+    return None
+
+
+def _contract_clarification_item(raw_message: str, rejected_items: list[dict[str, Any]]) -> dict[str, Any]:
+    titles = [str(item.get("title") or "").strip() for item in rejected_items if str(item.get("title") or "").strip()]
+    return {
+        "title": _clean(raw_message, limit=120) or "Captured life input needs clarification",
+        "kind": "idea",
+        "domain": "planning",
+        "status": "clarifying",
+        "summary": "Capture needs review because proposed extraction did not safely match the user's raw input.",
+        "desired_outcome": "Track only life items that match the raw capture.",
+        "next_action": None,
+        "follow_up_questions": [
+            "What concrete task, commitment, or next action should be tracked from this capture?"
+        ],
+        "contract_validation": {
+            "state": "clarifying",
+            "rejected_titles": titles[:5],
+            "reason": "semantic_mismatch_or_low_confidence",
+        },
+    }
+
+
+def _apply_semantic_contract(items: list[dict[str, Any]], raw_message: str) -> list[dict[str, Any]]:
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for item in items:
+        score = _semantic_contract_score(raw_message, item)
+        reason = _semantic_contract_reason(raw_message, item, score)
+        if reason:
+            rejected.append({**item, "contract_validation": {"state": "rejected", "score": score, "reason": reason}})
+            continue
+        accepted.append({**item, "contract_validation": {"state": "accepted", "score": score}})
+    if accepted:
+        return accepted
+    if rejected:
+        return [_contract_clarification_item(raw_message, rejected)]
+    return items
 
 
 def _time_match_belongs_to_item(raw_message: str, match: re.Match[str], item: dict[str, Any]) -> bool:
@@ -391,7 +472,15 @@ async def _make_or_update_entry(
         entry.next_action = _clean(item.get("next_action"), limit=1000)
         questions = item.get("follow_up_questions") if isinstance(item.get("follow_up_questions"), list) else []
         entry.follow_up_questions_json = [str(q).strip() for q in questions if str(q).strip()][:3]
-        entry.structured_data_json = dict(item)
+        structured = dict(item)
+        structured.setdefault("raw_user_input", raw_message)
+        structured["capture_source"] = {
+            **(dict(base_entry.structured_data_json or {}).get("capture_source") or {}),
+            "raw_user_input": raw_message,
+            "session_id": base_entry.source_session_id,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        }
+        entry.structured_data_json = structured
         await db.commit()
         await db.refresh(entry)
         return entry
@@ -456,7 +545,8 @@ async def synthesize_intake_capture(*, raw_message: str, primary_entry: IntakeEn
 
     agent = await _get_intake_agent()
     payload = dict(primary_entry.structured_data_json or {})
-    items = _augment_items_from_raw(_item_list_from_payload(payload, primary_entry, raw_message), raw_message)
+    extracted_items = _item_list_from_payload(payload, primary_entry, raw_message)
+    items = _augment_items_from_raw(_apply_semantic_contract(extracted_items, raw_message), raw_message)
     entries: list[IntakeEntry] = []
     life_items: list[LifeItem] = []
     now_utc = datetime.now(timezone.utc)

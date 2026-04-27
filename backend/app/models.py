@@ -416,6 +416,32 @@ class MemoryEvent(Base):
     )
 
 
+class PrivateMemoryEventResponse(BaseModel):
+    id: int
+    source: str
+    source_agent: Optional[str] = None
+    source_session_id: Optional[int] = None
+    source_message: Optional[str] = None
+    source_uri: Optional[str] = None
+    scope: str = "private"
+    confidence: Optional[str] = "medium"
+    status: str
+    event_type: str
+    domain: Optional[str] = None
+    kind: Optional[str] = None
+    title: str
+    summary: Optional[str] = None
+    raw_text: str
+    why_saved: Optional[str] = None
+    linked_life_item_id: Optional[int] = None
+    linked_intake_entry_id: Optional[int] = None
+    linked_job_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class UserProfile(Base):
     __tablename__ = "user_profile"
 
@@ -824,11 +850,15 @@ class ChatRequest(BaseModel):
     approval_policy: str = "auto"
     session_id: Optional[int] = None
     transient_system_note: Optional[str] = None
+    trace_id: Optional[str] = None
+    source_message_id: Optional[str] = None
+    source_channel_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     agent_name: str
     response: str
+    trace_id: Optional[str] = None
     pending_action_id: Optional[int] = None
     pending_action_type: Optional[str] = None
     risk_level: str = "low"
@@ -1441,6 +1471,8 @@ class IntakeCaptureRequest(BaseModel):
     session_id: Optional[int] = None
     new_session: bool = False
     source: str = "api"
+    source_message_id: Optional[str] = None
+    source_channel_id: Optional[str] = None
 
 
 class IntakeCaptureResponse(BaseModel):
@@ -1460,6 +1492,8 @@ class CommitmentCaptureRequest(BaseModel):
     session_id: Optional[int] = None
     new_session: bool = False
     source: str = "api"
+    source_message_id: Optional[str] = None
+    source_channel_id: Optional[str] = None
     due_at: Optional[datetime] = None
     timezone: Optional[str] = None
     target_channel: Optional[str] = None
@@ -1483,6 +1517,8 @@ class UnifiedCaptureRequest(BaseModel):
     new_session: bool = True
     source: str = "api"
     route_hint: Optional[Literal["auto", "intake", "commitment", "memory"]] = "auto"
+    source_message_id: Optional[str] = None
+    source_channel_id: Optional[str] = None
     due_at: Optional[datetime] = None
     timezone: Optional[str] = None
     target_channel: Optional[str] = None

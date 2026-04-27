@@ -10,6 +10,7 @@ import GoalProgress from "./components/GoalProgress";
 import InboxView from "./components/InboxView";
 import LifeItems from "./components/LifeItems";
 import JobsManager from "./components/JobsManager";
+import MemoryLedgerView from "./components/MemoryLedgerView";
 import MissionControl from "./components/MissionControl";
 import PrayerDashboard from "./components/PrayerDashboard";
 import ProfileSettings from "./components/ProfileSettings";
@@ -25,6 +26,7 @@ const NAV_GROUPS = [
     items: [
       { id: "dashboard", icon: "⊞", label: "Mission Control" },
       { id: "today", icon: "◈", label: "Today" },
+      { id: "memory", icon: "◌", label: "Memory" },
       { id: "prayer-dashboard", icon: "☽", label: "Prayer" },
       { id: "quran", icon: "◎", label: "Quran" },
     ],
@@ -65,6 +67,10 @@ const PAGE_META = {
   wiki: {
     title: "Wiki Context",
     subtitle: "Review-first Obsidian memory from meetings, replies, and shared context.",
+  },
+  memory: {
+    title: "Memory Ledger",
+    subtitle: "Private memories with source, status, archive, and restore controls.",
   },
   "prayer-dashboard": {
     title: "Prayer Dashboard",
@@ -212,6 +218,8 @@ export default function App() {
           return <InboxView />;
         case "wiki":
           return <WikiView />;
+        case "memory":
+          return <MemoryLedgerView />;
         case "prayer-dashboard":
           return <PrayerDashboard />;
         case "quran":
