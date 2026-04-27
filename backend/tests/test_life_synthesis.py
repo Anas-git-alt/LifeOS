@@ -356,6 +356,44 @@ def test_inbox_capture_uses_raw_followup_to_rescue_sleep_and_family(monkeypatch)
     assert "Call family tomorrow after Asr" in titles
 
 
+def test_inbox_capture_promotes_laptop_bag_repair_from_raw_text(monkeypatch):
+    low_confidence_payload = {
+        "items": [
+            {
+                "title": "Plan travel preparation",
+                "kind": "idea",
+                "domain": "health",
+                "status": "clarifying",
+                "summary": "Travel needs preparation.",
+                "follow_up_questions": ["What concrete task should be tracked?"],
+                "priority": "medium",
+            }
+        ],
+        "wiki_facts": [],
+    }
+
+    async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
+        await _insert_synthesis_entry(session_id=session_id or 1, raw_text=user_message, payload=low_confidence_payload)
+        return {"response": "Captured.", "session_id": session_id, "session_title": "Laptop bag"}
+
+    monkeypatch.setattr("app.routers.life.handle_message", _fake_handle_message)
+    monkeypatch.setattr("app.services.life_synthesis.search_shared_memory", lambda **_kwargs: [])
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/life/inbox/capture",
+            headers=_headers(),
+            json={"message": "my laptop bag zipper is broken and I need to repair it before travel", "new_session": True},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    titles = {item["title"] for item in payload["life_items"]}
+    assert "Repair laptop bag zipper before travel" in titles
+    assert payload["entries"][0]["domain"] == "planning"
+    assert payload["entries"][0]["follow_up_questions"] == []
+
+
 def test_inbox_capture_skips_duplicate_pending_wiki_proposal(monkeypatch):
     title = "Sleep routine priority"
     target_path = classify_note_path(scope="shared_domain", domain="health", agent_name="wiki-curator", title=title)

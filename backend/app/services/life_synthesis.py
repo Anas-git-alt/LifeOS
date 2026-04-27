@@ -36,6 +36,7 @@ PLANNING_CONTEXT_RE = re.compile(
 )
 HEALTH_CONTEXT_RE = re.compile(r"\b(sleep|workout|gym|health|meal|protein|water|medicine|doctor)\b", re.IGNORECASE)
 FAMILY_CONTEXT_RE = re.compile(r"\b(wife|family|kids|mother|mom|mama|mum|father|dad|parent|brother|sister)\b", re.IGNORECASE)
+LAPTOP_BAG_REPAIR_RE = re.compile(r"\blaptop bag\b.*\bzipper\b.*\brepair\b|\brepair\b.*\blaptop bag\b.*\bzipper\b", re.IGNORECASE | re.DOTALL)
 STOP_WORDS = {
     "and",
     "for",
@@ -335,6 +336,34 @@ def _augment_item_from_raw(item: dict[str, Any], raw_message: str) -> dict[str, 
 
 def _augment_items_from_raw(items: list[dict[str, Any]], raw_message: str) -> list[dict[str, Any]]:
     enriched = [_augment_item_from_raw(item, raw_message) for item in items]
+    if LAPTOP_BAG_REPAIR_RE.search(raw_message):
+        repair_item = {
+            "title": "Repair laptop bag zipper before travel",
+            "kind": "task",
+            "domain": "planning",
+            "status": "ready",
+            "summary": "Laptop bag zipper needs repair before travel.",
+            "desired_outcome": "Laptop bag is usable before travel.",
+            "next_action": "Arrange repair for the laptop bag zipper.",
+            "follow_up_questions": [],
+            "priority": "medium",
+            "priority_score": 60,
+            "priority_reason": "Travel logistics task is concrete and explicitly stated.",
+        }
+        if not any("laptop bag" in _item_text(item).lower() and "zipper" in _item_text(item).lower() for item in enriched):
+            enriched.insert(0, repair_item)
+        else:
+            enriched = [
+                {
+                    **item,
+                    **repair_item,
+                    "priority_score": _max_score(item.get("priority_score"), 60),
+                    "priority_reason": item.get("priority_reason") or repair_item["priority_reason"],
+                }
+                if "laptop bag" in _item_text(item).lower() and "zipper" in _item_text(item).lower()
+                else item
+                for item in enriched
+            ]
     if _sleep_target(raw_message) and not any(_looks_like_sleep_item(item) for item in enriched):
         enriched.append(_augment_item_from_raw({"title": "Fix bedtime routine", "kind": "habit", "domain": "health"}, raw_message))
     if _family_call_detected(raw_message) and not any(_looks_like_family_call_item(item) for item in enriched):

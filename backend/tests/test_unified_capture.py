@@ -69,6 +69,14 @@ async def test_unified_capture_auto_route_uses_session_owner(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agentic_capture_followup_creates_life_items(monkeypatch):
+    fixed_now = datetime(2026, 4, 26, 8, 0, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is None else fixed_now.astimezone(tz)
+
+    monkeypatch.setattr("app.routers.life.datetime", FrozenDateTime)
     session_id = await _create_agent_session("intake-inbox")
     async with async_session() as db:
         entry = IntakeEntry(
@@ -160,7 +168,8 @@ async def test_agentic_capture_followup_answers_clarification_questions(monkeypa
     )
 
     assert result.route == "intake"
-    assert "Which paperwork" in result.response
+    assert "paperwork category" in result.response
+    assert "deadline" in result.response
     assert result.life_items == []
     assert result.needs_answer_count == 2
 

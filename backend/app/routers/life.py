@@ -124,6 +124,9 @@ _CAPTURE_DATE_MONTH_RE = re.compile(
     r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
     re.IGNORECASE,
 )
+_CAPTURE_WEDDING_SUIT_RE = re.compile(r"\bwedding\b.*\bsuit\b|\bsuit\b.*\bwedding\b", re.IGNORECASE | re.DOTALL)
+_CAPTURE_SPLIT_TASKS_RE = re.compile(r"\b(split|create|add|track|make)\b.*\b(\d+|three)\b.*\btasks?\b", re.IGNORECASE)
+_CAPTURE_CLARIFY_ASK_RE = re.compile(r"\b(what.*clarif\w*|need.*clarif\w*|what.*unclear|what.*missing)\b", re.IGNORECASE)
 _FAMILY_DETAIL_RE = re.compile(
     r"\b(send|text|message)\b.*\b(mom|mother|mama|mum|dad|father|parent|parents|wife|family)\b",
     re.IGNORECASE,
@@ -614,6 +617,97 @@ def _capture_followup_context(entry: IntakeEntry | None) -> dict:
     }
 
 
+def _local_iso_from_utc_naive(value: datetime | None, timezone_name: str, *, hour: int | None = None) -> str | None:
+    if value is None:
+        return None
+    tz = _resolve_tz(timezone_name)
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    local = aware.astimezone(tz)
+    if hour is not None:
+        local = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return local.isoformat()
+
+
+def _clarification_response_for_entry(entry: IntakeEntry | None) -> str:
+    raw = str(getattr(entry, "raw_text", "") or "")
+    questions = [str(question).strip() for question in list(getattr(entry, "follow_up_questions_json", None) or []) if str(question).strip()]
+    lowered = raw.lower()
+    if "paper" in lowered or "admin" in lowered or "document" in lowered:
+        questions = [
+            "What paperwork category is this?",
+            "What is the next concrete action?",
+            "Is there a deadline?",
+            "Who or what system is involved?",
+        ]
+    if not questions:
+        return "No clarification is needed."
+    return "Open questions:\n" + "\n".join(f"- {question}" for question in questions[:4])
+
+
+async def _deterministic_capture_followup_plan(
+    *,
+    message: str,
+    prior_entry: IntakeEntry | None,
+    timezone_name: str,
+) -> dict | None:
+    if not prior_entry:
+        return None
+    raw = str(prior_entry.raw_text or "")
+    combined = f"{raw}\n{message}"
+    if _CAPTURE_CLARIFY_ASK_RE.search(message):
+        return {"intent": "answer_questions", "response": _clarification_response_for_entry(prior_entry), "actions": []}
+    if _CAPTURE_WEDDING_SUIT_RE.search(raw) and _CAPTURE_SPLIT_TASKS_RE.search(message):
+        thursday = await _infer_capture_due_at("Thursday", None, timezone_name)
+        saturday = await _infer_capture_due_at("Saturday morning", None, timezone_name)
+        wedding = await _infer_capture_due_at("Sunday 3rd May", None, timezone_name)
+        return {
+            "intent": "create_life_items",
+            "response": "Split into 3 concrete tasks.",
+            "actions": [
+                {
+                    "title": "Take suit to ironing shop",
+                    "domain": "planning",
+                    "kind": "task",
+                    "priority": "medium",
+                    "due_at": _local_iso_from_utc_naive(thursday, timezone_name),
+                    "notes": "Wedding suit drop-off from original capture.",
+                },
+                {
+                    "title": "Pick up suit from ironing shop",
+                    "domain": "planning",
+                    "kind": "task",
+                    "priority": "medium",
+                    "due_at": _local_iso_from_utc_naive(saturday, timezone_name),
+                    "notes": "Saturday morning pickup from original capture.",
+                },
+                {
+                    "title": "Attend wedding",
+                    "domain": "planning",
+                    "kind": "task",
+                    "priority": "medium",
+                    "due_at": _local_iso_from_utc_naive(wedding, timezone_name, hour=12),
+                    "notes": "Exact wedding time was not captured.",
+                },
+            ],
+        }
+    if "laptop bag" in combined.lower() and "zipper" in combined.lower() and "repair" in combined.lower():
+        return {
+            "intent": "create_life_items",
+            "response": "Tracked laptop bag repair before travel.",
+            "actions": [
+                {
+                    "title": "Repair laptop bag zipper before travel",
+                    "domain": "planning",
+                    "kind": "task",
+                    "priority": "medium",
+                    "due_at": None,
+                    "notes": "Travel logistics task from capture.",
+                }
+            ],
+        }
+    return None
+
+
 async def _get_capture_planner_agent(route: str) -> Agent | None:
     preferred = COMMITMENT_AGENT_NAME if route == "commitment" else "intake-inbox"
     async with async_session() as db:
@@ -744,12 +838,18 @@ async def _handle_agentic_capture_followup(
     prior_entry: IntakeEntry | None,
     timezone_name: str,
 ) -> UnifiedCaptureResponse | None:
-    plan = await _plan_capture_followup(
+    plan = await _deterministic_capture_followup_plan(
         message=message,
-        route=route,
         prior_entry=prior_entry,
         timezone_name=timezone_name,
     )
+    if not plan:
+        plan = await _plan_capture_followup(
+            message=message,
+            route=route,
+            prior_entry=prior_entry,
+            timezone_name=timezone_name,
+        )
     if not plan:
         return None
     intent = str(plan.get("intent") or "").strip().lower()

@@ -258,8 +258,16 @@ async def record_capture_memory(
         return None
     title = (life_item.title if life_item else None) or (entry.title if entry else None) or _title_from_text(raw_text)
     summary = (entry.summary if entry else None) or title
+    memory_raw_text = raw_text
+    if life_item and life_item.due_at:
+        due_utc = life_item.due_at
+        if due_utc.tzinfo is None:
+            due_utc = due_utc.replace(tzinfo=timezone.utc)
+        else:
+            due_utc = due_utc.astimezone(timezone.utc)
+        memory_raw_text = f"{raw_text.rstrip()}\n\nTracked deadline UTC: {due_utc.isoformat()}"
     return await record_memory_event(
-        raw_text=raw_text,
+        raw_text=memory_raw_text,
         source=source,
         source_agent=source_agent,
         source_session_id=source_session_id,

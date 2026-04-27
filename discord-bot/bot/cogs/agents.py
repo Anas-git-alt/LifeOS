@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 import re
 import uuid
+from zoneinfo import ZoneInfo
 
 import discord
 import httpx
@@ -90,6 +91,30 @@ class AgentsCog(commands.Cog, name="Agents"):
     def _clean_visible_response(text: str) -> str:
         cleaned = str(text or "Captured.").split("[INTAKE_JSON]", 1)[0].split("[RAW_LIFE_SYNTHESIS_JSON]", 1)[0].strip()
         return cleaned or "Captured."
+
+    @staticmethod
+    def _parse_datetime_value(value):
+        if isinstance(value, datetime):
+            return value
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _format_local_and_utc(cls, value, timezone_name: str | None) -> str:
+        parsed = cls._parse_datetime_value(value)
+        if not parsed:
+            return "n/a"
+        aware_utc = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        try:
+            tz = ZoneInfo(timezone_name or "Africa/Casablanca")
+        except Exception:
+            tz = ZoneInfo("Africa/Casablanca")
+        local = aware_utc.astimezone(tz)
+        return f"{local:%Y-%m-%d %H:%M} {tz.key} ({aware_utc:%Y-%m-%d %H:%M} UTC)"
 
     @staticmethod
     def _split_discord_chunks(text: str, limit: int = 1800) -> list[str]:
@@ -520,12 +545,16 @@ class AgentsCog(commands.Cog, name="Agents"):
             )
         if life_item.get("id"):
             reminder = follow_up_job.get("next_run_at") or follow_up_job.get("run_at") or "n/a"
+            timezone_name = follow_up_job.get("timezone") or result.get("timezone") or "Africa/Casablanca"
+            lines = [
+                f"Life item #{life_item['id']} · {life_item.get('title', 'Untitled')}",
+            ]
+            if life_item.get("due_at"):
+                lines.append(f"Due: {self._format_local_and_utc(life_item.get('due_at'), timezone_name)}")
+            lines.append(f"Reminder: {self._format_local_and_utc(reminder, timezone_name)}")
             embed.add_field(
                 name="Tracked Commitment",
-                value=(
-                    f"Life item #{life_item['id']} · {life_item.get('title', 'Untitled')}\n"
-                    f"Reminder: {str(reminder).replace('T', ' ')[:16]} UTC"
-                ),
+                value="\n".join(lines),
                 inline=False,
             )
         followups = entry.get("follow_up_questions") or []

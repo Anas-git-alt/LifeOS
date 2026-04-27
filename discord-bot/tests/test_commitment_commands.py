@@ -6,6 +6,12 @@ import httpx
 from bot.cogs.agents import AgentsCog
 
 
+def test_commitment_datetime_format_shows_local_and_utc():
+    formatted = AgentsCog._format_local_and_utc("2026-04-28T08:00:00", "Africa/Casablanca")
+
+    assert formatted == "2026-04-28 09:00 Africa/Casablanca (2026-04-28 08:00 UTC)"
+
+
 class _Dummy:
     def __init__(self, value: int, name: str | None = None):
         self.id = value
