@@ -120,7 +120,14 @@ async def test_meeting_command_posts_meeting_intake(monkeypatch):
         return {
             "route": "memory",
             "event": {"id": 12, "domain": "work"},
-            "wiki_proposals": [{"id": 5}],
+            "wiki_proposals": [
+                {
+                    "id": 5,
+                    "proposed_content": "User wants shared wiki work to stay easy to review.",
+                    "conflict_reason": "review_required",
+                    "status": "pending",
+                }
+            ],
             "entries": [{"id": 9}],
         }
 
@@ -135,6 +142,185 @@ async def test_meeting_command_posts_meeting_intake(monkeypatch):
     embed = ctx.sent_embeds[0]
     assert embed.title == "Memory Review"
     assert "event #12" in embed.description
+    fields = {field.name: field.value for field in embed.fields}
+    assert "Proposed memory" in fields["Memory Review"]
+    assert "Why review is needed" in fields["Memory Review"]
+    assert "Pending review" in fields["Memory Review"]
+    assert "Open WebUI" in fields["Memory Review"]
+    assert "C#9" in fields["Action Capture"]
+
+
+@pytest.mark.asyncio
+async def test_capture_embed_always_shows_question_when_needs_answer():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_capture_embed(
+        ctx,
+        {
+            "route": "intake",
+            "session_id": 24,
+            "needs_answer_count": 1,
+            "entry": {
+                "id": 10,
+                "title": "Wedding / suit preparation",
+                "status": "clarifying",
+                "domain": "planning",
+                "kind": "task",
+                "promotion_payload": {"priority": None, "priority_score": None, "priority_reason": None},
+            },
+            "life_items": [{"id": 19, "title": "Check staging", "priority": "high"}],
+        },
+        heading="Capture",
+    )
+
+    embed = ctx.sent_embeds[0]
+    fields = {field.name: field.value for field in embed.fields}
+    assert "needs your answer" in embed.description
+    assert "Needs Answer" in fields
+    assert "What concrete task or next action should be tracked?" in fields["Needs Answer"]
+    assert "C#10" in fields["Capture Item"]
+    assert "L#19" in fields["Tracked"]
+    assert "?/100" not in fields["Capture Item"]
+    assert "reason pending" not in fields["Capture Item"].lower()
+    assert embed.footer.text.startswith("S#24")
+
+
+@pytest.mark.asyncio
+async def test_capturefollow_embed_shows_actual_question():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_capture_embed(
+        ctx,
+        {
+            "route": "intake",
+            "session_id": 25,
+            "entry": {
+                "id": 11,
+                "title": "Admin paperwork",
+                "status": "clarifying",
+                "domain": "planning",
+                "kind": "idea",
+                "follow_up_questions": ["What paperwork category should this track?"],
+            },
+        },
+        heading="Capture Follow-up",
+    )
+
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "Needs Answer" in fields
+    assert "What paperwork category should this track?" in fields["Needs Answer"]
+
+
+@pytest.mark.asyncio
+async def test_commitment_embed_always_shows_question_when_needs_answer():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_commitment_embed(
+        ctx,
+        {
+            "response": "Need more detail.",
+            "session_id": 31,
+            "needs_follow_up": True,
+            "entry": {"id": 12, "title": "Send invoice", "status": "clarifying", "kind": "commitment"},
+        },
+        heading="Commitment Capture",
+    )
+
+    embed = ctx.sent_embeds[0]
+    fields = {field.name: field.value for field in embed.fields}
+    assert "needs your answer" in embed.description
+    assert "Needs Answer" in fields
+    assert "When is this due, or what reminder time should I use?" in fields["Needs Answer"]
+
+
+@pytest.mark.asyncio
+async def test_commitment_embed_shows_due_and_requested_reminder_time():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_commitment_embed(
+        ctx,
+        {
+            "response": "Tracked.",
+            "session_id": 55,
+            "needs_follow_up": False,
+            "life_item": {"id": 44, "title": "Check staging", "due_at": "2026-04-28T08:00:00"},
+            "follow_up_job": {
+                "id": 70,
+                "next_run_at": "2026-04-28T08:00:00",
+                "timezone": "Africa/Casablanca",
+            },
+        },
+        heading="Commitment Capture",
+    )
+
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "L#44 Check staging" in fields["Tracked Commitment"]
+    assert "Due: 2026-04-28 09:00 Africa/Casablanca" in fields["Tracked Commitment"]
+    assert "Reminder: 2026-04-28 09:00 Africa/Casablanca" in fields["Tracked Commitment"]
+
+
+@pytest.mark.asyncio
+async def test_capture_embed_renders_memory_review_details():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_capture_embed(
+        ctx,
+        {
+            "route": "memory",
+            "wiki_proposals": [
+                {
+                    "id": 88,
+                    "proposed_content": "User has admin paperwork related to DGI tax return documents.",
+                    "conflict_reason": "personal_administrative_context",
+                    "status": "pending",
+                }
+            ],
+        },
+        heading="Capture",
+    )
+
+    embed = ctx.sent_embeds[0]
+    fields = {field.name: field.value for field in embed.fields}
+    assert "memory candidate" in embed.description
+    assert "Proposed memory" in fields["Memory Review"]
+    assert "User has admin paperwork" in fields["Memory Review"]
+    assert "Why review is needed" in fields["Memory Review"]
+    assert "Pending review" in fields["Memory Review"]
+    assert "M#88" in fields["Memory Review"]
+
+
+@pytest.mark.asyncio
+async def test_laptop_bag_capture_embed_tracks_and_prompts_optional_details():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_capture_embed(
+        ctx,
+        {
+            "route": "intake",
+            "session_id": 40,
+            "life_items": [
+                {
+                    "id": 22,
+                    "title": "Repair laptop bag zipper before travel",
+                    "priority": "medium",
+                    "due_at": None,
+                }
+            ],
+        },
+        heading="Capture",
+    )
+
+    fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
+    assert "L#22 Repair laptop bag zipper before travel" in fields["Tracked"]
+    assert "When is your travel date?" in fields["Optional Details"]
+    assert "Do you want a reminder before then?" in fields["Optional Details"]
+    assert "repair-shop task or a DIY task" in fields["Optional Details"]
 
 
 @pytest.mark.asyncio
@@ -411,7 +597,7 @@ async def test_capturefollow_accepts_explicit_session_id(monkeypatch):
     await cog.capture_follow.callback(cog, ctx, message="14 set a reminder for it at 1pm")
 
     assert len(ctx.sent_embeds) == 1
-    assert "Session #14" in ctx.sent_embeds[0].footer.text
+    assert "S#14" in ctx.sent_embeds[0].footer.text
 
 
 @pytest.mark.asyncio
@@ -454,6 +640,7 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
         assert payload["target_channel"] == "planning"
         assert payload["target_channel_id"] == "2"
         assert payload["due_at"]
+        assert payload["reminder_at"] is None
         return {
             "route": "commitment",
             "response": "Ready to promote",
@@ -484,8 +671,8 @@ async def test_commit_command_posts_commitment_capture(monkeypatch):
     embed = ctx.sent_embeds[0]
     assert embed.title == "Commitment Capture"
     fields = {field.name: field.value for field in embed.fields}
-    assert "Life item #31" in fields["Tracked Commitment"]
-    assert fields["Session"].startswith("#77")
+    assert "L#31" in fields["Tracked Commitment"]
+    assert fields["Session"].startswith("S#77")
 
 
 @pytest.mark.asyncio
@@ -539,9 +726,10 @@ async def test_commitfollow_accepts_explicit_session_id(monkeypatch):
     assert len(ctx.sent_embeds) == 1
     embed = ctx.sent_embeds[0]
     assert "`!commitfollow #9 <answer>`" not in embed.description
-    assert "`!commitfollow 9 <answer>`" in embed.description
+    assert "`!commitfollow 9 <answer>`" not in embed.description
     fields = {field.name: field.value for field in embed.fields}
-    assert "Need Follow-up" in fields
+    assert "Needs Answer" in fields
+    assert "What bedtime is realistic most nights?" in fields["Needs Answer"]
     assert "`!commitfollow 9 <answer>`" in fields["Continue"]
     assert "`!commitfollow session #9 <answer>`" in fields["Continue"]
 
@@ -579,7 +767,7 @@ async def test_commitfollow_allows_answer_with_loose_today(monkeypatch):
     assert not ctx.sent_messages
     assert len(ctx.sent_embeds) == 1
     fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
-    assert "Life item #40" in fields["Tracked Commitment"]
+    assert "L#40" in fields["Tracked Commitment"]
 
 
 @pytest.mark.asyncio
@@ -622,7 +810,7 @@ async def test_commitfollow_resolves_inbox_id_to_commitment_session(monkeypatch)
 
     assert not ctx.sent_messages
     fields = {field.name: field.value for field in ctx.sent_embeds[0].fields}
-    assert "Life item #40" in fields["Tracked Commitment"]
+    assert "L#40" in fields["Tracked Commitment"]
 
 
 @pytest.mark.asyncio

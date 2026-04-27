@@ -105,6 +105,14 @@ _CAPTURE_TIME_RE = re.compile(
     r"\b(today|tomorrow)\s+(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
     re.IGNORECASE,
 )
+_CAPTURE_BY_TIME_RE = re.compile(
+    r"\bby\s+(today|tomorrow)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+    re.IGNORECASE,
+)
+_CAPTURE_REVERSE_TIME_RE = re.compile(
+    r"\b(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(today|tomorrow)\b",
+    re.IGNORECASE,
+)
 _CAPTURE_STANDALONE_TIME_RE = re.compile(
     r"\b(?:at|by|before)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
     re.IGNORECASE,
@@ -259,6 +267,17 @@ def _due_from_capture_match(match: re.Match[str], *, timezone_name: str, now_utc
     return due_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _due_from_reverse_capture_match(match: re.Match[str], *, timezone_name: str, now_utc: datetime | None = None) -> datetime | None:
+    clock = _parse_capture_clock(match.group(1), match.group(2), match.group(3))
+    if not clock:
+        return None
+    tz = _resolve_tz(timezone_name)
+    local_now = (now_utc or datetime.now(timezone.utc)).astimezone(tz)
+    due_date = local_now.date() + timedelta(days=1 if match.group(4).lower() == "tomorrow" else 0)
+    due_local = datetime.combine(due_date, datetime.min.time(), tzinfo=tz).replace(hour=clock[0], minute=clock[1])
+    return due_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _standalone_due_from_capture_match(
     match: re.Match[str],
     *,
@@ -406,6 +425,12 @@ async def _infer_capture_due_at(
     match = _CAPTURE_TIME_RE.search(message)
     if match:
         return _due_from_capture_match(match, timezone_name=effective_timezone, now_utc=now_utc)
+    by_match = _CAPTURE_BY_TIME_RE.search(message)
+    if by_match:
+        return _due_from_capture_match(by_match, timezone_name=effective_timezone, now_utc=now_utc)
+    reverse_match = _CAPTURE_REVERSE_TIME_RE.search(message)
+    if reverse_match:
+        return _due_from_reverse_capture_match(reverse_match, timezone_name=effective_timezone, now_utc=now_utc)
     standalone = _CAPTURE_STANDALONE_TIME_RE.search(message)
     if standalone:
         standalone_due = _standalone_due_from_capture_match(standalone, text=message, timezone_name=effective_timezone, now_utc=now_utc)
@@ -546,6 +571,24 @@ def _title_from_capture(text: str) -> str:
         if len(cleaned) >= 4:
             return cleaned[:120]
     return "Capture"
+
+
+def _clean_commitment_title(text: str) -> str:
+    cleaned = re.sub(r"\buat[-\s]*\d{4}-\d{2}-\d{2}[-\w]*:?", " ", str(text or ""), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\buat\s+timezone:?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\bremind\s+me\s+"
+        r"(?:(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?"
+        r"(?:(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?\s*"
+        r"(?:to\s+)?",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(?:today|tomorrow)\s+(?:at|by|before)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bby\s+(?:today|tomorrow)\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-:")
+    return cleaned[:300] or str(text or "Captured commitment").strip()[:300] or "Captured commitment"
 
 
 def _select_capture_route(data: UnifiedCaptureRequest) -> str:
@@ -900,7 +943,7 @@ async def _handle_agentic_capture_followup(
 
 
 async def _force_ready_deadlined_commitment(entry_id: int, *, title: str):
-    clean_title = str(title or "").strip()[:300] or "Captured commitment"
+    clean_title = _clean_commitment_title(title)
     domain = _infer_commitment_domain(clean_title)
     priority_overrides = _priority_overrides_for_capture(clean_title, None)
     return await update_intake_entry(
@@ -937,12 +980,26 @@ async def _apply_commitment_capture_overrides(
     overrides = _priority_overrides_for_capture(message, due_at)
     questions = _detail_questions_for_capture(message, overrides["domain"])
     if life_item_id:
+        cleaned_title = _clean_commitment_title(message)
+        should_apply_clean_title = (
+            bool(cleaned_title)
+            and cleaned_title != str(message or "").strip()
+            and bool(
+                re.search(
+                    r"\b(?:uat|remind\s+me|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|by)\b",
+                    message,
+                    re.IGNORECASE,
+                )
+            )
+        )
         update_values = {
             "domain": overrides["domain"],
             "priority": overrides["priority"],
             "priority_score": overrides["priority_score"],
             "priority_reason": overrides["priority_reason"],
         }
+        if should_apply_clean_title and len(cleaned_title) <= 120:
+            update_values["title"] = cleaned_title
         if due_at is not None:
             update_values["due_at"] = due_at
         update_payload = LifeItemUpdate(**update_values)
@@ -1157,6 +1214,7 @@ async def capture_life(data: UnifiedCaptureRequest):
                 source_message_id=data.source_message_id,
                 source_channel_id=data.source_channel_id,
                 due_at=inferred_due_at,
+                reminder_at=data.reminder_at,
                 timezone=data.timezone,
                 target_channel=data.target_channel,
                 target_channel_id=data.target_channel_id,
@@ -1423,7 +1481,9 @@ async def capture_commitment(data: CommitmentCaptureRequest):
     follow_up_job = None
     auto_promoted = False
     effective_timezone = await get_commitment_timezone(data.timezone)
-    inferred_due_at = await _infer_capture_due_at(capture_context_message, data.due_at, effective_timezone)
+    inferred_due_at = await _infer_capture_due_at(raw_message, data.due_at, effective_timezone) if prior_entry else None
+    if inferred_due_at is None:
+        inferred_due_at = await _infer_capture_due_at(capture_context_message, data.due_at, effective_timezone)
     priority_overrides = _priority_overrides_for_capture(capture_context_message, inferred_due_at)
     if entry and inferred_due_at is not None and not entry.linked_life_item_id and not _should_promote_commitment_entry(entry, due_at=inferred_due_at):
         entry = await _force_ready_deadlined_commitment(entry.id, title=message)
@@ -1440,6 +1500,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             follow_up_job = await upsert_follow_up_job(
                 life_item.id,
                 timezone_name=effective_timezone,
+                reminder_at=data.reminder_at,
                 target_channel=data.target_channel,
                 target_channel_id=data.target_channel_id,
             )
@@ -1456,6 +1517,7 @@ async def capture_commitment(data: CommitmentCaptureRequest):
             follow_up_job = await upsert_follow_up_job(
                 life_item.id,
                 timezone_name=effective_timezone,
+                reminder_at=data.reminder_at,
                 target_channel=data.target_channel,
                 target_channel_id=data.target_channel_id,
             )

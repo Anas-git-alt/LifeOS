@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from sqlalchemy import func, select
@@ -159,6 +160,25 @@ def _life_item_notes(entry: IntakeEntry, notes_override: str | None = None) -> s
     if entry.raw_text:
         parts.append(f"Captured from inbox: {entry.raw_text.strip()}")
     return "\n\n".join(part for part in parts if part)
+
+
+def _normalize_life_item_title(value: str) -> str:
+    text = str(value or "").lower()
+    text = re.sub(r"\buat[-\s]*\d{4}-\d{2}-\d{2}[-\w]*:?", " ", text)
+    text = re.sub(r"\buat\s+timezone:?", " ", text)
+    text = re.sub(r"\bremind\s+me\s+(?:to\s+)?", " ", text)
+    text = re.sub(r"\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", " ", text)
+    text = re.sub(r"\b(?:at|by|before)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _same_due_time(left: datetime | None, right: datetime | None) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    left_utc = left.replace(tzinfo=timezone.utc) if left.tzinfo is None else left.astimezone(timezone.utc)
+    right_utc = right.replace(tzinfo=timezone.utc) if right.tzinfo is None else right.astimezone(timezone.utc)
+    return abs((left_utc - right_utc).total_seconds()) <= 60
 
 
 async def list_intake_entries(
@@ -403,6 +423,25 @@ async def promote_intake_entry(
         item_kind = _safe_kind(payload.get("kind") or entry.kind)
         life_item_kind = item_kind if item_kind in PROMOTABLE_LIFE_ITEM_KINDS else DEFAULT_KIND_BY_INTAKE_KIND.get(item_kind, "task")
         start_date = _parse_date_string(payload.get("start_date"))
+        due_at = _parse_datetime_value(payload.get("due_at"))
+        normalized_title = _normalize_life_item_title(title)
+        if normalized_title:
+            existing_result = await db.execute(
+                select(LifeItem).where(
+                    LifeItem.status == "open",
+                    LifeItem.kind == life_item_kind,
+                )
+            )
+            for existing in existing_result.scalars().all():
+                if _normalize_life_item_title(existing.title) == normalized_title and _same_due_time(existing.due_at, due_at):
+                    entry.linked_life_item_id = existing.id
+                    entry.status = "processed"
+                    entry.next_action = _clean_text(payload.get("next_action")) or entry.next_action
+                    entry.updated_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    await db.refresh(entry)
+                    await db.refresh(existing)
+                    return entry, existing
 
         item = LifeItem(
             domain=_safe_domain(payload.get("domain") or entry.domain),
@@ -410,7 +449,7 @@ async def promote_intake_entry(
             kind=life_item_kind,
             notes=_life_item_notes(entry, notes_override=_clean_text(payload.get("notes"))),
             priority=str(payload.get("priority") or "medium").strip().lower() or "medium",
-            due_at=_parse_datetime_value(payload.get("due_at")),
+            due_at=due_at,
             start_date=start_date,
             recurrence_rule=_clean_text(payload.get("recurrence_rule")),
             source_agent=entry.source_agent,

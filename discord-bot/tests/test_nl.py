@@ -146,6 +146,61 @@ def test_parse_commitment_prompt_extracts_tomorrow_end_of_day_due_at():
     assert parsed["data"]["due_at"] == expected
 
 
+def test_parse_commitment_prompt_remind_me_uses_requested_time_as_reminder():
+    now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+
+    parsed = parse_commitment_prompt("remind me tomorrow at 9am to check staging", now=now)
+
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "check staging"
+    assert parsed["data"]["due_at"] == datetime(2026, 4, 28, 8, 0)
+    assert parsed["data"]["reminder_at"] == datetime(2026, 4, 28, 8, 0)
+
+
+def test_parse_commitment_prompt_remind_me_at_2pm_uses_requested_time_as_reminder():
+    now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+
+    parsed = parse_commitment_prompt("remind me tomorrow at 2pm to check staging", now=now)
+
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "check staging"
+    assert parsed["data"]["due_at"] == datetime(2026, 4, 28, 13, 0)
+    assert parsed["data"]["reminder_at"] == datetime(2026, 4, 28, 13, 0)
+
+
+def test_parse_commitment_prompt_due_by_does_not_set_direct_reminder():
+    now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+
+    parsed = parse_commitment_prompt("check staging by tomorrow at 9am", now=now)
+
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "check staging"
+    assert parsed["data"]["due_at"] == datetime(2026, 4, 28, 8, 0)
+    assert parsed["data"].get("reminder_at") is None
+
+
+def test_parse_commitment_prompt_advance_reminder_stays_before_due_time():
+    now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+
+    parsed = parse_commitment_prompt("remind me 3 hours before tomorrow at 9am to check staging", now=now)
+
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "check staging"
+    assert parsed["data"]["due_at"] == datetime(2026, 4, 28, 8, 0)
+    assert parsed["data"]["reminder_at"] == datetime(2026, 4, 28, 5, 0)
+
+
+def test_parse_commitment_prompt_weekday_time_reminder():
+    now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+
+    parsed = parse_commitment_prompt("remind me Monday 4pm to check staging", now=now)
+
+    assert parsed["errors"] == []
+    assert parsed["data"]["message"] == "check staging"
+    assert parsed["data"]["due_at"] == datetime(2026, 4, 27, 15, 0)
+    assert parsed["data"]["reminder_at"] == datetime(2026, 4, 27, 15, 0)
+
+
 def test_parse_commitment_prompt_rejects_recurring_schedule():
     parsed = parse_commitment_prompt("Stretch every day at 8:00")
     assert parsed["errors"]

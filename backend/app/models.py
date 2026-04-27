@@ -1495,6 +1495,7 @@ class CommitmentCaptureRequest(BaseModel):
     source_message_id: Optional[str] = None
     source_channel_id: Optional[str] = None
     due_at: Optional[datetime] = None
+    reminder_at: Optional[datetime] = None
     timezone: Optional[str] = None
     target_channel: Optional[str] = None
     target_channel_id: Optional[str] = None
@@ -1520,6 +1521,7 @@ class UnifiedCaptureRequest(BaseModel):
     source_message_id: Optional[str] = None
     source_channel_id: Optional[str] = None
     due_at: Optional[datetime] = None
+    reminder_at: Optional[datetime] = None
     timezone: Optional[str] = None
     target_channel: Optional[str] = None
     target_channel_id: Optional[str] = None

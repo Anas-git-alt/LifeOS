@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.database import async_session
 from app.models import Agent, ChatSession, CommitmentCaptureResponse, IntakeCaptureResponse, IntakeEntry, LifeItemCreate, UnifiedCaptureRequest
 from app.routers.life import (
+    _clean_commitment_title,
     _commitment_followup_note,
     _detail_questions_for_capture,
     _infer_commitment_domain,
@@ -217,6 +218,11 @@ def test_unified_capture_family_message_has_domain_priority_and_detail_question(
     assert overrides["priority_score"] > 55
 
 
+def test_commitment_title_cleaner_strips_uat_tags_and_remind_me_phrasing():
+    assert _clean_commitment_title("UAT timezone: remind me tomorrow at 9am to check staging") == "check staging"
+    assert _clean_commitment_title("UAT timezone: remind me Monday 4pm to check staging") == "check staging"
+
+
 @pytest.mark.asyncio
 async def test_commitment_due_inference_combines_weekday_and_followup_time(monkeypatch):
     fixed_now = datetime(2026, 4, 26, 8, 0, tzinfo=timezone.utc)
@@ -244,6 +250,20 @@ async def test_capture_due_inference_uses_casablanca_for_relative_dates():
         ("next Sunday 3rd May", datetime(2026, 5, 3, 8, 0)),
         ("Thursday", datetime(2026, 4, 30, 8, 0)),
         ("Saturday morning", datetime(2026, 5, 2, 8, 0)),
+    ]
+
+    for phrase, expected_utc in cases:
+        due_at = await _infer_capture_due_at(phrase, None, "Africa/Casablanca", now_utc=fixed_now)
+        assert due_at == expected_utc
+
+
+@pytest.mark.asyncio
+async def test_capture_followup_relative_dates_use_followup_timestamp():
+    fixed_now = datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc)
+    cases = [
+        ("the deadline is at 2pm tomorrow", datetime(2026, 4, 28, 13, 0)),
+        ("Monday 4pm", datetime(2026, 4, 27, 15, 0)),
+        ("next Sunday 3rd May", datetime(2026, 5, 3, 8, 0)),
     ]
 
     for phrase, expected_utc in cases:

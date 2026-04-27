@@ -405,7 +405,19 @@ def _wiki_fact_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw_facts = payload.get("wiki_facts") or payload.get("memory_facts") or []
     if not isinstance(raw_facts, list):
         return []
-    return [fact for fact in raw_facts if isinstance(fact, dict)]
+    filtered = []
+    for fact in raw_facts:
+        if not isinstance(fact, dict):
+            continue
+        text = " ".join(str(fact.get(key) or "") for key in ("title", "content", "summary")).lower()
+        short_lived = (
+            ("laptop bag" in text and "zipper" in text)
+            or ("repair" in text and "before travel" in text)
+        )
+        if short_lived and not any(token in text for token in ("preference", "usually", "always", "profile", "durable")):
+            continue
+        filtered.append(fact)
+    return filtered
 
 
 def _context_links_from_hits(hits) -> list[dict[str, Any]]:

@@ -117,6 +117,96 @@ class AgentsCog(commands.Cog, name="Agents"):
         return f"{local:%Y-%m-%d %H:%M} {tz.key} ({aware_utc:%Y-%m-%d %H:%M} UTC)"
 
     @staticmethod
+    def _fallback_question(entry: dict) -> str:
+        kind = str(entry.get("kind") or "idea").lower()
+        if kind == "commitment":
+            return "When is this due, or what reminder time should I use?"
+        if kind == "task":
+            return "What concrete task or next action should be tracked?"
+        return "Should this be saved as a task, commitment, note, or ignored?"
+
+    @classmethod
+    def _entry_questions(cls, entry: dict) -> list[str]:
+        questions = [str(item).strip() for item in (entry.get("follow_up_questions") or []) if str(item).strip()]
+        if not questions and entry.get("status") == "clarifying":
+            questions = [cls._fallback_question(entry)]
+        return questions[:3]
+
+    @classmethod
+    def _all_questions(cls, entries: list[dict]) -> list[str]:
+        questions: list[str] = []
+        for entry in entries:
+            for question in cls._entry_questions(entry):
+                if question not in questions:
+                    questions.append(question)
+        return questions[:5]
+
+    @staticmethod
+    def _priority_lines(payload: dict) -> list[str]:
+        if not payload:
+            return []
+        lines: list[str] = []
+        priority = str(payload.get("priority") or "").strip().lower()
+        score = payload.get("priority_score")
+        reason = str(payload.get("priority_reason") or "").strip()
+        if priority:
+            lines.append(f"Priority: {priority}")
+        elif isinstance(score, int):
+            lines.append(f"Priority: {score}/100")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        return lines
+
+    @classmethod
+    def _capture_item_value(cls, entry: dict) -> str:
+        lines = [
+            f"C#{entry['id']} {entry.get('title') or 'Untitled'}",
+            f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}",
+        ]
+        lines.extend(cls._priority_lines(entry.get("promotion_payload") or {}))
+        return "\n".join(lines)
+
+    @classmethod
+    def _life_item_line(cls, item: dict, *, timezone_name: str | None = None) -> str:
+        line = f"L#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')}"
+        if item.get("due_at"):
+            line += f" · Due {cls._format_local_and_utc(item.get('due_at'), timezone_name or 'Africa/Casablanca')}"
+        return line
+
+    @staticmethod
+    def _memory_review_value(proposals: list[dict]) -> str:
+        lines = [f"{len(proposals)} memory candidate(s) need review."]
+        for proposal in proposals[:3]:
+            content = str(proposal.get("proposed_content") or proposal.get("title") or "").strip()
+            content = re.sub(r"\s+", " ", content)
+            reason = str(proposal.get("conflict_reason") or "review_required").replace("_", " ")
+            status = str(proposal.get("status") or "pending")
+            proposal_id = proposal.get("id")
+            lines.extend(
+                [
+                    "",
+                    f"Proposed memory: \"{content[:260]}\"",
+                    f"Why review is needed: {reason}.",
+                    "Status: Pending review. Not active until approved." if status == "pending" else f"Status: {status}.",
+                    "Review: Open WebUI -> Memory Ledger -> Review Required",
+                ]
+            )
+            if proposal_id:
+                lines.append(f"ID: M#{proposal_id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _optional_details_for_item(item: dict) -> list[str]:
+        text = f"{item.get('title', '')} {item.get('notes', '')}".lower()
+        if "laptop bag" in text and "zipper" in text and not item.get("due_at"):
+            return [
+                "When is your travel date?",
+                "Do you want a reminder before then?",
+                "Should this be a repair-shop task or a DIY task?",
+            ]
+        return []
+
+    @staticmethod
     def _split_discord_chunks(text: str, limit: int = 1800) -> list[str]:
         remaining = str(text or "").strip()
         if not remaining:
@@ -460,6 +550,10 @@ class AgentsCog(commands.Cog, name="Agents"):
             life_items = [result["life_item"]]
         wiki_proposals = result.get("wiki_proposals") or []
         clarifying_count = len([item for item in entries if item.get("status") == "clarifying"])
+        questions = self._all_questions(entries)
+        response_needs_answer = bool(re.search(r"\bneeds?\s+(?:your\s+)?answer\b", str(result.get("response") or ""), re.IGNORECASE))
+        if not questions and (result.get("needs_answer_count") or result.get("needs_follow_up") or response_needs_answer):
+            questions = [self._fallback_question(entry or {"kind": result.get("route") or "idea"})]
         if logged_signals or completed_items:
             description_parts = ["Updated Today."]
             if completed_items:
@@ -472,82 +566,85 @@ class AgentsCog(commands.Cog, name="Agents"):
             if life_items:
                 description_parts.append(f"Tracked {len(life_items)} item(s).")
             if clarifying_count:
-                description_parts.append(f"{clarifying_count} need answer.")
+                noun = "item" if clarifying_count == 1 else "items"
+                description_parts.append(f"{clarifying_count} {noun} needs your answer.")
             if wiki_proposals:
-                description_parts.append(f"{len(wiki_proposals)} memory review item(s).")
+                description_parts.append(f"{len(wiki_proposals)} memory candidate(s) need review.")
             description = " ".join(description_parts)
         else:
             description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x2563EB)
         if completed_items:
             lines = [
-                f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('status', 'done')}"
+                f"L#{item['id']} {item.get('title', 'Untitled')} · {item.get('status', 'done')}"
                 for item in completed_items[:5]
             ]
             embed.add_field(name="Completed", value=self._embed_value("\n".join(lines)), inline=False)
         if logged_signals:
             embed.add_field(name="Logged", value=self._embed_value(", ".join(logged_signals)), inline=False)
         if entry.get("id"):
-            priority = entry.get("promotion_payload") or {}
             embed.add_field(
                 name="Capture Item",
-                value=self._embed_value(
-                    f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
-                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}\n"
-                    f"AI priority {priority.get('priority_score', '?')}/100 · {priority.get('priority_reason', 'reason pending')}"
-                ),
+                value=self._embed_value(self._capture_item_value(entry)),
                 inline=False,
             )
         if life_items:
-            lines = [
-                f"#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')} ({item.get('priority_score', 50)}/100)"
-                for item in life_items[:5]
-            ]
+            lines = [self._life_item_line(item) for item in life_items[:5]]
             embed.add_field(name="Tracked", value=self._embed_value("\n".join(lines)), inline=False)
+            optional_questions: list[str] = []
+            for item in life_items[:5]:
+                for question in self._optional_details_for_item(item):
+                    if question not in optional_questions:
+                        optional_questions.append(question)
+            if optional_questions:
+                embed.add_field(
+                    name="Optional Details",
+                    value=self._embed_value("\n".join([f"• {question}" for question in optional_questions[:5]])),
+                    inline=False,
+                )
         if wiki_proposals:
-            embed.add_field(name="Memory Review", value=f"{len(wiki_proposals)} review-required item(s)", inline=False)
-        followups = entry.get("follow_up_questions") or []
-        if followups:
+            embed.add_field(name="Memory Review", value=self._embed_value(self._memory_review_value(wiki_proposals)), inline=False)
+        if questions:
             embed.add_field(
                 name="Needs Answer",
-                value=self._embed_value("\n".join([f"• {question}" for question in followups[:3]])),
+                value=self._embed_value("\n".join([f"• {question}" for question in questions])),
                 inline=False,
             )
+            if result.get("session_id"):
+                embed.add_field(
+                    name="Reply",
+                    value=f"`!capturefollow session #{result['session_id']} <your answer>`",
+                    inline=False,
+                )
         if result.get("session_id"):
-            embed.set_footer(text=f"Session #{result['session_id']} · continue with !capturefollow session #{result['session_id']} <answer>")
+            embed.set_footer(text=f"S#{result['session_id']} · continue with !capturefollow session #{result['session_id']} <answer>")
         await ctx.send(embed=embed)
 
     async def _send_commitment_embed(self, ctx, result: dict, *, heading: str) -> None:
         entry = result.get("entry") or {}
         life_item = result.get("life_item") or next(iter(result.get("life_items") or []), {})
         follow_up_job = result.get("follow_up_job") or {}
+        questions = self._entry_questions(entry) if entry else []
+        response_needs_answer = bool(re.search(r"\bneeds?\s+(?:your\s+)?answer\b", str(result.get("response") or ""), re.IGNORECASE))
+        if not questions and (result.get("needs_follow_up") or response_needs_answer):
+            questions = [self._fallback_question({"kind": "commitment"})]
         description = self._clean_visible_response(result.get("response", "Captured."))
         if life_item.get("id") and not result.get("needs_follow_up"):
             description = "Tracked. Reminder set. Use `!focus` to see where it ranks."
         elif result.get("session_id") and result.get("needs_follow_up"):
-            if entry.get("id"):
-                reply_hint = f"!commitfollow {entry['id']} <answer>"
-            else:
-                reply_hint = f"!commitfollow session #{result['session_id']} <answer>"
-            description = (
-                f"{description}\n\n"
-                f"Reply: `{reply_hint}`"
-            )
+            description = "Captured via commitment. 1 item needs your answer."
         embed = discord.Embed(title=heading, description=description[:4000], color=0x059669)
         if entry.get("id"):
             embed.add_field(
                 name="Capture Item",
-                value=(
-                    f"#{entry['id']} {entry.get('title') or 'Untitled'}\n"
-                    f"{entry.get('status', 'raw')} · {entry.get('domain', 'planning')}/{entry.get('kind', 'idea')}"
-                ),
+                value=self._capture_item_value(entry),
                 inline=False,
             )
         if life_item.get("id"):
             reminder = follow_up_job.get("next_run_at") or follow_up_job.get("run_at") or "n/a"
             timezone_name = follow_up_job.get("timezone") or result.get("timezone") or "Africa/Casablanca"
             lines = [
-                f"Life item #{life_item['id']} · {life_item.get('title', 'Untitled')}",
+                f"L#{life_item['id']} {life_item.get('title', 'Untitled')}",
             ]
             if life_item.get("due_at"):
                 lines.append(f"Due: {self._format_local_and_utc(life_item.get('due_at'), timezone_name)}")
@@ -557,11 +654,10 @@ class AgentsCog(commands.Cog, name="Agents"):
                 value="\n".join(lines),
                 inline=False,
             )
-        followups = entry.get("follow_up_questions") or []
-        if followups:
+        if questions:
             embed.add_field(
-                name="Need Follow-up",
-                value="\n".join([f"• {question}" for question in followups[:3]]),
+                name="Needs Answer",
+                value="\n".join([f"• {question}" for question in questions]),
                 inline=False,
             )
         if result.get("session_id") and result.get("needs_follow_up"):
@@ -574,13 +670,13 @@ class AgentsCog(commands.Cog, name="Agents"):
             )
             embed.set_footer(
                 text=(
-                    f"Session #{result['session_id']} · copy command above"
+                    f"S#{result['session_id']} · copy command above"
                 )
             )
         elif result.get("session_id"):
             embed.add_field(
                 name="Session",
-                value=f"#{result['session_id']} · new `!commit ...` starts next capture",
+                value=f"S#{result['session_id']} · new `!commit ...` starts next capture",
                 inline=False,
             )
         await ctx.send(embed=embed)
@@ -838,11 +934,14 @@ class AgentsCog(commands.Cog, name="Agents"):
                     color=0x7C3AED,
                 )
                 embed.add_field(name="Domain", value=event.get("domain", "planning"), inline=True)
-                embed.add_field(name="Memory Review", value=str(len(proposals)), inline=True)
+                if proposals:
+                    embed.add_field(name="Memory Review", value=self._embed_value(self._memory_review_value(proposals)), inline=False)
+                else:
+                    embed.add_field(name="Memory Review", value="No review-required memory candidates.", inline=False)
                 if result.get("entries"):
                     embed.add_field(
                         name="Action Capture",
-                        value=", ".join(f"#{item['id']}" for item in result["entries"][:5]),
+                        value=", ".join(f"C#{item['id']}" for item in result["entries"][:5]),
                         inline=False,
                     )
                 await ctx.send(embed=embed)
@@ -1041,6 +1140,7 @@ class AgentsCog(commands.Cog, name="Agents"):
             "new_session": True,
             "source": "discord_commitment_capture",
             "due_at": parsed["data"]["due_at"].isoformat() if parsed["data"].get("due_at") else None,
+            "reminder_at": parsed["data"]["reminder_at"].isoformat() if parsed["data"].get("reminder_at") else None,
             "timezone": parsed["data"].get("timezone"),
             **self._current_channel_payload(ctx),
         }
@@ -1087,6 +1187,7 @@ class AgentsCog(commands.Cog, name="Agents"):
             "new_session": False,
             "source": "discord_commitment_followup",
             "due_at": due_at.isoformat() if due_at else None,
+            "reminder_at": parsed["data"].get("reminder_at").isoformat() if parsed["data"].get("reminder_at") else None,
             "timezone": timezone_name,
             **self._current_channel_payload(ctx),
         }

@@ -54,6 +54,22 @@ _TODAY_TOMORROW_PATTERN = re.compile(
     rf"\b(today|tomorrow)\s+(?:at|by|before)\s+{_TIME_PATTERN}\b",
     re.IGNORECASE,
 )
+_BY_TODAY_TOMORROW_PATTERN = re.compile(
+    rf"\bby\s+(today|tomorrow)\s+at\s+{_TIME_PATTERN}\b",
+    re.IGNORECASE,
+)
+_REVERSE_TODAY_TOMORROW_PATTERN = re.compile(
+    rf"\b(?:at|by|before)\s+{_TIME_PATTERN}\s+(today|tomorrow)\b",
+    re.IGNORECASE,
+)
+_WEEKDAY_TIME_PATTERN = re.compile(
+    rf"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?{_TIME_PATTERN}\b",
+    re.IGNORECASE,
+)
+_ADVANCE_REMINDER_PATTERN = re.compile(
+    rf"\bremind\s+me\s+(\d+)\s*(hours?|hrs?|hr|minutes?|mins?|min)\s+before\s+(today|tomorrow)\s+at\s+{_TIME_PATTERN}\b",
+    re.IGNORECASE,
+)
 _EOD_PATTERN = re.compile(
     r"\b(?:(?:deadline|due)(?:\s+(?:is|by))?\s+|by\s+)?"
     r"(?:(today|tomorrow)\s+(?:eod|end\s+of\s+day)|"
@@ -108,12 +124,68 @@ def _subtract_span(text: str, span: tuple[int, int], *, include_preposition: boo
 
 def _strip_spans(text: str, spans: list[tuple[int, int]]) -> str:
     cleaned = text
-    for start, end in sorted(spans, key=lambda item: item[0], reverse=True):
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    for start, end in sorted(merged, key=lambda item: item[0], reverse=True):
         cleaned = f"{cleaned[:start]} {cleaned[end:]}"
     cleaned = _normalize_whitespace(cleaned)
     cleaned = re.sub(r"^\bremind me(?:\s+to)?\b\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\b(?:in|to)\s*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\b(?:the\s+)?deadline\s+is\b\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\bto\b\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:in|to|by|before|at)\s*$", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip(" ,.-")
+
+
+def _run_at_from_day_time(
+    *,
+    day_text: str,
+    hour_text: str,
+    minute_text: str | None,
+    meridian_text: str | None,
+    local_now: datetime,
+    timezone_name: str,
+) -> datetime | None:
+    parsed_time = _parse_time_parts(hour_text, minute_text, meridian_text)
+    if parsed_time is None:
+        return None
+    hour, minute = parsed_time
+    offset_days = 1 if day_text.lower() == "tomorrow" else 0
+    run_local = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=offset_days)
+    return run_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _run_at_from_weekday_time(
+    *,
+    weekday_text: str,
+    hour_text: str,
+    minute_text: str | None,
+    meridian_text: str | None,
+    local_now: datetime,
+) -> datetime | None:
+    parsed_time = _parse_time_parts(hour_text, minute_text, meridian_text)
+    if parsed_time is None:
+        return None
+    target = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }.get(weekday_text.lower())
+    if target is None:
+        return None
+    days_ahead = (target - local_now.weekday()) % 7
+    hour, minute = parsed_time
+    run_local = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=days_ahead)
+    if run_local <= local_now:
+        run_local += timedelta(days=7)
+    return run_local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _format_schedule_error() -> str:
@@ -206,13 +278,26 @@ def parse_schedule_value(
         }
 
     day_match = _TODAY_TOMORROW_PATTERN.search(normalized_text)
+    reverse_day_match = _REVERSE_TODAY_TOMORROW_PATTERN.search(normalized_text)
+    by_day_match = _BY_TODAY_TOMORROW_PATTERN.search(normalized_text)
+    if not day_match and (by_day_match or reverse_day_match):
+        day_match = by_day_match or reverse_day_match
     if day_match:
-        parsed_time = _parse_time_parts(day_match.group(2), day_match.group(3), day_match.group(4))
-        if parsed_time is None:
+        if day_match.re is _REVERSE_TODAY_TOMORROW_PATTERN:
+            hour_text, minute_text, meridian_text, day_text = day_match.group(1), day_match.group(2), day_match.group(3), day_match.group(4)
+        else:
+            day_text, hour_text, minute_text, meridian_text = day_match.group(1), day_match.group(2), day_match.group(3), day_match.group(4)
+        run_at = _run_at_from_day_time(
+            day_text=day_text,
+            hour_text=hour_text,
+            minute_text=minute_text,
+            meridian_text=meridian_text,
+            local_now=local_now,
+            timezone_name=timezone_name,
+        )
+        if run_at is None:
             return {"data": {}, "spans": [], "errors": [_format_schedule_error()]}
-        hour, minute = parsed_time
-        offset_days = 1 if day_match.group(1).lower() == "tomorrow" else 0
-        run_local = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=offset_days)
+        run_local = run_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(timezone_name))
         if run_local <= local_now:
             return {
                 "data": {},
@@ -223,9 +308,30 @@ def parse_schedule_value(
             "data": {
                 "schedule_type": "once",
                 "cron_expression": None,
-                "run_at": run_local.astimezone(timezone.utc).replace(tzinfo=None),
+                "run_at": run_at,
             },
             "spans": [day_match.span()],
+            "errors": [],
+        }
+
+    weekday_time_match = _WEEKDAY_TIME_PATTERN.search(normalized_text)
+    if weekday_time_match:
+        run_at = _run_at_from_weekday_time(
+            weekday_text=weekday_time_match.group(1),
+            hour_text=weekday_time_match.group(2),
+            minute_text=weekday_time_match.group(3),
+            meridian_text=weekday_time_match.group(4),
+            local_now=local_now,
+        )
+        if run_at is None:
+            return {"data": {}, "spans": [], "errors": [_format_schedule_error()]}
+        return {
+            "data": {
+                "schedule_type": "once",
+                "cron_expression": None,
+                "run_at": run_at,
+            },
+            "spans": [weekday_time_match.span()],
             "errors": [],
         }
 
@@ -401,8 +507,20 @@ def parse_commitment_prompt(
     schedule_type = schedule["data"].get("schedule_type")
     if schedule_type == "once":
         data["due_at"] = schedule["data"].get("run_at")
+        if re.search(r"^\s*remind\s+me\b", normalized_text, re.IGNORECASE) and not re.search(
+            r"\b(?:by|deadline|due)\b", normalized_text, re.IGNORECASE
+        ):
+            data["reminder_at"] = data["due_at"]
     elif schedule_type == "cron":
         errors.append("Commitments need a one-time deadline like `tomorrow at 9am` or `in 2 hours`.")
+
+    advance = _ADVANCE_REMINDER_PATTERN.search(normalized_text)
+    if advance and data.get("due_at"):
+        amount = int(advance.group(1))
+        unit = advance.group(2).lower()
+        delta = timedelta(hours=amount) if unit.startswith(("h", "hr")) else timedelta(minutes=amount)
+        data["reminder_at"] = data["due_at"] - delta
+        remove_spans.append(advance.span())
 
     cleaned_message = _strip_spans(normalized_text, remove_spans)
     data["message"] = cleaned_message or normalized_text

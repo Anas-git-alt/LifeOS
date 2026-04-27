@@ -12,12 +12,38 @@ from app.main import app
 from app.config import settings
 from app.database import async_session
 from app.models import AuditLog, IntakeEntry, LifeCheckin, LifeItem, MemoryEvent
+from app.services.commitments import compute_follow_up_run_at
 from app.services.intake import upsert_fallback_intake_entry
 from app.services.life import _focus_rank_details
 
 
 def _headers() -> dict:
     return {"X-LifeOS-Token": settings.api_secret_key}
+
+
+def test_follow_up_run_at_uses_requested_reminder_time_for_remind_me():
+    due_at = datetime(2026, 4, 28, 8, 0, tzinfo=timezone.utc)
+
+    run_at = compute_follow_up_run_at(
+        due_at=due_at,
+        reminder_at=due_at,
+        timezone_name="Africa/Casablanca",
+        now_utc=datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert run_at == datetime(2026, 4, 28, 8, 0)
+
+
+def test_follow_up_run_at_keeps_due_by_advance_behavior_without_requested_reminder():
+    due_at = datetime(2026, 4, 28, 8, 0, tzinfo=timezone.utc)
+
+    run_at = compute_follow_up_run_at(
+        due_at=due_at,
+        timezone_name="Africa/Casablanca",
+        now_utc=datetime(2026, 4, 27, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert run_at == datetime(2026, 4, 28, 6, 0)
 
 
 async def _insert_intake_entry(

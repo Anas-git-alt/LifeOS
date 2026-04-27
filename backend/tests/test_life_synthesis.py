@@ -3,13 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session
 from app.main import app
-from app.models import Agent, IntakeEntry, SharedMemoryProposal
+from app.models import Agent, IntakeEntry, LifeItem, SharedMemoryProposal
+from app.services.intake import promote_intake_entry
 from app.services.life_synthesis import _augment_item_from_raw, _score_item
 from app.services.vault import classify_note_path
 
@@ -369,7 +371,13 @@ def test_inbox_capture_promotes_laptop_bag_repair_from_raw_text(monkeypatch):
                 "priority": "medium",
             }
         ],
-        "wiki_facts": [],
+        "wiki_facts": [
+            {
+                "title": "Laptop bag repair before travel",
+                "domain": "planning",
+                "content": "Repair laptop bag zipper before travel.",
+            }
+        ],
     }
 
     async def _fake_handle_message(*, agent_name: str, user_message: str, approval_policy: str, source: str, session_id: int | None, session_enabled: bool, **_extra):
@@ -392,6 +400,51 @@ def test_inbox_capture_promotes_laptop_bag_repair_from_raw_text(monkeypatch):
     assert "Repair laptop bag zipper before travel" in titles
     assert payload["entries"][0]["domain"] == "planning"
     assert payload["entries"][0]["follow_up_questions"] == []
+    assert payload["wiki_proposals"] == []
+
+
+@pytest.mark.asyncio
+async def test_promote_intake_reuses_same_normalized_title_and_due_time():
+    async def _add_entry(title: str, due_at: str) -> int:
+        async with async_session() as db:
+            entry = IntakeEntry(
+                source="agent_capture",
+                source_agent="intake-inbox",
+                raw_text=title,
+                title=title,
+                domain="work",
+                kind="task",
+                status="ready",
+                promotion_payload_json={
+                    "title": title,
+                    "domain": "work",
+                    "kind": "task",
+                    "priority": "medium",
+                    "due_at": due_at,
+                },
+            )
+            db.add(entry)
+            await db.commit()
+            await db.refresh(entry)
+            return entry.id
+
+    first_id = await _add_entry("UAT timezone: remind me to check staging", "2026-04-28T08:00:00")
+    duplicate_id = await _add_entry("Check staging", "2026-04-28T08:00:00")
+    different_time_id = await _add_entry("Check staging", "2026-04-28T13:00:00")
+
+    _, first_item = await promote_intake_entry(first_id)
+    _, duplicate_item = await promote_intake_entry(duplicate_id)
+    _, different_time_item = await promote_intake_entry(different_time_id)
+
+    assert first_item is not None
+    assert duplicate_item is not None
+    assert different_time_item is not None
+    assert duplicate_item.id == first_item.id
+    assert different_time_item.id != first_item.id
+
+    async with async_session() as db:
+        rows = (await db.execute(select(LifeItem))).scalars().all()
+    assert len(rows) == 2
 
 
 def test_inbox_capture_skips_duplicate_pending_wiki_proposal(monkeypatch):

@@ -41,10 +41,16 @@ def _to_naive_utc(value: datetime | None) -> datetime | None:
 def compute_follow_up_run_at(
     *,
     due_at: datetime | None,
+    reminder_at: datetime | None = None,
     timezone_name: str,
     now_utc: datetime | None = None,
 ) -> datetime:
     now_utc = _to_aware_utc(now_utc) or datetime.now(timezone.utc)
+    if reminder_at is not None:
+        reminder_utc = _to_aware_utc(reminder_at) or now_utc
+        if reminder_utc <= now_utc:
+            reminder_utc = now_utc + timedelta(minutes=30)
+        return reminder_utc.replace(tzinfo=None)
     if due_at is not None:
         due_utc = _to_aware_utc(due_at) or now_utc
         candidate = due_utc - timedelta(hours=2)
@@ -101,6 +107,7 @@ async def upsert_follow_up_job(
     item_id: int,
     *,
     timezone_name: str | None = None,
+    reminder_at: datetime | None = None,
     target_channel: str | None = None,
     target_channel_id: str | None = None,
 ) -> ScheduledJob | None:
@@ -113,6 +120,7 @@ async def upsert_follow_up_job(
         effective_timezone = _resolve_tz_name(timezone_name)
         run_at = compute_follow_up_run_at(
             due_at=item.due_at,
+            reminder_at=reminder_at,
             timezone_name=effective_timezone,
             now_utc=datetime.now(timezone.utc),
         )
@@ -158,6 +166,7 @@ async def upsert_follow_up_job(
                 config_json={
                     "origin": "commitment_capture",
                     "life_item_id": item.id,
+                    "requested_reminder_at": _to_naive_utc(reminder_at).isoformat() if reminder_at else None,
                 },
             )
             await update_job(existing_job.id, payload)
@@ -186,6 +195,7 @@ async def upsert_follow_up_job(
                     config_json={
                         "origin": "commitment_capture",
                         "life_item_id": item.id,
+                        "requested_reminder_at": _to_naive_utc(reminder_at).isoformat() if reminder_at else None,
                     },
                 )
             )
