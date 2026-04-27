@@ -454,7 +454,8 @@ async def test_handle_message_executes_explicit_direct_task_request(monkeypatch)
     monkeypatch.setattr("app.services.orchestrator.async_session", factory)
     monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
     monkeypatch.setattr("app.services.orchestrator.search_memory_events", AsyncMock(return_value=[]))
-    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", AsyncMock(return_value=None))
+    daily_log = AsyncMock(return_value=None)
+    monkeypatch.setattr("app.services.orchestrator.propose_daily_log_payload", daily_log)
     monkeypatch.setattr(
         "app.services.orchestrator.chat_completion",
         AsyncMock(
@@ -472,13 +473,14 @@ async def test_handle_message_executes_explicit_direct_task_request(monkeypatch)
 
     result = await handle_message(
         agent_name="sandbox",
-        user_message="create a task for me to review staging UAT notes tomorrow at 10am",
+        user_message="UAT-2026-04-26-agentic-capture: create a task for me to review staging UAT notes tomorrow at 10am",
         approval_policy="auto",
         session_enabled=False,
     )
 
     assert result["pending_action_id"] is None
     assert result["response"] == "Tracked #12: Review staging UAT notes"
+    assert daily_log.await_count == 0
     details = json.loads(executed.await_args.args[0].details)
     assert details["domain"] == "planning"
     assert details["due_at"] == "2026-04-28T10:00:00+01:00"
@@ -902,6 +904,7 @@ async def test_handle_message_adds_profile_location_instruction(monkeypatch):
     async def fake_chat_completion(messages, provider, model, fallback_provider, fallback_model, **_kwargs):
         captured["messages"] = messages
         return "Local answer."
+    get_search_context = AsyncMock(return_value="[WEB SEARCH RESULTS]")
 
     monkeypatch.setattr("app.services.orchestrator.async_session", factory)
     monkeypatch.setattr("app.services.orchestrator.get_context", AsyncMock(return_value=[]))
@@ -923,6 +926,7 @@ async def test_handle_message_adds_profile_location_instruction(monkeypatch):
         "app.services.orchestrator.plan_turn_for_tools",
         AsyncMock(return_value=TurnPlan(needs_web_search=False, web_search_query=None, confidence=0.8)),
     )
+    monkeypatch.setattr("app.services.orchestrator._get_search_context", get_search_context)
     monkeypatch.setattr("app.services.orchestrator.chat_completion", fake_chat_completion)
     monkeypatch.setattr("app.services.orchestrator.save_message", AsyncMock())
     monkeypatch.setattr("app.services.orchestrator._extract_and_create_goals", AsyncMock(return_value=[]))
@@ -939,6 +943,7 @@ async def test_handle_message_adds_profile_location_instruction(monkeypatch):
     assert "Prefer local units/currency" in system_text
     assert "MAD when giving prices" in system_text
     assert "no tables unless asked" in system_text
+    get_search_context.assert_not_awaited()
 
 
 @pytest.mark.asyncio

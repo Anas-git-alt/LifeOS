@@ -131,6 +131,12 @@ _TASK_ADD_CONFIRMATION_RE = re.compile(
     re.IGNORECASE,
 )
 _TASK_CREATE_REQUEST_RE = re.compile(r"\b(create|add|track|make|remind).{0,40}\b(tasks?|reminders?)\b|\b(tasks?|reminders?).{0,40}\b(create|add|track|make)\b", re.IGNORECASE)
+_DIRECT_LIFE_ACTION_PLANNER_RE = re.compile(
+    r"\b(create|add|track|make).{0,80}\b(tasks?|reminders?|life items?|follow[- ]?ups?)\b|"
+    r"\b(tasks?|reminders?|life items?|follow[- ]?ups?).{0,80}\b(create|add|track|make)\b|"
+    r"\bremind me to\b",
+    re.IGNORECASE,
+)
 _ACTION_NEGATION_RE = re.compile(r"\b(do not|don't|dont|no|not yet|hold off|cancel|stop)\b", re.IGNORECASE)
 _STRUCTURED_LIFE_ACTION_TYPES = {"task_create", "life_item_create"}
 _NATURAL_TASK_PROPOSAL_RE = re.compile(
@@ -431,6 +437,13 @@ def _looks_like_lifeos_task_request(user_message: str) -> bool:
     )
 
 
+def _should_run_direct_life_action_planner(user_message: str) -> bool:
+    text = str(user_message or "")
+    if not text or _ACTION_NEGATION_RE.search(text):
+        return False
+    return bool(_DIRECT_LIFE_ACTION_PLANNER_RE.search(text))
+
+
 def _format_structured_pending_response(action: dict, pending_id: int) -> str:
     details = action.get("details") or {}
     title = details.get("title") or action.get("summary") or "item"
@@ -639,10 +652,6 @@ async def _plan_direct_life_actions(
     state_packet: dict | None,
     context: list[dict[str, object]] | None,
 ) -> list[dict]:
-    if not _looks_like_lifeos_task_request(user_message) and not _TASK_CREATE_REQUEST_RE.search(user_message or ""):
-        return []
-    if _WORKSPACE_MUTATION_REQUEST_PATTERN.search(user_message or "") and not _looks_like_lifeos_task_request(user_message):
-        return []
     profile = state_packet.get("profile") if isinstance(state_packet, dict) else {}
     system = (
         "You are LifeOS direct action planner. Detect only explicit requests to create/add/track a LifeOS task, "
@@ -651,9 +660,10 @@ async def _plan_direct_life_actions(
         "\"summary\":\"Create task: ...\",\"risk_level\":\"low\",\"details\":{\"title\":\"...\","
         "\"domain\":\"deen|family|work|health|planning\",\"kind\":\"task\",\"priority\":\"low|medium|high\","
         "\"due_at\":\"ISO-8601 with timezone offset or null\",\"notes\":\"...\"}}]}.\n"
-        "Use intent none for advice, questions, workspace/file mutations, deletion, external messages, purchases, or ambiguous wishes. "
+        "Use intent none for advice, questions, workspace/file mutations, deletion, external messages, purchases, daily logs, or ambiguous wishes. "
         "Use planning for admin, errands, events, HR/tax paperwork, UAT/staging review notes, and personal logistics. "
-        "Resolve relative dates from current date/time and profile timezone. Do not ask for approval; explicit low-risk LifeOS tracking may execute now."
+        "Resolve relative dates from current date/time and profile timezone. Do not ask for approval; explicit low-risk LifeOS tracking may execute now. "
+        "Treat words like staging, UAT, notes, docs, or test as ordinary task content unless the user clearly asks to mutate files/workspace."
     )
     user = (
         f"Current UTC datetime: {_today_utc()}\n"
@@ -994,7 +1004,7 @@ async def handle_message(
                 "grounding": grounding,
             }
         daily_log_payload = None
-        if not _is_daily_log_execution_note(transient_system_note):
+        if response_text is None and not _is_daily_log_execution_note(transient_system_note):
             reporting_mode = agent_name in {"weekly-review", "daily-planner", "prayer-deen"}
             if active_session:
                 try:
@@ -1015,7 +1025,24 @@ async def handle_message(
                         "OpenViking memory was unavailable for this turn, so the quick-log classifier ran without prior session context.",
                     )
                     context = []
-            daily_log_payload = await propose_daily_log_payload(user_message, agent=agent, context=context or [])
+            direct_actions = []
+            direct_life_planner_used = agent_name not in _INTAKE_AGENTS and _should_run_direct_life_action_planner(user_message)
+            if direct_life_planner_used:
+                direct_actions = await _plan_direct_life_actions(
+                    agent=agent,
+                    user_message=user_message,
+                    state_packet=state_packet,
+                    context=context or [],
+                )
+            if direct_actions:
+                execution_ok, execution_result = await _execute_structured_actions_now(
+                    actions=direct_actions,
+                    agent_name=agent_name,
+                    source=source,
+                )
+                response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
+            elif agent_name not in _INTAKE_AGENTS and not direct_life_planner_used:
+                daily_log_payload = await propose_daily_log_payload(user_message, agent=agent, context=context or [])
         if daily_log_payload:
             proposal = format_daily_log_proposal(daily_log_payload)
             final_response_text = (
@@ -1157,7 +1184,7 @@ async def handle_message(
                         source=source,
                     )
                     response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
-                elif _looks_like_lifeos_task_request(user_message):
+                elif _should_run_direct_life_action_planner(user_message):
                     direct_actions = await _plan_direct_life_actions(
                         agent=agent,
                         user_message=user_message,
@@ -1173,7 +1200,9 @@ async def handle_message(
                         response_text = execution_result if execution_ok else f"Some tasks could not be applied:\n{execution_result}"
             if response_text is None:
                 turn_plan = TurnPlan()
+                turn_planner_used = False
                 if _can_use_turn_planner_for_search(agent, user_message, referenced_session_id):
+                    turn_planner_used = True
                     turn_plan = await plan_turn_for_tools(
                         agent=agent,
                         user_message=user_message,
@@ -1244,7 +1273,7 @@ async def handle_message(
                 search_query = None
                 if turn_plan.needs_web_search and turn_plan.web_search_query:
                     search_query = turn_plan.web_search_query
-                elif _should_search_web(agent, user_message, referenced_session_id):
+                elif not turn_planner_used and _should_search_web(agent, user_message, referenced_session_id):
                     search_query = user_message
                 if search_query:
                     search_context = await _get_search_context(search_query)

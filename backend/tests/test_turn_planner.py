@@ -62,5 +62,7 @@ async def test_turn_planner_includes_profile_location_for_local_queries(monkeypa
     assert plan.needs_web_search is True
     assert plan.web_search_query == "current weather Casablanca Morocco"
     prompt_text = captured["messages"][1]["content"]
+    system_text = captured["messages"][0]["content"]
     assert "city=Casablanca" in prompt_text
     assert "country=Morocco" in prompt_text
+    assert "cheap high-protein meal idea -> no web search" in system_text
