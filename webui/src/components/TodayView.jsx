@@ -30,6 +30,8 @@ export default function TodayView() {
   const [captureText, setCaptureText] = useState("");
   const [captureLoading, setCaptureLoading] = useState(false);
   const [captureResult, setCaptureResult] = useState(null);
+  const [captureFollowText, setCaptureFollowText] = useState("");
+  const [captureFollowLoading, setCaptureFollowLoading] = useState(false);
   const [activeLog, setActiveLog] = useState("");
   const [sleepHours, setSleepHours] = useState("");
   const [sleepNote, setSleepNote] = useState("");
@@ -93,6 +95,7 @@ export default function TodayView() {
       setCaptureLoading(true);
       const result = await captureLife(message, { source: "webui_today_capture", newSession: true });
       setCaptureResult(result);
+      setCaptureFollowText("");
       setStatus(result.response || `Captured ${result.captured_items?.length || 0} items.`);
       setCaptureText("");
       await load();
@@ -100,6 +103,28 @@ export default function TodayView() {
       setError(err.message);
     } finally {
       setCaptureLoading(false);
+    }
+  }
+
+  async function submitCaptureFollowup(event) {
+    event.preventDefault();
+    const message = captureFollowText.trim();
+    if (!message || !captureResult?.session_id) return;
+    try {
+      setCaptureFollowLoading(true);
+      const result = await captureLife(message, {
+        source: "webui_today_capture_followup",
+        newSession: false,
+        sessionId: captureResult.session_id,
+      });
+      setCaptureResult(result);
+      setCaptureFollowText("");
+      setStatus(result.response || result.audit_summary || "Updated capture.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCaptureFollowLoading(false);
     }
   }
 
@@ -154,7 +179,15 @@ export default function TodayView() {
             onChange={setCaptureText}
             onSubmit={submitCapture}
           />
-          {captureResult && <CaptureResultBlock result={captureResult} />}
+          {captureResult && (
+            <CaptureResultBlock
+              result={captureResult}
+              followValue={captureFollowText}
+              followLoading={captureFollowLoading}
+              onFollowChange={setCaptureFollowText}
+              onFollowSubmit={submitCaptureFollowup}
+            />
+          )}
 
           <div className="grid grid-4 today-score-grid" style={{ marginBottom: 20 }}>
             <ScoreCardStat label="Timezone" value={agenda.timezone} />
@@ -393,13 +426,20 @@ function CaptureBox({ value, loading, onChange, onSubmit }) {
   );
 }
 
-function CaptureResultBlock({ result }) {
+function CaptureResultBlock({ result, followValue, followLoading, onFollowChange, onFollowSubmit }) {
   const capturedItems = result?.captured_items || [];
   const routedResults = result?.routed_results || [];
-  const questions = routedResults.flatMap((item) => item.follow_up_questions || []);
+  const planItems = result?.capture_plan?.items || [];
+  const questions = [
+    ...routedResults.flatMap((item) => item.follow_up_questions || []),
+    ...planItems.flatMap((item) => item.questions || []),
+  ].filter((value, index, array) => value && array.indexOf(value) === index);
   const reminders = routedResults.filter((item) => item.follow_up_job);
   const memoryReview = routedResults.flatMap((item) => item.wiki_proposals || []);
   const residue = result?.uncaptured_residue || [];
+  const corrections = result?.corrections || [];
+  const auditSummary = result?.audit_summary || result?.capture_plan?.user_visible_summary || "";
+  const criticSummary = result?.critic?.critic_summary || "";
 
   return (
     <section className="glass-card" style={{ marginBottom: 20 }}>
@@ -408,6 +448,10 @@ function CaptureResultBlock({ result }) {
         <span>Captured {capturedItems.length} items</span>
       </div>
       <p style={{ color: "var(--text-muted)", marginTop: 0 }}>{result.response}</p>
+      {auditSummary && auditSummary !== result.response && (
+        <p style={{ color: "var(--text-muted)", marginTop: 0 }}>{auditSummary}</p>
+      )}
+      {criticSummary && <p style={{ color: "var(--text-muted)", marginTop: 0 }}>Critic: {criticSummary}</p>}
       {capturedItems.length > 0 && (
         <ul className="today-checklist">
           {capturedItems.map((item, index) => {
@@ -422,6 +466,14 @@ function CaptureResultBlock({ result }) {
             );
           })}
         </ul>
+      )}
+      {corrections.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: 8 }}>Applied Corrections</h3>
+          <ul className="today-checklist">
+            {corrections.map((item) => <li key={item.id}>{item.lesson || item.user_correction_text}</li>)}
+          </ul>
+        </>
       )}
       {questions.length > 0 && (
         <>
@@ -458,6 +510,25 @@ function CaptureResultBlock({ result }) {
             {residue.map((item) => <li key={item}>{item}</li>)}
           </ul>
         </>
+      )}
+      {result?.session_id && (
+        <form onSubmit={onFollowSubmit}>
+          <div className="form-group" style={{ marginTop: 16 }}>
+            <label htmlFor="today-capture-followup">Correct or answer this capture</label>
+            <textarea
+              id="today-capture-followup"
+              rows={2}
+              value={followValue}
+              onChange={(event) => onFollowChange(event.target.value)}
+              placeholder="No, that should be memory. Make this a reminder. Don't put this in focus."
+            />
+          </div>
+          <div className="action-row">
+            <button className="btn btn-secondary" type="submit" disabled={followLoading || !followValue?.trim()}>
+              {followLoading ? "Updating..." : "Send Correction"}
+            </button>
+          </div>
+        </form>
       )}
     </section>
   );

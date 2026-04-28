@@ -140,46 +140,105 @@ const apiMocks = vi.hoisted(() => ({
       ],
     },
   })),
-  captureLife: vi.fn(async () => ({
-    route: "batch",
-    response: "Captured 4 items. Tracked 2. 1 item needs answer. 1 memory review item ready.",
-    captured_items: [
-      { type: "reminder", title: "Send invoice", suggested_destination: "life_item" },
-      { type: "memory", title: "Client calls after Asr", suggested_destination: "memory_review" },
-      { type: "habit", title: "Sleep routine", suggested_destination: "life_item" },
-      { type: "idea", title: "Admin paperwork", suggested_destination: "needs_answer" },
-    ],
-    routed_results: [
-      {
-        item_index: 0,
-        destination: "life_item",
-        status: "tracked",
-        title: "Send invoice",
-        follow_up_job: { id: 91, next_run_at: "2026-03-03T16:30:00Z" },
+  captureLife: vi.fn(async (_message, options = {}) => {
+    if (options.sessionId) {
+      return {
+        route: "correction",
+        session_id: options.sessionId,
+        response: "Moved captured item into memory review.",
+        audit_summary: "Moved captured item into memory review.",
+        capture_plan: {
+          user_visible_summary: "Moved captured item into memory review.",
+          items: [
+            {
+              user_intent: "reminder",
+              destination: "life_item",
+              questions: [],
+            },
+            {
+              user_intent: "memory",
+              destination: "memory_review",
+              questions: [],
+            },
+          ],
+        },
+        captured_items: [
+          { type: "reminder", title: "Send invoice", suggested_destination: "life_item" },
+          { type: "memory", title: "Client calls after Asr", suggested_destination: "memory_review" },
+        ],
+        routed_results: [
+          {
+            item_index: 0,
+            destination: "life_item",
+            status: "tracked",
+            title: "Send invoice",
+            follow_up_job: { id: 91, next_run_at: "2026-03-03T16:30:00Z" },
+          },
+          {
+            item_index: 1,
+            destination: "memory_review",
+            status: "updated",
+            title: "Client calls after Asr",
+            wiki_proposals: [{ id: 501, title: "Client calls after Asr" }],
+          },
+        ],
+        corrections: [{ id: 77, lesson: "Store durable preference as memory." }],
+        uncaptured_residue: [],
+      };
+    }
+    return {
+      route: "batch",
+      session_id: 42,
+      response: "Captured 4 items. Tracked 2. 1 item needs answer. 1 memory review item ready.",
+      audit_summary: "Captured 4 items. Tracked 2. 1 item needs answer. 1 memory review item ready.",
+      critic: { critic_summary: "Looks good." },
+      capture_plan: {
+        user_visible_summary: "Captured 4 items.",
+        items: [
+          { user_intent: "reminder", destination: "life_item", questions: [] },
+          { user_intent: "memory", destination: "memory_review", questions: [] },
+          { user_intent: "habit", destination: "life_item", questions: [] },
+          { user_intent: "idea", destination: "needs_answer", questions: ["Which paperwork category should this track?"] },
+        ],
       },
-      {
-        item_index: 1,
-        destination: "memory_review",
-        status: "queued_for_review",
-        title: "Client calls after Asr",
-        wiki_proposals: [{ id: 501, title: "Client calls after Asr" }],
-      },
-      {
-        item_index: 2,
-        destination: "life_item",
-        status: "tracked",
-        title: "Sleep routine",
-      },
-      {
-        item_index: 3,
-        destination: "needs_answer",
-        status: "needs_answer",
-        title: "Admin paperwork",
-        follow_up_questions: ["Which paperwork category should this track?"],
-      },
-    ],
-    uncaptured_residue: ["Also check old notes"],
-  })),
+      captured_items: [
+        { type: "reminder", title: "Send invoice", suggested_destination: "life_item" },
+        { type: "memory", title: "Client calls after Asr", suggested_destination: "memory_review" },
+        { type: "habit", title: "Sleep routine", suggested_destination: "life_item" },
+        { type: "idea", title: "Admin paperwork", suggested_destination: "needs_answer" },
+      ],
+      routed_results: [
+        {
+          item_index: 0,
+          destination: "life_item",
+          status: "tracked",
+          title: "Send invoice",
+          follow_up_job: { id: 91, next_run_at: "2026-03-03T16:30:00Z" },
+        },
+        {
+          item_index: 1,
+          destination: "memory_review",
+          status: "queued_for_review",
+          title: "Client calls after Asr",
+          wiki_proposals: [{ id: 501, title: "Client calls after Asr" }],
+        },
+        {
+          item_index: 2,
+          destination: "life_item",
+          status: "tracked",
+          title: "Sleep routine",
+        },
+        {
+          item_index: 3,
+          destination: "needs_answer",
+          status: "needs_answer",
+          title: "Admin paperwork",
+          follow_up_questions: ["Which paperwork category should this track?"],
+        },
+      ],
+      uncaptured_residue: ["Also check old notes"],
+    };
+  }),
   applyMemoryProposal: vi.fn(async () => ({ status: "applied" })),
 }));
 
@@ -240,5 +299,18 @@ describe("TodayView", () => {
     expect(screen.getAllByText("Client calls after Asr").length).toBeGreaterThan(0);
     expect(screen.getByText("Which paperwork category should this track?")).toBeInTheDocument();
     expect(screen.getByText("Also check old notes")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Correct or answer this capture"), {
+      target: { value: "no, that should be memory" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send Correction" }));
+
+    await screen.findByText("Applied Corrections");
+    expect(apiMocks.captureLife).toHaveBeenLastCalledWith("no, that should be memory", {
+      source: "webui_today_capture_followup",
+      newSession: false,
+      sessionId: 42,
+    });
+    expect(screen.getByText("Store durable preference as memory.")).toBeInTheDocument();
   });
 });

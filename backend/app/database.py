@@ -242,6 +242,9 @@ def run_migrations() -> None:
             if "follow_up_job_id" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
                 life_cols.add("follow_up_job_id")
+            if "focus_eligible" not in life_cols:
+                cur.execute("ALTER TABLE life_items ADD COLUMN focus_eligible BOOLEAN NOT NULL DEFAULT 1")
+                life_cols.add("focus_eligible")
             for column_name, ddl in {
                 "priority_score": "ALTER TABLE life_items ADD COLUMN priority_score INTEGER NOT NULL DEFAULT 50",
                 "priority_reason": "ALTER TABLE life_items ADD COLUMN priority_reason TEXT",
@@ -393,6 +396,9 @@ def run_migrations() -> None:
             if "follow_up_job_id" not in life_cols:
                 cur.execute("ALTER TABLE life_items ADD COLUMN follow_up_job_id INTEGER")
                 life_cols.add("follow_up_job_id")
+            if "focus_eligible" not in life_cols:
+                cur.execute("ALTER TABLE life_items ADD COLUMN focus_eligible BOOLEAN NOT NULL DEFAULT 1")
+                life_cols.add("focus_eligible")
             for column_name, ddl in {
                 "priority_score": "ALTER TABLE life_items ADD COLUMN priority_score INTEGER NOT NULL DEFAULT 50",
                 "priority_reason": "ALTER TABLE life_items ADD COLUMN priority_reason TEXT",
@@ -418,6 +424,9 @@ async def init_db():
         AuditLog,
         ChatSession,
         ChatSessionArchive,
+        CaptureCorrection,
+        CaptureItemPlan,
+        CapturePlan,
         DailyScorecard,
         DeenHabit,
         ContextEvent,
@@ -434,6 +443,7 @@ async def init_db():
         ProviderConfig,
         QuranBookmark,
         QuranReading,
+        RawCapture,
         RuntimeState,
         ScheduledJob,
         SharedMemoryProposal,

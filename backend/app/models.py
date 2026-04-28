@@ -272,6 +272,96 @@ class ChatSessionArchive(Base):
     restored_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class RawCapture(Base):
+    __tablename__ = "raw_captures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="api")
+    source_message_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_channel_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="received")
+    metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class CapturePlan(Base):
+    __tablename__ = "capture_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    raw_capture_id: Mapped[int] = mapped_column(ForeignKey("raw_captures.id"), nullable=False)
+    planner_model: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    critic_model: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    plan_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    critic_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    final_plan_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="planned")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CaptureItemPlan(Base):
+    __tablename__ = "capture_item_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    capture_plan_id: Mapped[int] = mapped_column(ForeignKey("capture_plans.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    user_intent: Mapped[str] = mapped_column(String(40), nullable=False)
+    destination: Mapped[str] = mapped_column(String(40), nullable=False)
+    domain: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")
+    kind: Mapped[str] = mapped_column(String(60), nullable=False, default="task")
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    due_expression: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    recurrence: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    should_schedule_reminder: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    should_appear_in_focus: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    needs_clarification: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    questions_json: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reasoning_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_span: Mapped[str] = mapped_column(Text, nullable=False)
+    execution_status: Mapped[str] = mapped_column(String(30), nullable=False, default="planned")
+    linked_entity_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    linked_entity_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    execution_metadata_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class CaptureCorrection(Base):
+    __tablename__ = "capture_corrections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    raw_capture_id: Mapped[int] = mapped_column(ForeignKey("raw_captures.id"), nullable=False)
+    correction_raw_capture_id: Mapped[Optional[int]] = mapped_column(ForeignKey("raw_captures.id"), nullable=True)
+    capture_item_plan_id: Mapped[int] = mapped_column(ForeignKey("capture_item_plans.id"), nullable=False)
+    user_correction_text: Mapped[str] = mapped_column(Text, nullable=False)
+    previous_plan_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    corrected_plan_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    lesson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class PendingAction(Base):
     __tablename__ = "pending_actions"
 
@@ -515,6 +605,7 @@ class LifeItem(Base):
     source_agent: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(20), default="low")
     follow_up_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    focus_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     priority_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     priority_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     priority_factors_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
@@ -1302,6 +1393,7 @@ class LifeItemCreate(BaseModel):
     recurrence_rule: Optional[str] = None
     source_agent: Optional[str] = None
     risk_level: str = "low"
+    focus_eligible: bool = True
     priority_score: int = Field(default=50, ge=0, le=100)
     priority_reason: Optional[str] = None
     priority_factors: Optional[dict[str, Any]] = None
@@ -1320,6 +1412,7 @@ class LifeItemUpdate(BaseModel):
     recurrence_rule: Optional[str] = None
     risk_level: Optional[str] = None
     follow_up_job_id: Optional[int] = None
+    focus_eligible: Optional[bool] = None
     priority_score: Optional[int] = Field(default=None, ge=0, le=100)
     priority_reason: Optional[str] = None
     priority_factors: Optional[dict[str, Any]] = None
@@ -1341,6 +1434,7 @@ class LifeItemResponse(BaseModel):
     source_agent: Optional[str]
     risk_level: str
     follow_up_job_id: Optional[int] = None
+    focus_eligible: bool = True
     priority_score: int = 50
     priority_reason: Optional[str] = None
     priority_factors: Optional[dict[str, Any]] = None
@@ -1376,6 +1470,7 @@ class LifeItemResponse(BaseModel):
             "source_agent": value.source_agent,
             "risk_level": value.risk_level,
             "follow_up_job_id": getattr(value, "follow_up_job_id", None),
+            "focus_eligible": getattr(value, "focus_eligible", True),
             "priority_score": getattr(value, "priority_score", 50),
             "priority_reason": getattr(value, "priority_reason", None),
             "priority_factors": getattr(value, "priority_factors_json", None),
@@ -1512,6 +1607,58 @@ class CommitmentCaptureResponse(BaseModel):
     needs_follow_up: bool = False
 
 
+class CapturePlanItemResponse(BaseModel):
+    id: Optional[int] = None
+    title: str
+    summary: str
+    user_intent: Literal[
+        "commitment",
+        "reminder",
+        "memory",
+        "preference",
+        "task",
+        "goal",
+        "habit",
+        "routine",
+        "daily_log",
+        "meeting_note",
+        "question",
+        "idea",
+        "correction",
+    ]
+    destination: Literal["life_item", "memory_review", "daily_log", "needs_answer", "context_event", "no_action"]
+    domain: Literal["deen", "family", "work", "health", "planning"]
+    kind: str
+    due_at: Optional[datetime] = None
+    due_expression: Optional[str] = None
+    recurrence: Optional[str] = None
+    should_schedule_reminder: bool = False
+    should_appear_in_focus: bool = False
+    needs_clarification: bool = False
+    questions: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasoning_summary: str = ""
+    source_span: str
+    execution_status: Optional[str] = None
+    linked_entity_type: Optional[str] = None
+    linked_entity_id: Optional[int] = None
+    execution_metadata: Optional[dict[str, Any]] = None
+
+
+class CapturePlanDocumentResponse(BaseModel):
+    items: list[CapturePlanItemResponse] = Field(default_factory=list)
+    uncaptured_residue: list[str] = Field(default_factory=list)
+    overall_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    user_visible_summary: str = ""
+
+
+class CapturePlanCriticResponse(BaseModel):
+    approved: bool = True
+    issues: list[str] = Field(default_factory=list)
+    final_plan: CapturePlanDocumentResponse
+    critic_summary: str = ""
+
+
 class CaptureItemResponse(BaseModel):
     type: Literal[
         "commitment",
@@ -1539,6 +1686,7 @@ class CaptureItemResponse(BaseModel):
 
 
 class CaptureRoutedResultResponse(BaseModel):
+    capture_item_plan_id: Optional[int] = None
     item_index: int
     type: Literal[
         "commitment",
@@ -1554,7 +1702,7 @@ class CaptureRoutedResultResponse(BaseModel):
         "idea",
     ]
     title: str
-    destination: Literal["life_item", "memory_review", "meeting_context", "daily_log", "needs_answer"]
+    destination: Literal["life_item", "memory_review", "context_event", "daily_log", "needs_answer", "no_action"]
     status: str
     message: str
     entry: Optional[IntakeEntryResponse] = None
@@ -1583,10 +1731,24 @@ class UnifiedCaptureRequest(BaseModel):
     target_channel_id: Optional[str] = None
 
 
+class CaptureCorrectionResponse(BaseModel):
+    id: int
+    capture_item_plan_id: int
+    user_correction_text: str
+    lesson: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class UnifiedCaptureResponse(BaseModel):
-    route: Literal["intake", "commitment", "memory", "daily_log", "batch"]
+    route: Literal["intake", "commitment", "memory", "daily_log", "batch", "correction"]
     response: str
     raw_capture_id: Optional[int] = None
+    capture_plan_id: Optional[int] = None
+    capture_plan: Optional[CapturePlanDocumentResponse] = None
+    critic: Optional[CapturePlanCriticResponse] = None
     captured_items: list[CaptureItemResponse] = Field(default_factory=list)
     routed_results: list[CaptureRoutedResultResponse] = Field(default_factory=list)
     session_id: Optional[int] = None
@@ -1604,6 +1766,8 @@ class UnifiedCaptureResponse(BaseModel):
     uncaptured_residue: list[str] = Field(default_factory=list)
     logged_signals: list[str] = Field(default_factory=list)
     completed_items: list[LifeItemResponse] = Field(default_factory=list)
+    corrections: list[CaptureCorrectionResponse] = Field(default_factory=list)
+    audit_summary: Optional[str] = None
 
 
 class IntakePromoteRequest(BaseModel):

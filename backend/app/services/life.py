@@ -239,6 +239,7 @@ def _serialize_life_item(
         "source_agent": item.source_agent,
         "risk_level": item.risk_level,
         "follow_up_job_id": item.follow_up_job_id,
+        "focus_eligible": getattr(item, "focus_eligible", True),
         "priority_score": getattr(item, "priority_score", 50),
         "priority_reason": getattr(item, "priority_reason", None),
         "priority_factors": getattr(item, "priority_factors_json", None),
@@ -587,14 +588,15 @@ async def _load_open_items_snapshot(db, *, tz: ZoneInfo, today_date) -> dict:
         )
 
     ranked.sort(key=lambda row: row["sort_key"])
-    top_focus = [row["raw"] for row in ranked[:3]]
+    focus_ranked = [row for row in ranked if getattr(row["raw"], "focus_eligible", True)]
+    top_focus = [row["raw"] for row in focus_ranked[:3]]
     top_focus_display = [
         _serialize_life_item(
             row["raw"],
             focus_reason=row["focus_reason"],
             follow_up_due_at=row["follow_up_due_at"],
         )
-        for row in ranked[:3]
+        for row in focus_ranked[:3]
     ]
     due_today = [row["raw"] for row in ranked if row["due_local"] == today_date]
     due_today_display = [

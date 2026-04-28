@@ -202,6 +202,11 @@ class AgentsCog(commands.Cog, name="Agents"):
                 cleaned = str(question).strip()
                 if cleaned and cleaned not in questions:
                     questions.append(cleaned)
+        for item in (result.get("capture_plan") or {}).get("items") or []:
+            for question in item.get("questions") or []:
+                cleaned = str(question).strip()
+                if cleaned and cleaned not in questions:
+                    questions.append(cleaned)
         if questions:
             return questions[:8]
         entries = result.get("entries") or ([result.get("entry")] if result.get("entry") else [])
@@ -597,6 +602,7 @@ class AgentsCog(commands.Cog, name="Agents"):
         response_needs_answer = bool(re.search(r"\bneeds?\s+(?:your\s+)?answer\b", str(result.get("response") or ""), re.IGNORECASE))
         if not questions and (result.get("needs_answer_count") or result.get("needs_follow_up") or response_needs_answer):
             questions = [self._fallback_question(entry or {"kind": result.get("route") or "idea"})]
+        audit_summary = self._clean_visible_response(result.get("audit_summary") or "")
         if captured_items:
             description_parts = [f"Captured {len(captured_items)} items."]
             if life_items:
@@ -627,6 +633,8 @@ class AgentsCog(commands.Cog, name="Agents"):
             description = " ".join(description_parts)
         else:
             description = self._clean_visible_response(result.get("response", "Captured."))
+        if audit_summary and audit_summary.lower() != description.lower():
+            description = f"{description}\n\n{audit_summary}"
         embed = discord.Embed(title=heading, description=description[:4000], color=0x2563EB)
         if captured_items:
             lines = []
@@ -973,7 +981,7 @@ class AgentsCog(commands.Cog, name="Agents"):
                     }
                 )
                 route = result.get("route")
-                if result.get("session_id") and route == "intake":
+                if result.get("session_id") and route != "commitment":
                     self._set_active_session_id(ctx, INTAKE_AGENT_NAME, int(result["session_id"]))
                 if result.get("session_id") and route == "commitment" and result.get("needs_follow_up"):
                     self._set_active_session_id(ctx, COMMITMENT_SESSION_NAME, int(result["session_id"]))
