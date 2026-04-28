@@ -141,13 +141,44 @@ const apiMocks = vi.hoisted(() => ({
     },
   })),
   captureLife: vi.fn(async () => ({
-    route: "intake",
-    response: "Captured.",
-    entries: [],
-    life_items: [],
-    wiki_proposals: [],
-    auto_promoted_count: 0,
-    needs_answer_count: 0,
+    route: "batch",
+    response: "Captured 4 items. Tracked 2. 1 item needs answer. 1 memory review item ready.",
+    captured_items: [
+      { type: "reminder", title: "Send invoice", suggested_destination: "life_item" },
+      { type: "memory", title: "Client calls after Asr", suggested_destination: "memory_review" },
+      { type: "habit", title: "Sleep routine", suggested_destination: "life_item" },
+      { type: "idea", title: "Admin paperwork", suggested_destination: "needs_answer" },
+    ],
+    routed_results: [
+      {
+        item_index: 0,
+        destination: "life_item",
+        status: "tracked",
+        title: "Send invoice",
+        follow_up_job: { id: 91, next_run_at: "2026-03-03T16:30:00Z" },
+      },
+      {
+        item_index: 1,
+        destination: "memory_review",
+        status: "queued_for_review",
+        title: "Client calls after Asr",
+        wiki_proposals: [{ id: 501, title: "Client calls after Asr" }],
+      },
+      {
+        item_index: 2,
+        destination: "life_item",
+        status: "tracked",
+        title: "Sleep routine",
+      },
+      {
+        item_index: 3,
+        destination: "needs_answer",
+        status: "needs_answer",
+        title: "Admin paperwork",
+        follow_up_questions: ["Which paperwork category should this track?"],
+      },
+    ],
+    uncaptured_residue: ["Also check old notes"],
   })),
   applyMemoryProposal: vi.fn(async () => ({ status: "applied" })),
 }));
@@ -197,5 +228,17 @@ describe("TodayView", () => {
       }),
     );
     expect(screen.getByText("Latest sleep log: 23:20 → 07:20")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("What needs to be held?"), {
+      target: { value: "send invoice, remember client calls after Asr, restore sleep routine, admin paperwork" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+
+    await screen.findByText("Latest Capture");
+    expect(screen.getByText("Captured 4 items")).toBeInTheDocument();
+    expect(screen.getByText("Send invoice")).toBeInTheDocument();
+    expect(screen.getAllByText("Client calls after Asr").length).toBeGreaterThan(0);
+    expect(screen.getByText("Which paperwork category should this track?")).toBeInTheDocument();
+    expect(screen.getByText("Also check old notes")).toBeInTheDocument();
   });
 });

@@ -108,6 +108,7 @@ DEFAULT_AGENTS = [
             "Your job is to turn messy raw life input into connected LifeOS structure.\n\n"
             "WORKFLOW:\n"
             "- Read the user's message, session context, and shared Wiki context carefully\n"
+            "- Extract all important items; create multiple child capture records when needed\n"
             "- Split clearly separate tasks/goals/habits/facts into separate items\n"
             "- Assign domain, kind, priority, priority_score, and priority_reason yourself\n"
             "- Use Wiki context, deadlines, deen/family/health anchors, and current life commitments to rank importance\n"

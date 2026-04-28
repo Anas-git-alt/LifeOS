@@ -214,6 +214,65 @@ async def test_capturefollow_embed_shows_actual_question():
 
 
 @pytest.mark.asyncio
+async def test_capture_embed_shows_batch_results_questions_and_residue():
+    cog = AgentsCog(bot=object())
+    ctx = _Ctx()
+
+    await cog._send_capture_embed(
+        ctx,
+        {
+            "route": "batch",
+            "response": "Captured 4 items.",
+            "captured_items": [
+                {"title": "Send invoice", "suggested_destination": "life_item"},
+                {"title": "Client calls after Asr", "suggested_destination": "memory_review"},
+                {"title": "Sleep routine", "suggested_destination": "life_item"},
+                {"title": "Admin paperwork", "suggested_destination": "needs_answer"},
+            ],
+            "routed_results": [
+                {
+                    "item_index": 0,
+                    "destination": "life_item",
+                    "status": "tracked",
+                    "life_item": {"id": 41, "title": "Send invoice"},
+                    "follow_up_job": {"id": 71},
+                },
+                {
+                    "item_index": 1,
+                    "destination": "memory_review",
+                    "status": "queued_for_review",
+                    "wiki_proposals": [{"id": 51, "title": "Client calls after Asr"}],
+                },
+                {
+                    "item_index": 2,
+                    "destination": "life_item",
+                    "status": "tracked",
+                },
+                {
+                    "item_index": 3,
+                    "destination": "needs_answer",
+                    "status": "needs_answer",
+                    "follow_up_questions": ["Which paperwork category should this track?"],
+                },
+            ],
+            "uncaptured_residue": ["Also check old notes"],
+            "wiki_proposals": [{"id": 51, "title": "Client calls after Asr", "conflict_reason": "review_required", "status": "pending"}],
+        },
+        heading="Capture",
+    )
+
+    embed = ctx.sent_embeds[0]
+    fields = {field.name: field.value for field in embed.fields}
+    assert "Captured 4 items." in embed.description
+    assert "Captured" in fields
+    assert "Send invoice -> Life item (tracked) · L#41 · J#71" in fields["Captured"]
+    assert "Needs Answer" in fields
+    assert "Which paperwork category should this track?" in fields["Needs Answer"]
+    assert "Uncaptured Residue" in fields
+    assert "Also check old notes" in fields["Uncaptured Residue"]
+
+
+@pytest.mark.asyncio
 async def test_commitment_embed_always_shows_question_when_needs_answer():
     cog = AgentsCog(bot=object())
     ctx = _Ctx()

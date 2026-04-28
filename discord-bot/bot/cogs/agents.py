@@ -166,6 +166,47 @@ class AgentsCog(commands.Cog, name="Agents"):
         lines.extend(cls._priority_lines(entry.get("promotion_payload") or {}))
         return "\n".join(lines)
 
+    @staticmethod
+    def _capture_destination_label(value: str | None) -> str:
+        labels = {
+            "life_item": "Life item",
+            "memory_review": "Memory review",
+            "meeting_context": "Meeting context",
+            "daily_log": "Daily log",
+            "needs_answer": "Needs answer",
+        }
+        return labels.get(str(value or "").strip(), "Capture")
+
+    @classmethod
+    def _capture_result_line(cls, item: dict, routed: dict) -> str:
+        destination = cls._capture_destination_label(routed.get("destination") or item.get("suggested_destination"))
+        status = str(routed.get("status") or "captured").replace("_", " ")
+        title = item.get("title") or "Untitled"
+        bits = [f"{title} -> {destination} ({status})"]
+        life_item = routed.get("life_item") or {}
+        if life_item.get("id"):
+            bits.append(f"L#{life_item['id']}")
+        follow_up_job = routed.get("follow_up_job") or {}
+        if follow_up_job.get("id"):
+            bits.append(f"J#{follow_up_job['id']}")
+        proposals = routed.get("wiki_proposals") or []
+        if proposals:
+            bits.append(f"{len(proposals)} review")
+        return " · ".join(bits)
+
+    @classmethod
+    def _capture_questions_from_result(cls, result: dict) -> list[str]:
+        questions: list[str] = []
+        for item in result.get("routed_results") or []:
+            for question in item.get("follow_up_questions") or []:
+                cleaned = str(question).strip()
+                if cleaned and cleaned not in questions:
+                    questions.append(cleaned)
+        if questions:
+            return questions[:8]
+        entries = result.get("entries") or ([result.get("entry")] if result.get("entry") else [])
+        return cls._all_questions(entries)
+
     @classmethod
     def _life_item_line(cls, item: dict, *, timezone_name: str | None = None) -> str:
         line = f"L#{item['id']} {item.get('title', 'Untitled')} · {item.get('priority', 'medium')}"
@@ -549,12 +590,25 @@ class AgentsCog(commands.Cog, name="Agents"):
         if result.get("life_item") and not life_items:
             life_items = [result["life_item"]]
         wiki_proposals = result.get("wiki_proposals") or []
+        captured_items = result.get("captured_items") or []
+        routed_results = result.get("routed_results") or []
         clarifying_count = len([item for item in entries if item.get("status") == "clarifying"])
-        questions = self._all_questions(entries)
+        questions = self._capture_questions_from_result(result)
         response_needs_answer = bool(re.search(r"\bneeds?\s+(?:your\s+)?answer\b", str(result.get("response") or ""), re.IGNORECASE))
         if not questions and (result.get("needs_answer_count") or result.get("needs_follow_up") or response_needs_answer):
             questions = [self._fallback_question(entry or {"kind": result.get("route") or "idea"})]
-        if logged_signals or completed_items:
+        if captured_items:
+            description_parts = [f"Captured {len(captured_items)} items."]
+            if life_items:
+                description_parts.append(f"Tracked {len(life_items)}.")
+            if questions:
+                description_parts.append(f"{len(questions)} questions need answers.")
+            if wiki_proposals:
+                description_parts.append(f"{len(wiki_proposals)} memory review.")
+            if result.get("uncaptured_residue"):
+                description_parts.append(f"{len(result['uncaptured_residue'])} residue fragment(s) need review.")
+            description = " ".join(description_parts)
+        elif logged_signals or completed_items:
             description_parts = ["Updated Today."]
             if completed_items:
                 description_parts.append(f"Completed {len(completed_items)} item(s).")
@@ -574,6 +628,12 @@ class AgentsCog(commands.Cog, name="Agents"):
         else:
             description = self._clean_visible_response(result.get("response", "Captured."))
         embed = discord.Embed(title=heading, description=description[:4000], color=0x2563EB)
+        if captured_items:
+            lines = []
+            for index, item in enumerate(captured_items[:8]):
+                routed = next((row for row in routed_results if row.get("item_index") == index), {})
+                lines.append(self._capture_result_line(item, routed))
+            embed.add_field(name="Captured", value=self._embed_value("\n".join(lines)), inline=False)
         if completed_items:
             lines = [
                 f"L#{item['id']} {item.get('title', 'Untitled')} · {item.get('status', 'done')}"
@@ -616,6 +676,13 @@ class AgentsCog(commands.Cog, name="Agents"):
                     value=f"`!capturefollow session #{result['session_id']} <your answer>`",
                     inline=False,
                 )
+        residue = result.get("uncaptured_residue") or []
+        if residue:
+            embed.add_field(
+                name="Uncaptured Residue",
+                value=self._embed_value("\n".join([f"• {item}" for item in residue[:5]])),
+                inline=False,
+            )
         if result.get("session_id"):
             embed.set_footer(text=f"S#{result['session_id']} · continue with !capturefollow session #{result['session_id']} <answer>")
         await ctx.send(embed=embed)

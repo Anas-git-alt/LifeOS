@@ -29,6 +29,7 @@ export default function TodayView() {
   const [status, setStatus] = useState("");
   const [captureText, setCaptureText] = useState("");
   const [captureLoading, setCaptureLoading] = useState(false);
+  const [captureResult, setCaptureResult] = useState(null);
   const [activeLog, setActiveLog] = useState("");
   const [sleepHours, setSleepHours] = useState("");
   const [sleepNote, setSleepNote] = useState("");
@@ -91,11 +92,8 @@ export default function TodayView() {
     try {
       setCaptureLoading(true);
       const result = await captureLife(message, { source: "webui_today_capture", newSession: true });
-      const bits = [`Captured as ${result.route}.`];
-      if (result.auto_promoted_count) bits.push(`Tracked ${result.auto_promoted_count}.`);
-      if (result.needs_answer_count) bits.push(`${result.needs_answer_count} need answer.`);
-      if ((result.wiki_proposals || []).length) bits.push(`${result.wiki_proposals.length} memory review.`);
-      setStatus(bits.join(" "));
+      setCaptureResult(result);
+      setStatus(result.response || `Captured ${result.captured_items?.length || 0} items.`);
       setCaptureText("");
       await load();
     } catch (err) {
@@ -156,6 +154,7 @@ export default function TodayView() {
             onChange={setCaptureText}
             onSubmit={submitCapture}
           />
+          {captureResult && <CaptureResultBlock result={captureResult} />}
 
           <div className="grid grid-4 today-score-grid" style={{ marginBottom: 20 }}>
             <ScoreCardStat label="Timezone" value={agenda.timezone} />
@@ -371,7 +370,7 @@ function CaptureBox({ value, loading, onChange, onSubmit }) {
     <section className="glass-card" style={{ marginBottom: 20 }}>
       <div className="panel-card-head">
         <h2>Capture</h2>
-        <span>Auto-sort to task, commitment, or memory review</span>
+        <span>Split messy input into tracked items, reminders, memory review, or logs</span>
       </div>
       <form onSubmit={onSubmit}>
         <div className="form-group">
@@ -390,6 +389,76 @@ function CaptureBox({ value, loading, onChange, onSubmit }) {
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+function CaptureResultBlock({ result }) {
+  const capturedItems = result?.captured_items || [];
+  const routedResults = result?.routed_results || [];
+  const questions = routedResults.flatMap((item) => item.follow_up_questions || []);
+  const reminders = routedResults.filter((item) => item.follow_up_job);
+  const memoryReview = routedResults.flatMap((item) => item.wiki_proposals || []);
+  const residue = result?.uncaptured_residue || [];
+
+  return (
+    <section className="glass-card" style={{ marginBottom: 20 }}>
+      <div className="panel-card-head">
+        <h2>Latest Capture</h2>
+        <span>Captured {capturedItems.length} items</span>
+      </div>
+      <p style={{ color: "var(--text-muted)", marginTop: 0 }}>{result.response}</p>
+      {capturedItems.length > 0 && (
+        <ul className="today-checklist">
+          {capturedItems.map((item, index) => {
+            const routed = routedResults.find((row) => row.item_index === index) || {};
+            return (
+              <li key={`${item.title}-${index}`}>
+                <strong>{item.title}</strong>{" "}
+                <span style={{ color: "var(--text-muted)" }}>
+                  {formatDestination(routed.destination || item.suggested_destination)} · {routed.status || "captured"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {questions.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: 8 }}>Needs Answer</h3>
+          <ul className="today-checklist">
+            {questions.map((question) => <li key={question}>{question}</li>)}
+          </ul>
+        </>
+      )}
+      {memoryReview.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: 8 }}>Memory Review</h3>
+          <ul className="today-checklist">
+            {memoryReview.map((proposal) => <li key={proposal.id}>{proposal.title}</li>)}
+          </ul>
+        </>
+      )}
+      {reminders.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: 8 }}>New Reminders</h3>
+          <ul className="today-checklist">
+            {reminders.map((item) => (
+              <li key={item.follow_up_job.id}>
+                {item.title} · {formatDateTime(item.follow_up_job.next_run_at || item.follow_up_job.run_at)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {residue.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: 8 }}>Uncaptured Residue</h3>
+          <ul className="today-checklist">
+            {residue.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </>
+      )}
     </section>
   );
 }
@@ -741,4 +810,13 @@ function formatTime(raw) {
 function formatShortDate(raw) {
   if (!raw) return "Unknown";
   return new Date(raw).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatDestination(value) {
+  if (value === "life_item") return "Life item";
+  if (value === "memory_review") return "Memory review";
+  if (value === "meeting_context") return "Meeting context";
+  if (value === "daily_log") return "Daily log";
+  if (value === "needs_answer") return "Needs answer";
+  return "Capture";
 }

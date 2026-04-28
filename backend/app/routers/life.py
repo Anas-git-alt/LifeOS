@@ -14,6 +14,8 @@ from app.models import (
     CommitmentCaptureRequest,
     CommitmentCaptureResponse,
     Agent,
+    CaptureItemResponse,
+    CaptureRoutedResultResponse,
     ChatSession,
     DailyFocusCoachResponse,
     DailyLogCreate,
@@ -33,7 +35,9 @@ from app.models import (
     LifeItemResponse,
     LifeItemSnoozeRequest,
     NextPrayerResponse,
+    PrayerRetroactiveCheckinRequest,
     RescuePlanResponse,
+    SharedMemoryPromoteRequest,
     SleepProtocolResponse,
     LifeItemUpdate,
     TodayAgendaResponse,
@@ -50,6 +54,7 @@ from app.security import require_api_token
 from app.services.chat_sessions import create_session, generate_title_from_prompts
 from app.services.commitment_coach import get_daily_focus_coach, get_weekly_commitment_review
 from app.services.commitments import get_commitment_timezone, upsert_follow_up_job
+from app.services.capture_v2 import create_raw_capture_event, split_capture_message, update_raw_capture_event
 from app.services.intake import (
     get_intake_entry,
     get_latest_intake_entry_for_session,
@@ -61,6 +66,8 @@ from app.services.life_synthesis import synthesize_intake_capture
 from app.services.context_events import capture_meeting_summary
 from app.services.memory_ledger import record_capture_memory, record_daily_log_memory
 from app.services.provider_router import chat_completion
+from app.services.prayer_service import get_today_schedule, log_prayer_checkin_retroactive
+from app.services.shared_memory import create_shared_memory_review_proposal
 from app.services.life import (
     add_checkin,
     create_life_item,
@@ -159,6 +166,19 @@ _CAPTURE_WATER_COUNT_RE = re.compile(
     r"\b(\d+)\s*(?:cup|cups|glass|glasses|bottle|bottles)\b",
     re.IGNORECASE,
 )
+_CAPTURE_SLEEP_HOURS_RE = re.compile(
+    r"\b(?:slept?|sleep)\b[^\d]{0,12}(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\b",
+    re.IGNORECASE,
+)
+_CAPTURE_BEDTIME_RE = re.compile(r"\b(?:bed(?:time)?|slept?\s+at)\s+(\d{1,2}:\d{2})\b", re.IGNORECASE)
+_CAPTURE_WAKE_RE = re.compile(r"\b(?:wake(?:\s*time)?|woke\s+up\s+at)\s+(\d{1,2}:\d{2})\b", re.IGNORECASE)
+_CAPTURE_TRAINING_DONE_RE = re.compile(r"\b(trained|training done|workout done|gym done|lifted)\b", re.IGNORECASE)
+_CAPTURE_TRAINING_REST_RE = re.compile(r"\b(rest day|rested|training rest)\b", re.IGNORECASE)
+_CAPTURE_TRAINING_MISSED_RE = re.compile(r"\b(missed training|skipped training|no workout)\b", re.IGNORECASE)
+_CAPTURE_PRAYER_NAME_RE = re.compile(r"\b(Fajr|Dhuhr|Asr|Maghrib|Isha)\b", re.IGNORECASE)
+_CAPTURE_PRAYER_MISSED_RE = re.compile(r"\b(missed|skip(?:ped)?)\b", re.IGNORECASE)
+_CAPTURE_PRAYER_LATE_RE = re.compile(r"\b(late)\b", re.IGNORECASE)
+_CAPTURE_PRAYER_DONE_RE = re.compile(r"\b(prayed|done|on time|made it)\b", re.IGNORECASE)
 _NEW_CAPTURE_INTENT_RE = re.compile(
     r"\b(need to|want to|remind me|tomorrow|deadline|due|follow[- ]?up|invoice|deliver|submit|finish|ship|pay)\b",
     re.IGNORECASE,
@@ -177,6 +197,542 @@ async def _safe_record_daily_log_memory(**kwargs) -> None:
         await record_daily_log_memory(**kwargs)
     except Exception:
         return
+
+
+def _entry_kind_for_capture_item(item: CaptureItemResponse) -> str:
+    if item.type in {"commitment", "reminder"}:
+        return "commitment"
+    if item.type in {"task", "goal", "habit", "routine"}:
+        return item.type
+    if item.type == "question":
+        return "idea"
+    return "note" if item.type in {"memory", "meeting_note", "daily_log"} else "idea"
+
+
+def _life_item_kind_for_capture_item(item: CaptureItemResponse) -> str:
+    if item.type == "goal":
+        return "goal"
+    if item.type in {"habit", "routine"}:
+        return "habit"
+    return "task"
+
+
+def _fallback_follow_up_question(item: CaptureItemResponse) -> str:
+    if item.type in {"commitment", "reminder"}:
+        return "What is the concrete deliverable or reminder target for this item?"
+    if item.type in {"habit", "routine"}:
+        return "What concrete version of success should LifeOS track for this habit?"
+    if item.type == "question":
+        return "What should LifeOS do with this question or uncertainty?"
+    return "What concrete next action should LifeOS track from this item?"
+
+
+def _priority_payload_for_capture_item(item: CaptureItemResponse) -> dict:
+    score = max(35, min(100, int(round(item.confidence * 100))))
+    signals: list[str] = ["capture_v2_confidence"]
+    due_at = item.due_at
+    if due_at is not None:
+        due_utc = due_at.astimezone(timezone.utc) if due_at.tzinfo else due_at.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        if due_utc <= now_utc + timedelta(hours=24):
+            score = max(score, 82)
+            signals.append("deadline_24h")
+        elif due_utc <= now_utc + timedelta(days=3):
+            score = max(score, 72)
+            signals.append("deadline_3d")
+        else:
+            score = max(score, 60)
+            signals.append("deadline")
+    if item.domain in {"deen", "family", "health"}:
+        score = min(100, score + 8)
+        signals.append(f"life_anchor:{item.domain}")
+    if item.type in {"commitment", "reminder", "task"}:
+        score = min(100, score + 5)
+        signals.append("actionable")
+    priority = "high" if score >= 75 else "medium" if score >= 45 else "low"
+    return {
+        "priority": priority,
+        "priority_score": score,
+        "priority_reason": f"Priority {score}/100 from {', '.join(signals)}.",
+    }
+
+
+def _capture_item_notes(item: CaptureItemResponse) -> str:
+    parts = [f"Summary: {item.summary}", f"Source span: {item.source_span}"]
+    if item.recurrence:
+        parts.append(f"Recurrence: {item.recurrence}")
+    return "\n\n".join(part for part in parts if part)
+
+
+def _json_safe(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    return value
+
+
+async def _create_capture_entry_from_item(
+    *,
+    raw_capture_id: int,
+    item: CaptureItemResponse,
+    source: str,
+    source_session_id: int | None,
+    source_message_id: str | None,
+    source_channel_id: str | None,
+) -> IntakeEntry:
+    priority = _priority_payload_for_capture_item(item)
+    status = "clarifying" if item.needs_follow_up or item.suggested_destination == "needs_answer" else "ready"
+    follow_up_questions = item.follow_up_questions[:3]
+    if status == "clarifying" and not follow_up_questions:
+        follow_up_questions = [_fallback_follow_up_question(item)]
+    async with async_session() as db:
+        entry = IntakeEntry(
+            source=source or "api",
+            source_agent="capture-v2",
+            source_session_id=source_session_id,
+            raw_text=item.source_span,
+            title=item.title[:300],
+            summary=item.summary[:1000],
+            domain=item.domain,
+            kind=_entry_kind_for_capture_item(item),
+            status=status,
+            desired_outcome=item.summary[:1000],
+            next_action=item.title[:300],
+            follow_up_questions_json=follow_up_questions,
+            promotion_payload_json={
+                "title": item.title[:300],
+                "kind": _life_item_kind_for_capture_item(item),
+                "domain": item.domain,
+                "priority": priority["priority"],
+                "priority_score": priority["priority_score"],
+                "priority_reason": priority["priority_reason"],
+                "notes": _capture_item_notes(item),
+                "next_action": item.title[:300],
+                "due_at": item.due_at.isoformat() if item.due_at else None,
+                "recurrence_rule": item.recurrence,
+            },
+            structured_data_json={
+                "capture_v2": {
+                    "raw_capture_id": raw_capture_id,
+                    "type": item.type,
+                    "source_span": item.source_span,
+                    "confidence": item.confidence,
+                    "due_at": item.due_at.isoformat() if item.due_at else None,
+                    "recurrence": item.recurrence,
+                    "needs_follow_up": status == "clarifying",
+                    "follow_up_questions": follow_up_questions,
+                    "suggested_destination": item.suggested_destination,
+                },
+                "capture_source": {
+                    "source_message_id": source_message_id,
+                    "source_channel_id": source_channel_id,
+                    "session_id": source_session_id,
+                },
+            },
+        )
+        db.add(entry)
+        await db.commit()
+        await db.refresh(entry)
+        return entry
+
+
+async def _refresh_capture_entry(entry_id: int) -> IntakeEntry | None:
+    async with async_session() as db:
+        return await db.get(IntakeEntry, entry_id)
+
+
+async def _update_capture_entry_route_state(
+    entry_id: int,
+    *,
+    status: str | None = None,
+    metadata: dict | None = None,
+) -> IntakeEntry | None:
+    async with async_session() as db:
+        entry = await db.get(IntakeEntry, entry_id)
+        if not entry:
+            return None
+        if status:
+            entry.status = status
+        structured = dict(entry.structured_data_json or {})
+        capture_v2 = dict(structured.get("capture_v2") or {})
+        if metadata:
+            capture_v2.update(_json_safe(metadata))
+        structured["capture_v2"] = capture_v2
+        entry.structured_data_json = structured
+        await db.commit()
+        await db.refresh(entry)
+        return entry
+
+
+def _parse_sleep_log_payload(text: str) -> DailyLogCreate | None:
+    match = _CAPTURE_SLEEP_HOURS_RE.search(text or "")
+    if not match:
+        return None
+    bedtime = _CAPTURE_BEDTIME_RE.search(text or "")
+    wake_time = _CAPTURE_WAKE_RE.search(text or "")
+    return DailyLogCreate(
+        kind="sleep",
+        hours=float(match.group(1)),
+        bedtime=bedtime.group(1).zfill(5) if bedtime else None,
+        wake_time=wake_time.group(1).zfill(5) if wake_time else None,
+        note=(text or "").strip()[:500] or None,
+    )
+
+
+def _parse_training_log_payload(text: str) -> DailyLogCreate | None:
+    lowered = (text or "").lower()
+    if _CAPTURE_TRAINING_REST_RE.search(lowered):
+        return DailyLogCreate(kind="training", status="rest", note=(text or "").strip()[:500] or None)
+    if _CAPTURE_TRAINING_MISSED_RE.search(lowered):
+        return DailyLogCreate(kind="training", status="missed", note=(text or "").strip()[:500] or None)
+    if _CAPTURE_TRAINING_DONE_RE.search(lowered):
+        return DailyLogCreate(kind="training", status="done", note=(text or "").strip()[:500] or None)
+    return None
+
+
+async def _route_prayer_log_item(text: str) -> dict | None:
+    prayer = _CAPTURE_PRAYER_NAME_RE.search(text or "")
+    if not prayer:
+        return None
+    if _CAPTURE_PRAYER_MISSED_RE.search(text or ""):
+        status = "missed"
+    elif _CAPTURE_PRAYER_LATE_RE.search(text or ""):
+        status = "late"
+    elif _CAPTURE_PRAYER_DONE_RE.search(text or ""):
+        status = "on_time"
+    else:
+        status = "on_time"
+    schedule = await get_today_schedule()
+    result = await log_prayer_checkin_retroactive(
+        PrayerRetroactiveCheckinRequest(
+            prayer_date=str(schedule.get("date")),
+            prayer_name=prayer.group(1).title(),
+            status=status,
+            note=(text or "").strip()[:500] or None,
+            source="capture_v2",
+        )
+    )
+    return result
+
+
+def _merge_unique_strings(values: list[str]) -> list[str]:
+    merged: list[str] = []
+    for value in values:
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in merged:
+            merged.append(cleaned)
+    return merged
+
+
+async def _route_life_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+    timezone_name: str | None,
+    reminder_at: datetime | None,
+    target_channel: str | None,
+    target_channel_id: str | None,
+) -> CaptureRoutedResultResponse:
+    should_promote = (
+        item.type in {"commitment", "reminder"}
+        or (
+            item.suggested_destination == "life_item"
+            and not item.needs_follow_up
+            and (item.confidence >= 0.72 or item.type in {"task", "goal", "habit", "routine"})
+        )
+    )
+    if not should_promote:
+        refreshed = await _update_capture_entry_route_state(
+            entry.id,
+            status="clarifying",
+            metadata={"destination": "needs_answer", "status": "clarifying"},
+        )
+        entry_response = IntakeEntryResponse.model_validate(refreshed or entry)
+        return CaptureRoutedResultResponse(
+            item_index=item_index,
+            type=item.type,
+            title=item.title,
+            destination="needs_answer",
+            status="needs_answer",
+            message="Needs answer before LifeOS can track this item.",
+            entry=entry_response,
+            follow_up_questions=entry_response.follow_up_questions or [_fallback_follow_up_question(item)],
+        )
+
+    promoted_entry, life_item = await promote_intake_entry(entry.id)
+    refreshed_entry = promoted_entry or await _refresh_capture_entry(entry.id) or entry
+    follow_up_job = None
+    if life_item and item.type in {"commitment", "reminder"}:
+        follow_up_job = await upsert_follow_up_job(
+            life_item.id,
+            timezone_name=timezone_name,
+            reminder_at=reminder_at,
+            target_channel=target_channel,
+            target_channel_id=target_channel_id,
+        )
+    await _update_capture_entry_route_state(
+        refreshed_entry.id,
+        status="processed" if life_item else refreshed_entry.status,
+        metadata={
+            "destination": "life_item",
+            "status": "tracked" if life_item else "captured",
+            "life_item_id": life_item.id if life_item else None,
+            "follow_up_job_id": follow_up_job.id if follow_up_job else None,
+        },
+    )
+    if not life_item:
+        return CaptureRoutedResultResponse(
+            item_index=item_index,
+            type=item.type,
+            title=item.title,
+            destination="life_item",
+            status="captured",
+            message="Stored capture entry for later review.",
+            entry=IntakeEntryResponse.model_validate(refreshed_entry),
+        )
+    message = "Tracked as a life item."
+    if follow_up_job:
+        message = "Tracked as a life item and scheduled a follow-up reminder."
+    return CaptureRoutedResultResponse(
+        item_index=item_index,
+        type=item.type,
+        title=item.title,
+        destination="life_item",
+        status="tracked",
+        message=message,
+        entry=IntakeEntryResponse.model_validate(refreshed_entry),
+        life_item=LifeItemResponse.model_validate(life_item),
+        follow_up_job=ScheduledJobResponse.model_validate(follow_up_job) if follow_up_job else None,
+    )
+
+
+async def _route_memory_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+    raw_capture_id: int,
+) -> CaptureRoutedResultResponse:
+    proposal = await create_shared_memory_review_proposal(
+        SharedMemoryPromoteRequest(
+            agent_name="wiki-curator",
+            title=item.title,
+            content=(
+                f"## Summary\n{item.summary}\n\n"
+                f"## Source Span\n{item.source_span}\n\n"
+                f"## Raw Capture\nlifeos://raw-capture/{raw_capture_id}\n"
+            ),
+            scope="shared_domain",
+            domain=item.domain,
+            session_id=entry.source_session_id,
+            source_uri=f"lifeos://raw-capture/{raw_capture_id}",
+            tags=["lifeos", "capture-v2", "memory-candidate"],
+            confidence="high" if item.confidence >= 0.8 else "medium",
+        )
+    )
+    refreshed = await _update_capture_entry_route_state(
+        entry.id,
+        status="processed",
+        metadata={
+            "destination": "memory_review",
+            "status": "queued_for_review",
+            "proposal_ids": [proposal.id],
+        },
+    )
+    return CaptureRoutedResultResponse(
+        item_index=item_index,
+        type=item.type,
+        title=item.title,
+        destination="memory_review",
+        status="queued_for_review",
+        message="Queued a memory review proposal.",
+        entry=IntakeEntryResponse.model_validate(refreshed or entry),
+        wiki_proposals=[SharedMemoryProposalResponse.model_validate(proposal)],
+    )
+
+
+async def _route_meeting_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+    raw_capture_id: int,
+    source: str,
+) -> CaptureRoutedResultResponse:
+    event, proposals, intake_entry_ids = await capture_meeting_summary(
+        MeetingIntakeRequest(
+            summary=item.source_span,
+            title=item.title,
+            domain=item.domain,
+            source=source or "api",
+            source_agent="wiki-curator",
+            session_id=entry.source_session_id,
+            tags=["capture-v2", f"raw-capture:{raw_capture_id}"],
+        )
+    )
+    refreshed = await _update_capture_entry_route_state(
+        entry.id,
+        status="processed",
+        metadata={
+            "destination": "meeting_context",
+            "status": "queued_for_review",
+            "context_event_id": event.id,
+            "proposal_ids": [proposal.id for proposal in proposals],
+            "intake_entry_ids": intake_entry_ids,
+        },
+    )
+    return CaptureRoutedResultResponse(
+        item_index=item_index,
+        type=item.type,
+        title=item.title,
+        destination="meeting_context",
+        status="queued_for_review",
+        message="Created a context event and queued memory review.",
+        entry=IntakeEntryResponse.model_validate(refreshed or entry),
+        event=ContextEventResponse.model_validate(event),
+        wiki_proposals=[SharedMemoryProposalResponse.model_validate(row) for row in proposals],
+        metadata={"intake_entry_ids": intake_entry_ids},
+    )
+
+
+async def _route_daily_log_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+    source: str,
+) -> CaptureRoutedResultResponse:
+    text = item.source_span or item.summary or item.title
+    quick_updates = await _apply_quick_updates_from_capture(text)
+    messages: list[str] = []
+    logged_signals = list(quick_updates.get("logged_signals") or [])
+    completed_items = list(quick_updates.get("completed_items") or [])
+    raw_logs: list[dict] = []
+    if logged_signals or completed_items:
+        messages.append("Applied quick daily-log updates.")
+    sleep_payload = _parse_sleep_log_payload(text)
+    if sleep_payload:
+        sleep_result = await log_daily_signal(sleep_payload)
+        logged_signals.append("sleep")
+        raw_logs.append(sleep_payload.model_dump(exclude_none=True))
+        messages.append(sleep_result["message"])
+    training_payload = _parse_training_log_payload(text)
+    if training_payload:
+        training_result = await log_daily_signal(training_payload)
+        logged_signals.append(f"training:{training_payload.status}")
+        raw_logs.append(training_payload.model_dump(exclude_none=True))
+        messages.append(training_result["message"])
+    prayer_result = await _route_prayer_log_item(text)
+    if prayer_result:
+        logged_signals.append(f"prayer:{prayer_result['prayer_name'].lower()}:{prayer_result['status_raw']}")
+        messages.append(f"Logged prayer check-in for {prayer_result['prayer_name']}.")
+    if raw_logs:
+        await _safe_record_daily_log_memory(
+            raw_logs=raw_logs,
+            result_text=" ".join(messages)[:1000] or "Daily log applied.",
+            source_agent="capture-v2",
+            source=source or "api",
+        )
+    refreshed = await _update_capture_entry_route_state(
+        entry.id,
+        status="processed",
+        metadata={
+            "destination": "daily_log",
+            "status": "logged",
+            "logged_signals": logged_signals,
+            "completed_item_ids": [row.id for row in completed_items if getattr(row, "id", None)],
+            "prayer_checkin": prayer_result,
+        },
+    )
+    entry_response = IntakeEntryResponse.model_validate(refreshed or entry)
+    return CaptureRoutedResultResponse(
+        item_index=item_index,
+        type=item.type,
+        title=item.title,
+        destination="daily_log",
+        status="logged",
+        message=" ".join(messages)[:1000] or "Logged daily status updates.",
+        entry=entry_response,
+        logged_signals=_merge_unique_strings(logged_signals),
+        completed_items=[LifeItemResponse.model_validate(row) for row in completed_items],
+        metadata={"prayer_checkin": prayer_result} if prayer_result else {},
+    )
+
+
+async def _route_needs_answer_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+) -> CaptureRoutedResultResponse:
+    refreshed = await _update_capture_entry_route_state(
+        entry.id,
+        status="clarifying",
+        metadata={"destination": "needs_answer", "status": "clarifying"},
+    )
+    entry_response = IntakeEntryResponse.model_validate(refreshed or entry)
+    questions = entry_response.follow_up_questions or item.follow_up_questions or [_fallback_follow_up_question(item)]
+    return CaptureRoutedResultResponse(
+        item_index=item_index,
+        type=item.type,
+        title=item.title,
+        destination="needs_answer",
+        status="needs_answer",
+        message="Needs answer before routing this item further.",
+        entry=entry_response,
+        follow_up_questions=questions,
+    )
+
+
+async def _route_capture_item(
+    *,
+    item_index: int,
+    item: CaptureItemResponse,
+    entry: IntakeEntry,
+    raw_capture_id: int,
+    source: str,
+    timezone_name: str | None,
+    reminder_at: datetime | None,
+    target_channel: str | None,
+    target_channel_id: str | None,
+) -> CaptureRoutedResultResponse:
+    if item.suggested_destination == "memory_review" or item.type == "memory":
+        return await _route_memory_capture_item(item_index=item_index, item=item, entry=entry, raw_capture_id=raw_capture_id)
+    if item.suggested_destination == "meeting_context" or item.type == "meeting_note":
+        return await _route_meeting_capture_item(
+            item_index=item_index,
+            item=item,
+            entry=entry,
+            raw_capture_id=raw_capture_id,
+            source=source,
+        )
+    if item.suggested_destination == "daily_log" or item.type == "daily_log":
+        return await _route_daily_log_capture_item(item_index=item_index, item=item, entry=entry, source=source)
+    if item.suggested_destination == "needs_answer" or item.type == "question":
+        return await _route_needs_answer_capture_item(item_index=item_index, item=item, entry=entry)
+    return await _route_life_capture_item(
+        item_index=item_index,
+        item=item,
+        entry=entry,
+        timezone_name=timezone_name,
+        reminder_at=reminder_at,
+        target_channel=target_channel,
+        target_channel_id=target_channel_id,
+    )
+
+
+def _capture_route_from_routed_result(item: CaptureItemResponse, result: CaptureRoutedResultResponse) -> str:
+    if result.destination in {"memory_review", "meeting_context"}:
+        return "memory"
+    if result.destination == "daily_log":
+        return "daily_log"
+    if item.type in {"commitment", "reminder"}:
+        return "commitment"
+    return "intake"
 
 
 async def _attach_capture_source_metadata(
@@ -1158,34 +1714,6 @@ async def capture_life(data: UnifiedCaptureRequest):
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
 
-    quick_updates = await _apply_quick_updates_from_capture(message)
-    if _looks_like_capture_update_only(message, handled=quick_updates["handled"]):
-        completed_items = [
-            LifeItemResponse.model_validate(item)
-            for item in quick_updates["completed_items"]
-            if item is not None
-        ]
-        signals = quick_updates["logged_signals"]
-        skipped = quick_updates.get("skipped_signals") or []
-        status_text = ", ".join(signals + skipped) if signals or skipped else "daily status"
-        await _safe_record_capture_memory(
-            raw_text=message,
-            source=data.source or "api",
-            source_agent="daily-log-capture",
-            source_session_id=data.session_id,
-            event_type="daily_log_capture",
-        )
-        return UnifiedCaptureResponse(
-            route="daily_log",
-            response=(
-                "Updated Today: "
-                f"{status_text}. "
-                f"Completed {len(completed_items)} item(s)."
-            ),
-            logged_signals=signals,
-            completed_items=completed_items,
-        )
-
     route = await _resolve_capture_route(data)
     if data.session_id and not data.new_session and route in {"intake", "commitment"}:
         prior_source_agent = COMMITMENT_AGENT_NAME if route == "commitment" else "intake-inbox"
@@ -1201,129 +1729,192 @@ async def capture_life(data: UnifiedCaptureRequest):
         )
         if agentic_result:
             return agentic_result
-
-    if route == "commitment":
-        inferred_due_at = await _infer_capture_due_at(message, data.due_at, data.timezone)
-        result = await capture_commitment(
-            CommitmentCaptureRequest(
+        if route == "commitment":
+            inferred_due_at = await _infer_capture_due_at(message, data.due_at, data.timezone)
+            result = await capture_commitment(
+                CommitmentCaptureRequest(
+                    message=message,
+                    raw_message=message,
+                    session_id=data.session_id,
+                    new_session=data.new_session,
+                    source=data.source or "api",
+                    source_message_id=data.source_message_id,
+                    source_channel_id=data.source_channel_id,
+                    due_at=inferred_due_at,
+                    reminder_at=data.reminder_at,
+                    timezone=data.timezone,
+                    target_channel=data.target_channel,
+                    target_channel_id=data.target_channel_id,
+                )
+            )
+            entries = [result.entry] if result.entry else []
+            return UnifiedCaptureResponse(
+                route="commitment",
+                response=result.response,
+                session_id=result.session_id,
+                session_title=result.session_title,
+                entry=result.entry,
+                entries=entries,
+                life_item=result.life_item,
+                life_items=[result.life_item] if result.life_item else [],
+                follow_up_job=result.follow_up_job,
+                auto_promoted_count=1 if result.auto_promoted else 0,
+                needs_follow_up=result.needs_follow_up,
+                needs_answer_count=_needs_answer(entries),
+            )
+        result = await capture_inbox(
+            IntakeCaptureRequest(
                 message=message,
-                raw_message=message,
                 session_id=data.session_id,
                 new_session=data.new_session,
                 source=data.source or "api",
                 source_message_id=data.source_message_id,
                 source_channel_id=data.source_channel_id,
-                due_at=inferred_due_at,
-                reminder_at=data.reminder_at,
-                timezone=data.timezone,
-                target_channel=data.target_channel,
-                target_channel_id=data.target_channel_id,
             )
         )
-        entries = [result.entry] if result.entry else []
-        life_items = [result.life_item] if result.life_item else []
-        entry_obj = await get_intake_entry(result.entry.id) if result.entry and result.entry.id else None
-        item_obj = None
-        if result.life_item and result.life_item.id:
-            async with async_session() as db:
-                item_result = await db.execute(select(LifeItem).where(LifeItem.id == result.life_item.id))
-                item_obj = item_result.scalar_one_or_none()
-        await _safe_record_capture_memory(
-            raw_text=message,
-            source=data.source or "api",
-            source_agent=COMMITMENT_AGENT_NAME,
-            source_session_id=result.session_id,
-            entry=entry_obj,
-            life_item=item_obj,
-            event_type="commitment_capture",
-        )
+        entries = result.entries or ([result.entry] if result.entry else [])
         return UnifiedCaptureResponse(
-            route="commitment",
+            route="intake",
             response=result.response,
             session_id=result.session_id,
             session_title=result.session_title,
             entry=result.entry,
             entries=entries,
-            life_item=result.life_item,
-            life_items=life_items,
-            follow_up_job=result.follow_up_job,
-            auto_promoted_count=1 if result.auto_promoted else 0,
-            needs_follow_up=result.needs_follow_up,
+            life_items=result.life_items,
+            wiki_proposals=result.wiki_proposals,
+            auto_promoted_count=result.auto_promoted_count,
+            needs_follow_up=bool(_needs_answer(entries)),
             needs_answer_count=_needs_answer(entries),
         )
 
-    if route == "memory":
-        try:
-            event, proposals, intake_entry_ids = await capture_meeting_summary(
-                MeetingIntakeRequest(
-                    summary=message,
-                    title=_title_from_capture(message),
-                    domain=_infer_commitment_domain(message),
-                    source=data.source or "api",
-                    source_agent="wiki-curator",
-                    session_id=data.session_id,
-                    tags=["unified-capture"],
-                )
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        await _safe_record_capture_memory(
-            raw_text=message,
-            source=data.source or "api",
-            source_agent="wiki-curator",
-            source_session_id=data.session_id,
-            event_type="memory_capture",
-        )
-        entries = []
-        for entry_id in intake_entry_ids[:5]:
-            entry = await get_intake_entry(entry_id)
-            if entry:
-                entries.append(IntakeEntryResponse.model_validate(entry))
-        return UnifiedCaptureResponse(
-            route="memory",
-            response=(
-                f"Captured memory review event #{event.id}. "
-                f"{len(proposals)} memory review item(s) ready."
-            ),
-            event=ContextEventResponse.model_validate(event),
-            entries=entries,
-            entry=entries[0] if entries else None,
-            wiki_proposals=[SharedMemoryProposalResponse.model_validate(row) for row in proposals],
-            needs_answer_count=_needs_answer(entries),
-        )
-
-    result = await capture_inbox(
-        IntakeCaptureRequest(
-            message=message,
-            session_id=data.session_id,
-            new_session=data.new_session,
-            source=data.source or "api",
-            source_message_id=data.source_message_id,
-            source_channel_id=data.source_channel_id,
-        )
+    raw_capture_event = await create_raw_capture_event(
+        message=message,
+        source=data.source or "api",
+        source_session_id=data.session_id,
+        source_message_id=data.source_message_id,
+        source_channel_id=data.source_channel_id,
     )
-    entries = result.entries or ([result.entry] if result.entry else [])
-    entry_obj = await get_intake_entry(entries[0].id) if entries else None
     await _safe_record_capture_memory(
         raw_text=message,
         source=data.source or "api",
-        source_agent="intake-inbox",
-        source_session_id=result.session_id,
-        entry=entry_obj,
-        event_type="intake_capture",
+        source_agent="capture-v2",
+        source_session_id=data.session_id,
+        event_type="raw_capture",
     )
+    capture_items, residue = await split_capture_message(
+        message=message,
+        timezone_name=await get_commitment_timezone(data.timezone),
+        route_hint=data.route_hint,
+    )
+    if str(data.route_hint or "auto").strip().lower() == "commitment" and len(capture_items) == 1:
+        only_item = capture_items[0]
+        if only_item.type not in {"memory", "meeting_note", "daily_log"}:
+            capture_items = [only_item.model_copy(update={"type": "commitment", "suggested_destination": "life_item"})]
+    entries: list[IntakeEntryResponse] = []
+    life_items: list[LifeItemResponse] = []
+    wiki_proposals: list[SharedMemoryProposalResponse] = []
+    routed_results: list[CaptureRoutedResultResponse] = []
+    logged_signals: list[str] = []
+    completed_items: list[LifeItemResponse] = []
+    extra_entry_ids: list[int] = []
+    first_event: ContextEventResponse | None = None
+    first_follow_up_job: ScheduledJobResponse | None = None
+    for index, item in enumerate(capture_items):
+        entry = await _create_capture_entry_from_item(
+            raw_capture_id=raw_capture_event.id,
+            item=item,
+            source=data.source or "api",
+            source_session_id=data.session_id,
+            source_message_id=data.source_message_id,
+            source_channel_id=data.source_channel_id,
+        )
+        routed = await _route_capture_item(
+            item_index=index,
+            item=item,
+            entry=entry,
+            raw_capture_id=raw_capture_event.id,
+            source=data.source or "api",
+            timezone_name=data.timezone,
+            reminder_at=data.reminder_at,
+            target_channel=data.target_channel,
+            target_channel_id=data.target_channel_id,
+        )
+        routed_results.append(routed)
+        if routed.entry:
+            entries.append(routed.entry)
+        if routed.life_item:
+            life_items.append(routed.life_item)
+        if routed.follow_up_job:
+            first_follow_up_job = first_follow_up_job or routed.follow_up_job
+        if routed.event:
+            first_event = first_event or routed.event
+        wiki_proposals.extend(routed.wiki_proposals or [])
+        logged_signals.extend(routed.logged_signals or [])
+        completed_items.extend(routed.completed_items or [])
+        extra_entry_ids.extend((routed.metadata or {}).get("intake_entry_ids") or [])
+
+    for entry_id in extra_entry_ids:
+        extra = await get_intake_entry(entry_id)
+        if extra:
+            entries.append(IntakeEntryResponse.model_validate(extra))
+
+    def _dedupe_by_id(rows):
+        deduped = []
+        seen = set()
+        for row in rows:
+            row_id = getattr(row, "id", None) if not isinstance(row, dict) else row.get("id")
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            deduped.append(row)
+        return deduped
+
+    entries = _dedupe_by_id(entries)
+    life_items = _dedupe_by_id(life_items)
+    wiki_proposals = _dedupe_by_id(wiki_proposals)
+    completed_items = _dedupe_by_id(completed_items)
+    logged_signals = _merge_unique_strings(logged_signals)
+    needs_answer_count = sum(1 for result in routed_results if result.destination == "needs_answer" or result.follow_up_questions)
+    await update_raw_capture_event(
+        raw_capture_event.id,
+        status="captured",
+        metadata={
+            "captured_items": [item.model_dump(mode="json") for item in capture_items],
+            "routed_results": [result.model_dump(mode="json") for result in routed_results],
+            "uncaptured_residue": residue,
+        },
+    )
+    response_bits = [f"Captured {len(capture_items)} item{'s' if len(capture_items) != 1 else ''}."]
+    if life_items:
+        response_bits.append(f"Tracked {len(life_items)} life item{'s' if len(life_items) != 1 else ''}.")
+    if wiki_proposals:
+        response_bits.append(f"Queued {len(wiki_proposals)} memory review item{'s' if len(wiki_proposals) != 1 else ''}.")
+    if needs_answer_count:
+        response_bits.append(f"{needs_answer_count} item{'s' if needs_answer_count != 1 else ''} need answer.")
+    if residue:
+        response_bits.append(f"{len(residue)} uncaptured residue fragment{'s' if len(residue) != 1 else ''} need review.")
+    response_route = "batch"
+    if len(capture_items) == 1 and not residue and routed_results:
+        response_route = _capture_route_from_routed_result(capture_items[0], routed_results[0])
     return UnifiedCaptureResponse(
-        route="intake",
-        response=result.response,
-        session_id=result.session_id,
-        session_title=result.session_title,
-        entry=result.entry,
+        route=response_route,
+        response=" ".join(response_bits),
+        raw_capture_id=raw_capture_event.id,
+        captured_items=capture_items,
+        routed_results=routed_results,
+        entry=entries[0] if entries else None,
         entries=entries,
-        life_items=result.life_items,
-        wiki_proposals=result.wiki_proposals,
-        auto_promoted_count=result.auto_promoted_count,
-        needs_follow_up=bool(_needs_answer(entries)),
-        needs_answer_count=_needs_answer(entries),
+        life_item=life_items[0] if life_items else None,
+        life_items=life_items,
+        follow_up_job=first_follow_up_job,
+        wiki_proposals=wiki_proposals,
+        event=first_event,
+        auto_promoted_count=len(life_items),
+        needs_follow_up=bool(needs_answer_count),
+        needs_answer_count=needs_answer_count,
+        uncaptured_residue=residue,
+        logged_signals=logged_signals,
+        completed_items=completed_items,
     )
 
 

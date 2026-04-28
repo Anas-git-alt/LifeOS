@@ -1512,6 +1512,62 @@ class CommitmentCaptureResponse(BaseModel):
     needs_follow_up: bool = False
 
 
+class CaptureItemResponse(BaseModel):
+    type: Literal[
+        "commitment",
+        "reminder",
+        "task",
+        "goal",
+        "habit",
+        "routine",
+        "memory",
+        "meeting_note",
+        "daily_log",
+        "question",
+        "idea",
+    ]
+    domain: Literal["deen", "family", "work", "health", "planning"]
+    title: str
+    summary: str
+    source_span: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    due_at: Optional[datetime] = None
+    recurrence: Optional[str] = None
+    needs_follow_up: bool = False
+    follow_up_questions: list[str] = Field(default_factory=list)
+    suggested_destination: Literal["life_item", "memory_review", "meeting_context", "daily_log", "needs_answer"]
+
+
+class CaptureRoutedResultResponse(BaseModel):
+    item_index: int
+    type: Literal[
+        "commitment",
+        "reminder",
+        "task",
+        "goal",
+        "habit",
+        "routine",
+        "memory",
+        "meeting_note",
+        "daily_log",
+        "question",
+        "idea",
+    ]
+    title: str
+    destination: Literal["life_item", "memory_review", "meeting_context", "daily_log", "needs_answer"]
+    status: str
+    message: str
+    entry: Optional[IntakeEntryResponse] = None
+    life_item: Optional[LifeItemResponse] = None
+    follow_up_job: Optional[ScheduledJobResponse] = None
+    event: Optional[ContextEventResponse] = None
+    wiki_proposals: list[SharedMemoryProposalResponse] = Field(default_factory=list)
+    logged_signals: list[str] = Field(default_factory=list)
+    completed_items: list[LifeItemResponse] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class UnifiedCaptureRequest(BaseModel):
     message: str
     session_id: Optional[int] = None
@@ -1528,8 +1584,11 @@ class UnifiedCaptureRequest(BaseModel):
 
 
 class UnifiedCaptureResponse(BaseModel):
-    route: Literal["intake", "commitment", "memory", "daily_log"]
+    route: Literal["intake", "commitment", "memory", "daily_log", "batch"]
     response: str
+    raw_capture_id: Optional[int] = None
+    captured_items: list[CaptureItemResponse] = Field(default_factory=list)
+    routed_results: list[CaptureRoutedResultResponse] = Field(default_factory=list)
     session_id: Optional[int] = None
     session_title: Optional[str] = None
     entry: Optional[IntakeEntryResponse] = None
@@ -1542,6 +1601,7 @@ class UnifiedCaptureResponse(BaseModel):
     auto_promoted_count: int = 0
     needs_follow_up: bool = False
     needs_answer_count: int = 0
+    uncaptured_residue: list[str] = Field(default_factory=list)
     logged_signals: list[str] = Field(default_factory=list)
     completed_items: list[LifeItemResponse] = Field(default_factory=list)
 
